@@ -7,9 +7,9 @@ port = 8080
 workers = 4
 
 [database]
+# SQLite-Pfad (relativ zum Projektverzeichnis)
 path = "data/kis.db"
-pool_size = 8
-journal_mode = "wal"
+pool_size = 10
 
 [ui]
 theme = "dark"
@@ -31,6 +31,40 @@ enabled = false
 port = 104
 ae_title = "KIS"
 
+# CGM MEDICO Integration (FHIR R4 + OAuth 2.0 + GDT)
+# Credentials kommen ausschließlich aus ENV-Variablen, nie in dieser Datei!
+# Siehe docs/CGM_MEDICO.md für die vollständige Dokumentation.
+[interfaces.medico]
+enabled = false
+base_url = "https://fhir.medico.example.com/fhir/"
+system_namespace = "https://fhir.medico.example.com"
+auth_endpoint = "https://fhir.medico.example.com/fhir/auth/token"
+# ENV-Variablen für OAuth 2.0 Client Credentials (Werte in .env / systemd)
+client_id_env = "KIS_MEDICO_CLIENT_ID"
+client_secret_env = "KIS_MEDICO_CLIENT_SECRET"
+scopes = [
+    "system/Patient.read",
+    "system/Patient.write",
+    "system/Appointment.read",
+    "system/Appointment.write",
+    "system/HealthcareService.read",
+    "system/Schedule.read",
+    "system/Slot.read"
+]
+sync_interval_seconds = 30
+max_concurrent_requests = 10
+request_timeout_seconds = 30
+change_detection_mode = "polling"
+sync_slots = true
+availability_poll_interval_minutes = 10
+availability_poll_range_days = 180
+gdt_export_enabled = true
+gdt_export_path = "exports/gdt/"
+hl7_enabled = false
+hl7_host = "10.10.11.100"
+hl7_port = 6667
+hl7_ae_title = "KIS"
+
 [llm]
 provider = "openrouter"
 api_key_env = "OPENROUTER_API_KEY"
@@ -40,3 +74,23 @@ models = [
     "qwen/qwen3-coder",
     "meta-llama/llama-4-maverick"
 ]
+
+[security]
+# JWT-Signaturschlüssel kommt aus der Umgebung (nie im Klartext in der Config)
+jwt_secret_env = "KIS_JWT_SECRET"
+token_expiry = 900
+refresh_expiry = 86400
+max_login_attempts = 5
+lockout_duration = 900
+
+[security.audit]
+retention_days = 3650
+log_file = "logs/audit.log"
+
+[security.rate_limit]
+requests_per_minute = 100
+auth_requests_per_minute = 10
+
+[security.encryption]
+# Masterkey aus der Umgebung: 32 Bytes Base64 (AES-256)
+master_key_env = "KIS_MASTER_KEY"

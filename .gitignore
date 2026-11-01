@@ -3,5 +3,7 @@
 *.db-wal
 *.db-shm
 data/
+logs/
+*.key
+secrets/
 .env
-*.log

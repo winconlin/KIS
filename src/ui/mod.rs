@@ -1,5 +1,5 @@
 use axum::{
-    response::{Html, IntoResponse},
+    response::Html,
     routing::get,
     Router,
 };
