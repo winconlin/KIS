@@ -1,0 +1,42 @@
+# KIS Konfiguration
+# Alle Werte können per KIS_*_ENV übergeben werden
+
+[server]
+host = "0.0.0.0"
+port = 8080
+workers = 4
+
+[database]
+path = "data/kis.db"
+pool_size = 8
+journal_mode = "wal"
+
+[ui]
+theme = "dark"
+language = "de"
+auto_refresh = true
+
+[interfaces.hl7]
+enabled = false
+port = 6667
+version = "2.5"
+
+[interfaces.fhir]
+enabled = true
+base_url = "http://localhost:8080/fhir"
+version = "R4"
+
+[interfaces.dicom]
+enabled = false
+port = 104
+ae_title = "KIS"
+
+[llm]
+provider = "openrouter"
+api_key_env = "OPENROUTER_API_KEY"
+rotation_interval = 300
+models = [
+    "deepseek/deepseek-chat-v3-0324",
+    "qwen/qwen3-coder",
+    "meta-llama/llama-4-maverick"
+]
