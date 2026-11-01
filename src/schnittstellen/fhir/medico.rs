@@ -400,7 +400,7 @@ impl MedicoClient {
         Ok(slots)
     }
 
-    /// Patienten in MEDICO exportieren (bidirektional)
+    /// Patienten in MEDICO exportieren (für Rollback während Migrationsphase)
     pub async fn export_patient(
         &mut self,
         patient: &MedicoPatient,

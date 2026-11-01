@@ -20,7 +20,7 @@
 | Konfiguration | Ein TOML-Datei + ENV-Variablen, kein Code-Change für Standard-Setup |
 | GUI | Responsive, Dark/Light Theme, Barrierefreiheit (WCAG 2.1 AA) |
 | Schnittstellen | HL7 v2.5, FHIR R4 (ISiK), DICOM, XDS, GDT, Telematikinfrastruktur |
-| CGM MEDICO | Vollständiger bidirektionaler Import/Export (FHIR R4 + HL7 v2 + GDT) |
+| CGM MEDICO | **Vollständiger Ersatz** — Migration (FHIR R4 + HL7 v2 + GDT), danach MEDICO abgeschaltet |
 | LLM-Integration | OpenRouter, 3+ Modelle, Rotation, gegenseitige Code-Review |
 
 ---
@@ -281,11 +281,13 @@ Gesamt: **~23 Wochen** bis v1.0 Release.
 
 ---
 
-## 8. Phase 4 — CGM MEDICO Integration
+## 8. Phase 4 — CGM MEDICO Migration (KIS ersetzt MEDICO vollständig)
 
-**Ziel:** Vollständiger bidirektionaler Import/Export mit CGM MEDICO.
+**Ziel:** KIS übernimmt **alle** Funktionen von CGM MEDICO. Der MEDICO-Import dient ausschließlich dem Daten-Übergang bei der Migration. Nach erfolgreicher Migration wird MEDICO abgeschaltet.
 
-> **WICHTIG:** Diese Phase ist PFLICHT. KIS muss als Ergänzung zu MEDICO funktionieren, nicht als Ersatz.
+> **KIS ist der vollumfängliche Ersatz für CGM MEDICO — keine Ergänzung.**
+> Alle MEDICO-Funktionen (Patienten, Termine, Slot, Befunde, Arztbriefe, DICOM, HL7, FHIR, TI) sind in KIS implementiert.
+> Der Import aus MEDICO ist ein einmaliger Migrationsvorgang, danach ist KIS das einzige System.
 > Siehe `docs/CGM_MEDICO.md` für Details.
 > **kis-medico ist eine eigene Cargo-Krate.**
 
@@ -294,18 +296,20 @@ Gesamt: **~23 Wochen** bis v1.0 Release.
 | # | Task | Akzeptanzkriterium | Status |
 |---|------|-------------------|--------|
 | 4.1 | FHIR R4 Client für MEDICO (OAuth 2.0, ISiK Scopes) | Token-Refresh, Scope-Handling | 🔲 |
-| 4.2 | MEDICO-Patienten-Import: `GET /Patient`, `GET /Patient?identifier=` | Alle Felder, Mapping zu KIS-Modell | 🔲 |
-| 4.3 | MEDICO-Termin-Import: `GET /Appointment?_lastUpdated=ge{ts}` | Polling (30 s), Webhook optional | 🔲 |
-| 4.4 | MEDICO-Slot-Sync: `GET /Slot?start=YYYY-MM-DD` | Verfügbarkeit, Sprechstunden | 🔲 |
-| 4.5 | KIS → MEDICO: Patienten-Export (FHIR `POST /Patient`) | Bidirektional | 🔲 |
-| 4.6 | KIS → MEDICO: Termin-Buchung (`POST /Appointment/$book`) | ISiK `$book` Operation | 🔲 |
-| 4.7 | KIS → MEDICO: Termin-Änderung/-Storno | `cancelled-appt-id` Parameter | 🔲 |
-| 4.8 | GDT-Export: Patientenstammdaten als GDT-Datei | Kompatibel mit MEDICO-GDT-Format | 🔲 |
-| 4.9 | HL7 v2 Adapter: MEDICO-kompatible Nachrichten | ADT, ORU, ORM per MLLP | 🔲 |
-| 4.10 | Change-Detection: MEDICO → KIS (Polling + Webhook) | Keine Duplikate, Idempotenz | 🔲 |
-| 4.11 | Konflikt-Handling: Was passiert bei Datenkonflikten? | Last-Write-Wins + Audit-Log | 🔲 |
-| 4.12 | MEDICO-Status-Monitoring: Connectivity, Latenz, Fehler | Dashboard + Alerting | 🔲 |
-| 4.13 | Test-Setup: MEDICO-Sandbox (Mock-Server) | `tests/medico_mock.rs` | 🔲 |
+| 4.2 | MEDICO-Patienten-Import: `GET /Patient`, `GET /Patient?identifier=` | Alle Felder, Mapping zu KIS-Modell, Idempotenz | 🔲 |
+| 4.3 | MEDICO-Termin-Import: `GET /Appointment?_lastUpdated=ge{ts}` | Vollständiger Import + inkrementeller Sync (30 s) | 🔲 |
+| 4.4 | MEDICO-Slot-Import: `GET /Slot?start=YYYY-MM-DD` | Verfügbarkeit, Sprechstunden → KIS-Appointments | 🔲 |
+| 4.5 | MEDICO-Practitioner-Import: `GET /Practitioner`, `/PractitionerRole` | Ärzte + Sprechstunden → KIS-Doctors | 🔲 |
+| 4.6 | MEDICO-Befund-Import: `GET /Observation` | Laborwerte, Befunde → KIS-Observations | 🔲 |
+| 4.7 | MEDICO-Dokument-Import: `GET /DocumentReference` | Arztbriefe → KIS XDS Repository | 🔲 |
+| 4.8 | MEDICO-Medikament-Import: `GET /MedicationRequest` | Verordnungen → KIS-Medications | 🔲 |
+| 4.9 | GDT-Export: Patientenstammdaten als GDT-Datei | Kompatibel mit MEDICO-GDT-Format, für Rollback | 🔲 |
+| 4.10 | HL7 v2 Adapter: MEDICO-kompatible Nachrichten | ADT, ORU, ORM per MLLP (für Parallelbetrieb) | 🔲 |
+| 4.11 | Change-Detection: MEDICO → KIS (Polling + Webhook) | Keine Duplikate, Idempotenz via external_id | 🔲 |
+| 4.12 | Konflikt-Handling: Last-Write-Wins + Audit-Log | Konflikt-Queue für Admins | 🔲 |
+| 4.13 | MEDICO-Status-Monitoring: Connectivity, Latenz, Fehler | Dashboard + Alerting | 🔲 |
+| 4.14 | Migration-Orchestrierung: Phasenplan, Rollback, Parallelbetrieb | `docs/CGM_MEDICO.md` § 9 | 🔲 |
+| 4.15 | Test-Setup: MEDICO-Sandbox (Mock-Server) | `tests/medico_mock.rs` | 🔲 |
 
 **Agent-Regel Phase 4:** Alle MEDICO-Endpunkte sind in `config/kis.toml` unter `[modules.medico]` konfigurierbar. OAuth-Credentials NIE im Code — nur ENV-Variablen.
 
