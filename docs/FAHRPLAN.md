@@ -6,6 +6,14 @@
 
 ---
 
+## Aktueller Stand — 02.11.2026
+
+Der ausführbare Root-Build verwendet SQLite. Die folgende Architektur, die Phasen und die Umfangsziele beschreiben überwiegend den geplanten Ausbau. Der PostgreSQL-Code unter `crates/` ist nicht eingebunden; seine Manifeste und Implementierungen sind noch zu vervollständigen.
+
+Die Befundkorrekturen stellen Start, API-Präfix, Konfigurations-Overrides und Sicherheitsbausteine des Prototyps richtig. Fachliche CRUD-Endpunkte und MFA-Setup geben weiterhin HTTP 501 zurück. Es gibt noch keinen vollständigen MEDICO-Ersatz. Details und Verifikationsgrenzen stehen in [REVIEW_STATUS.md](REVIEW_STATUS.md).
+
+Ein Häkchen ist nur bei geprüftem Akzeptanzkriterium zulässig. Reine Entwurfsdateien oder Modellantworten belegen keine erfolgreiche Umsetzung. Das unabhängige zweite Security-Review bleibt ein Freigabeschritt.
+
 ## 1. Projektziele
 
 | Ziel | Metrik |
@@ -50,7 +58,7 @@
    └───────────────────────────────────────────────┘
 ```
 
-- **Stateless KIS-Instanzen**: Session-Management via JWT (kein Server-State)
+- **Stateless KIS-Instanzen** als Ziel: zentraler Sitzungswiderruf, Audit und Limits bleiben zustandsbehaftet und benötigen ein gemeinsames Konzept
 - **PostgreSQL** statt SQLite: MVCC, tausende parallele Transaktionen
 - **Read-Replicas**: Lese-Queries auf Replica, Schreib-Queries auf Primary
 - **Optimistic Locking**: `version`-Spalte in allen Tabellen, kein Pessimistic Locking
@@ -67,11 +75,11 @@
 | **DSGVO Art. 30** (Verzeichnis) | `docs/DSGVO/VERZEICHNIS.md` |
 | **DSGVO Art. 28** (Auftragsverarbeitungsvertrag) | `docs/DSGVO/AVV.md` |
 | **DSGVO Art. 33** (Meldung 72h) | Incident-Response-Plan |
-| **Audit-Trail** | Hash-Chain, 10 Jahre, tamper-proof |
+| **Audit-Trail** | Inhaltsprüfung, externe Verankerung und betrieblich begründete Aufbewahrung |
 | **Verschlüsselung** | AES-256-GCM at rest, TLS 1.3 in transit |
 | **Zugriffskontrolle** | RBAC (Admin, Arzt, Pflege, Rezeption, Viewer) |
 | **Datenhaltungsort** | Konfigurierbar, DSGVO-konform (EU) |
-| **Anonymisierung** | Pseudonymisierung nach Aufbewahrungsfrist |
+| **Anonymisierung** | Irreversible Anonymisierung prüfen; Pseudonymisierung bleibt davon getrennt |
 | **Backup** | 3-2-1-Regel, verschlüsselt |
 
 ### 2.3 Modularität & Erweiterbarkeit
@@ -128,7 +136,7 @@ kis-workspace/
     └── performance/
 ```
 
-**Modul-Kontrakte:**
+**Geplante Modul-Kontrakte:**
 
 Jedes Modul exportiert:
 1. **`Service`-Trait**: CRUD-Operationen, Suchen, Workflows
@@ -138,7 +146,8 @@ Jedes Modul exportiert:
 5. **`Feature-Flag`**: `Cargo.toml` Feature, `false` → wird nicht kompiliert
 
 **Erweiterung = neue Crate:**
-```rust
+```text
+# Entwurf; noch kein ausführbares Workspace-Beispiel.
 // crates/kis-new-module/Cargo.toml
 [package]
 name = "kis-new-module"
@@ -175,7 +184,7 @@ Phase 0: Fundament (2 Wochen)
                           └─ Phase 7: Härtung & Release (2 Wochen)
 ```
 
-Gesamt: **~23 Wochen** bis v1.0 Release.
+Historische Schätzung: **~23 Wochen**. Kein verbindlicher Termin; Aufwand und Abnahmen müssen anhand der offenen Tasks neu bewertet werden.
 
 ---
 
@@ -187,14 +196,14 @@ Gesamt: **~23 Wochen** bis v1.0 Release.
 
 | # | Task | Akzeptanzkriterium | Status |
 |---|------|-------------------|--------|
-| 0.1 | Cargo-Workspace mit Crates (kis-core, kis-patients, ...) | `cargo build` im Workspace | ✅ |
+| 0.1 | Cargo-Workspace mit Crates (kis-core, kis-patients, ...) | `cargo build` im Workspace | 🔲 |
 | 0.2 | Projektstruktur (Module: core, patients, doctors, appointments, medications, schnittstellen, security, config, ui) | `cargo check` ohne Fehler | ✅ |
 | 0.3 | Konfigurationssystem (figment: TOML + ENV) | `config/kis.toml` wird geladen | ✅ |
-| 0.4 | PostgreSQL-Setup (SQLX, Connection-Pooling, Migrations) | `cargo run` erstellt DB + Tabellen | ✅ |
+| 0.4 | PostgreSQL-Setup (SQLX, Connection-Pooling, Migrations) | `cargo run` erstellt PostgreSQL-DB + Tabellen | 🔲 |
 | 0.5 | Logging (tracing, JSON + Human) | Logs in `logs/kis.log` | 🔲 |
 | 0.6 | Fehlerhandling (anyhow + thiserror, JSON Error API) | Consistent Error-Format | 🔲 |
-| 0.7 | CI/CD (GitHub Actions: build, test, lint) | `.github/workflows/ci.yml` | 🔲 |
-| 0.8 | Testrahmen (unit + integration, `cargo test`) | Mindestens 10 Tests | 🔲 |
+| 0.7 | CI/CD (GitHub Actions: build, test, lint) | `.github/workflows/ci.yml` vorhanden; erster Remote-Lauf offen | 🔄 |
+| 0.8 | Testrahmen (unit + integration, `cargo test`) | Mindestens 10 Tests; Rust-/Backup-Regressionen vorhanden | 🔄 |
 | 0.9 | Dockerfile (multi-stage, minimal image) + docker-compose (KIS + PostgreSQL) | `docker compose up` < 150 MB | 🔲 |
 | 0.10 | systemd-Unit (Production-Deployment) | `kis.service` läuft als Daemon | 🔲 |
 | 0.11 | **PostgreSQL Read-Replica-Setup** (dokumentiert + Test-Script) | `docs/INSTALLATION.md` § Read-Replica | 🔲 |
@@ -273,7 +282,7 @@ Gesamt: **~23 Wochen** bis v1.0 Release.
 | 3.5 | **kis-dicom**: DICOM SCP (C-STORE, C-FIND, C-MOVE) | Port 104, AE Title konfigurierbar | 🔲 |
 | 3.6 | **kis-xds**: XDS: Document Registry + Repository | Dokument-Upload, Suche, Download | 🔲 |
 | 3.7 | **kis-ti**: Telematikinfrastruktur: eGK-Leser, ePA, eRezept, eAU, eArztbrief | KIM-Dienst, TI-Integration | 🔲 |
-| 3.8 | **kis-gdt**: GDT-Datei-Import (CSV) | Patientenstammdaten aus anderen KIS | 🔲 |
+| 3.8 | **kis-gdt**: GDT-Datei-Import (versionierte Satz-/Feldstruktur) | Patientenstammdaten aus anderen KIS | 🔲 |
 | 3.9 | Schnittstellen-Monitoring: Status, Fehler, Durchsatz | Dashboard-Anzeige | 🔲 |
 | 3.10 | Message-Queue (in-memory, persistente Warteschlange) | Kein Datenverlust bei Neustart | 🔲 |
 
@@ -286,7 +295,7 @@ Gesamt: **~23 Wochen** bis v1.0 Release.
 **Ziel:** KIS übernimmt **alle** Funktionen von CGM MEDICO. Der MEDICO-Import dient ausschließlich dem Daten-Übergang bei der Migration. Nach erfolgreicher Migration wird MEDICO abgeschaltet.
 
 > **KIS ist der vollumfängliche Ersatz für CGM MEDICO — keine Ergänzung.**
-> Alle MEDICO-Funktionen (Patienten, Termine, Slot, Befunde, Arztbriefe, DICOM, HL7, FHIR, TI) sind in KIS implementiert.
+> Alle benötigten MEDICO-Funktionen sollen vor einer Ablösung implementiert, mit realistischen Daten getestet und fachlich abgenommen sein. Dieser Stand ist noch nicht erreicht.
 > Der Import aus MEDICO ist ein einmaliger Migrationsvorgang, danach ist KIS das einzige System.
 > Siehe `docs/CGM_MEDICO.md` für Details.
 > **kis-medico ist eine eigene Cargo-Krate.**
@@ -306,12 +315,12 @@ Gesamt: **~23 Wochen** bis v1.0 Release.
 | 4.9 | GDT-Export: Patientenstammdaten als GDT-Datei | Kompatibel mit MEDICO-GDT-Format, für Rollback | 🔲 |
 | 4.10 | HL7 v2 Adapter: MEDICO-kompatible Nachrichten | ADT, ORU, ORM per MLLP (für Parallelbetrieb) | 🔲 |
 | 4.11 | Change-Detection: MEDICO → KIS (Polling + Webhook) | Keine Duplikate, Idempotenz via external_id | 🔲 |
-| 4.12 | Konflikt-Handling: Last-Write-Wins + Audit-Log | Konflikt-Queue für Admins | 🔲 |
+| 4.12 | Konflikt-Handling: Fachlich definierte Konfliktpolitik + Audit-Log | Konflikt-Queue für Admins | 🔲 |
 | 4.13 | MEDICO-Status-Monitoring: Connectivity, Latenz, Fehler | Dashboard + Alerting | 🔲 |
 | 4.14 | Migration-Orchestrierung: Phasenplan, Rollback, Parallelbetrieb | `docs/CGM_MEDICO.md` § 9 | 🔲 |
 | 4.15 | Test-Setup: MEDICO-Sandbox (Mock-Server) | `tests/medico_mock.rs` | 🔲 |
 
-**Agent-Regel Phase 4:** Alle MEDICO-Endpunkte sind in `config/kis.toml` unter `[modules.medico]` konfigurierbar. OAuth-Credentials NIE im Code — nur ENV-Variablen.
+**Agent-Regel Phase 4:** Alle MEDICO-Endpunkte sind in `config/kis.toml` im aktiven Prototyp unter `[interfaces.medico]` vorgesehen; ein vollständiger Importdienst fehlt noch. OAuth-Credentials NIE im Code — nur ENV-Variablen.
 
 ---
 
@@ -325,12 +334,12 @@ Gesamt: **~23 Wochen** bis v1.0 Release.
 |---|------|-------------------|--------|
 | 5.1 | TLS 1.3 (rustls): alle Endpunkte | Zertifikate konfigurierbar, HSTS | 🔲 |
 | 5.2 | AES-256-GCM: Verschlüsselung at rest (alle Patientendaten) | Master Key aus ENV, Key-Rotation | 🔲 |
-| 5.3 | Audit-Log: Hash-Chain, tamper-proof, 10 Jahre, Partitionierung | `docs/SECURITY.md` § Audit | 🔲 |
+| 5.3 | Audit-Log: Hash-Chain mit externem Prüfanker, Aufbewahrungskonzept, Partitionierung | `docs/SECURITY.md` § Audit | 🔲 |
 | 5.4 | RBAC: Vollständige Berechtigungs-Matrix | Jede Rolle × jede Entität × jede Aktion | 🔲 |
 | 5.5 | Session-Management: Concurrent-Login-Limit, Auto-Logout | 30 min Inaktivität → Logout | 🔲 |
 | 5.6 | **DSGVO Art. 17**: Datenlöschung (Hard + Soft Delete, Audit-Trail) | Löschung nach Aufbewahrungsfrist | 🔲 |
 | 5.7 | **DSGVO Art. 15/20**: Datenportabilität (Export in JSON/CSV) | Patient kann Daten exportieren | 🔲 |
-| 5.8 | **DSGVO Art. 17**: Anonymisierung nach Aufbewahrungsfrist | Pseudonymisierung, keine Identifizierung | 🔲 |
+| 5.8 | **DSGVO Art. 17**: Anonymisierung nach Aufbewahrungsfrist | Anonymisierung und Pseudonymisierung klar unterscheiden | 🔲 |
 | 5.9 | Datenschutz-Verzeichnis: Alle verarbeiteten Daten dokumentiert | `docs/DSGVO/VERZEICHNIS.md` | 🔲 |
 | 5.10 | DSGVO-Datenverarbeitungsverträge (Auftragsverarbeiter) | Vorlage in `docs/DSGVO/AVV.md` | 🔲 |
 | 5.11 | Incident-Response-Plan: 72-h-Meldung, Forensik | `docs/SECURITY.md` § Incident | 🔲 |
@@ -468,5 +477,5 @@ Ein Task ist **fertig** wenn:
 
 ---
 
-*Version: 2.0.0 | Stand: 2026-11-01 | Autor: Hermes Agent*
+*Planversion: 2.0.0 | Statusabgleich: 2026-11-02 | ursprünglicher Autor: Hermes Agent*
 *Änderungen: v2.0.0 — Skalierung (PostgreSQL, Read-Replicas, Optimistic Locking), Rechtssicherheit (DSGVO, Anonymisierung, Löschung), Modularität (Cargo-Workspace, Feature-Flags)*

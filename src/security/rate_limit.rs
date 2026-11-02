@@ -88,7 +88,10 @@ mod tests {
         for _ in 0..3 {
             assert_eq!(l.check("1.2.3.4", "api"), RateLimitResult::Allowed);
         }
-        assert!(matches!(l.check("1.2.3.4", "api"), RateLimitResult::RetryAfter(_)));
+        assert!(matches!(
+            l.check("1.2.3.4", "api"),
+            RateLimitResult::RetryAfter(_)
+        ));
     }
 
     #[test]
@@ -96,7 +99,10 @@ mod tests {
         let l = SlidingWindowLimiter::new(1, 1);
         assert_eq!(l.check("a", "api"), RateLimitResult::Allowed);
         assert_eq!(l.check("b", "api"), RateLimitResult::Allowed);
-        assert!(matches!(l.check("a", "api"), RateLimitResult::RetryAfter(_)));
+        assert!(matches!(
+            l.check("a", "api"),
+            RateLimitResult::RetryAfter(_)
+        ));
     }
 
     #[test]
@@ -104,7 +110,10 @@ mod tests {
         let l = SlidingWindowLimiter::new(100, 2);
         assert_eq!(l.check("a", "auth"), RateLimitResult::Allowed);
         assert_eq!(l.check("a", "auth"), RateLimitResult::Allowed);
-        assert!(matches!(l.check("a", "auth"), RateLimitResult::RetryAfter(_)));
+        assert!(matches!(
+            l.check("a", "auth"),
+            RateLimitResult::RetryAfter(_)
+        ));
         // api-Scope derselben IP bleibt frei
         assert_eq!(l.check("a", "api"), RateLimitResult::Allowed);
     }

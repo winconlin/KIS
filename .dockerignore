@@ -1,0 +1,15 @@
+.git
+.agents
+.codex
+.env
+.env.*
+!.env.example
+target
+data
+logs
+exports
+*.db
+*.db-wal
+*.db-shm
+*.key
+secrets

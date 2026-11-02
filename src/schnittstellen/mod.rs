@@ -1,6 +1,6 @@
-pub mod hl7;
-pub mod fhir;
 pub mod dicom;
+pub mod fhir;
+pub mod hl7;
 pub mod xds;
 
 pub mod medico {

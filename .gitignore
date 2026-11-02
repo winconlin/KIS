@@ -7,3 +7,11 @@ logs/
 *.key
 secrets/
 .env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+/exports/
+*.age
+*.age.sha256
+backup-identity*.txt

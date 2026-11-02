@@ -1,8 +1,9 @@
 # KIS Konfiguration
-# Alle Werte können per KIS_*_ENV übergeben werden
+# Verschachtelte Overrides: KIS_SERVER__PORT, KIS_DATABASE__PATH usw.
+# Nicht angeschlossene UI-/Schnittstellen-/LLM-Felder sind Ausbauoptionen.
 
 [server]
-host = "0.0.0.0"
+host = "127.0.0.1"
 port = 8080
 workers = 4
 
@@ -10,6 +11,7 @@ workers = 4
 # SQLite-Pfad (relativ zum Projektverzeichnis)
 path = "data/kis.db"
 pool_size = 10
+journal_mode = "wal"
 
 [ui]
 theme = "dark"
@@ -22,7 +24,7 @@ port = 6667
 version = "2.5"
 
 [interfaces.fhir]
-enabled = true
+enabled = false
 base_url = "http://localhost:8080/fhir"
 version = "R4"
 

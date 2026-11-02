@@ -1,12 +1,13 @@
 -- 002_security.sql
--- DSGVO: Audit-Einträge mind. 10 Jahre (3650 Tage) aufbewahren, niemals löschen
+-- Aufbewahrung anhand des betrieblichen Lösch- und Archivierungskonzepts festlegen.
 -- Hash-Chain gegen Manipulation
 -- Verschlüsselte Spalten für sensible Patientendaten (AES-256-GCM, Base64)
 
 -- Verschlüsselte Spalten für sensible Patientendaten
-ALTER TABLE patients ADD COLUMN IF NOT EXISTS insurance_no_enc TEXT;
-ALTER TABLE patients ADD COLUMN IF NOT EXISTS notes_enc TEXT;
-ALTER TABLE patients ADD COLUMN IF NOT EXISTS phone_enc TEXT;
+-- SQLx führt diese versionierte Migration genau einmal aus.
+ALTER TABLE patients ADD COLUMN insurance_no_enc TEXT;
+ALTER TABLE patients ADD COLUMN notes_enc TEXT;
+ALTER TABLE patients ADD COLUMN phone_enc TEXT;
 
 -- ============================================================
 -- AUDIT-LOG (Hash-Chain, 10 Jahre Aufbewahrung)

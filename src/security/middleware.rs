@@ -1,153 +1,98 @@
-//! Axum-Middleware: Authentifizierung (JWT + RBAC), Audit-Logging, Rate-Limiting
-//!
-//! Anwendungsort (Reihenfolge, äußerste zuerst):
-//!   1. RateLimitMiddleware  — lehnt überschrittene Limits mit 429 ab
-//!   2. AuditMiddleware      — protokolliert jeden Request (Patientendaten!)
-//!   3. AuthMiddleware       — validiert das JWT und legt den User in Extensions
-
+//! Serverseitige Authentifizierung und Rollenprüfung für den Entwicklungsprototyp.
+use super::{
+    audit::{AuditAction, AuditLogger},
+    auth::AuthContext,
+    rate_limit::{RateLimitResult, SlidingWindowLimiter},
+};
 use axum::{
     extract::{ConnectInfo, Request, State},
-    http::header,
+    http::{header, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use std::net::SocketAddr;
-use std::sync::Arc;
-use tracing::warn;
+use std::{net::SocketAddr, sync::Arc};
 
-use super::audit::{AuditAction, AuditLogger};
-use super::auth::{AuthContext, Claims};
-use super::rate_limit::{RateLimitResult, SlidingWindowLimiter};
-
-/// Authenticated-User, der in die Request-Extensions gelegt wird
 #[derive(Debug, Clone)]
 pub struct AuthenticatedUser {
     pub user_id: String,
     pub username: String,
     pub role: String,
 }
-
 impl AuthenticatedUser {
-    /// Prüft, ob der User die geforderte Rolle hat (einfache RBAC).
     pub fn has_role(&self, required: &str) -> bool {
-        self.role == required
-            || (required == "doctor" && self.role == "admin")
-            || (required == "nurse" && self.role == "admin")
-            || (required == "reception" && self.role == "admin")
+        self.role == required || self.role == "admin"
     }
-
-    /// Prüft, ob der User eine der gegebenen Rollen hat.
     pub fn has_any_role(&self, roles: &[&str]) -> bool {
-        roles.iter().any(|r| self.has_role(r))
+        roles.iter().any(|role| self.has_role(role))
     }
 }
-
-/// Pfad-Präfixe, die ohne JWT erreichbar bleiben (Login, Health, UI).
 fn is_public_path(path: &str) -> bool {
-    path.starts_with("/api/health")
-        || path.starts_with("/api/auth/login")
-        || path.starts_with("/api/auth/refresh")
-        || path.starts_with("/api/auth/mfa")
-        || path == "/"
-        || path.starts_with("/css/")
-        || path.starts_with("/js/")
+    matches!(
+        path,
+        "/api/health" | "/api/auth/login" | "/api/auth/refresh"
+    )
 }
-
-/// AuthMiddleware: validiert das JWT und legt den User in die Extensions.
-///
-/// Öffentliche Pfade (Login, Health, UI) passieren ohne Token.
 pub async fn auth_middleware(
     State(auth): State<Arc<AuthContext>>,
     mut req: Request,
     next: Next,
 ) -> Response {
-    let path = req.uri().path().to_string();
-    if is_public_path(&path) {
+    if is_public_path(req.uri().path()) {
         return next.run(req).await;
     }
-
-    // Authorization-Header parsen
-    let header_val = req
+    let token = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-
-    let token = match header_val {
-        Some(h) if h.starts_with("Bearer ") => h[7..].to_string(),
-        _ => {
-            return json_error(
-                axum::http::StatusCode::UNAUTHORIZED,
-                "missing_token",
-                "Fehlender Authorization-Header (Bearer <token>)",
-            );
-        }
+        .and_then(|v| v.strip_prefix("Bearer "));
+    let Some(token) = token else {
+        return json_error(
+            StatusCode::UNAUTHORIZED,
+            "missing_token",
+            "Bearer-Token erforderlich",
+        );
     };
-
-    // JWT validieren
-    let claims: Claims = match auth.verify_token(&token) {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(path = %path, error = %e, "Auth-Middleware: ungültiges Token");
-            return json_error(
-                axum::http::StatusCode::UNAUTHORIZED,
-                e.code(),
-                &e.to_string(),
-            );
-        }
+    let claims = match auth.verify_access_token(token).await {
+        Ok(claims) => claims,
+        Err(error) => return error.into_response(),
     };
-
-    let user = AuthenticatedUser {
-        user_id: claims.sub.clone(),
-        username: claims.username.clone(),
-        role: claims.role.clone(),
-    };
-    req.extensions_mut().insert(user.clone());
+    req.extensions_mut().insert(AuthenticatedUser {
+        user_id: claims.sub,
+        username: claims.username,
+        role: claims.role,
+    });
     next.run(req).await
 }
 
-/// RBAC-Middleware: prüft die in `:role` erwartete Rolle.
-///
-/// Wird über `middleware::from_fn_with_state` an Routen gehängt, die eine
-/// bestimmte Rolle erfordern. Die erwartete Rolle kommt aus der Query-Param
-/// `?role=...` oder wird pro Route festgelegt (simpler Ansatz: Query).
-pub async fn rbac_middleware(
-    req: Request,
-    next: Next,
-) -> Response {
-    // Erhoffte Rolle aus dem Query-Parameter (für einfache Routen)
-    let required_role = req
-        .uri()
-        .query()
-        .and_then(|q| {
-            q.split('&')
-                .find_map(|kv| kv.strip_prefix("role="))
-                .map(|s| s.to_string())
-        })
-        .unwrap_or_default();
-
-    if required_role.is_empty() {
+pub async fn rbac_middleware(req: Request, next: Next) -> Response {
+    let path = req.uri().path();
+    if is_public_path(path) {
         return next.run(req).await;
     }
-
-    let user: Option<AuthenticatedUser> = req.extensions().get::<AuthenticatedUser>().cloned();
-    let Some(user) = user else {
+    let Some(user) = req.extensions().get::<AuthenticatedUser>() else {
         return json_error(
-            axum::http::StatusCode::UNAUTHORIZED,
+            StatusCode::UNAUTHORIZED,
             "missing_user",
-            "Kein authentifizierter User im Request",
+            "Authentifizierung erforderlich",
         );
     };
-
-    if !user.has_role(&required_role) {
-        warn!(
-            user = %user.username,
-            required = %required_role,
-            actual = %user.role,
-            "RBAC: Rolle nicht berechtigt"
-        );
+    // Der Client kann die benötigte Berechtigung nicht über Queryparameter ändern.
+    let roles: &[&str] = match (req.method().as_str(), path) {
+        ("POST", "/api/auth/logout" | "/api/auth/mfa/setup") => {
+            &["admin", "doctor", "nurse", "reception"]
+        }
+        ("GET", "/api/patients" | "/api/appointments") => {
+            &["admin", "doctor", "nurse", "reception"]
+        }
+        ("GET", p) if p.starts_with("/api/patients/") => &["admin", "doctor", "nurse", "reception"],
+        ("POST", "/api/patients") => &["admin", "reception"],
+        ("POST", "/api/appointments") => &["admin", "doctor", "nurse", "reception"],
+        ("GET", "/api/medications") => &["admin", "doctor", "nurse"],
+        _ => &[],
+    };
+    if !user.has_any_role(roles) {
         return json_error(
-            axum::http::StatusCode::FORBIDDEN,
+            StatusCode::FORBIDDEN,
             "forbidden",
             "Nicht ausreichend berechtigt",
         );
@@ -155,127 +100,86 @@ pub async fn rbac_middleware(
     next.run(req).await
 }
 
-/// AuditMiddleware: protokolliert jeden Request, der Patientendaten betrifft.
-///
-/// Erkennt Patientendaten-Endpoints an `/api/patients`, `/api/appointments`,
-/// `/api/medications`. Liest die IP aus ConnectInfo.
 pub async fn audit_middleware(
     State(audit): State<Arc<AuditLogger>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     req: Request,
     next: Next,
 ) -> Response {
-    let path = req.uri().path().to_string();
-    let method = req.method().clone();
-
-    // Nur Endpunkte mit Patientendaten protokollieren
-    let is_patient_data = path.starts_with("/api/patients")
-        || path.starts_with("/api/appointments")
-        || path.starts_with("/api/medications");
-    if !is_patient_data {
-        return next.run(req).await;
+    let path = req.uri().path();
+    let entity = if path.starts_with("/api/patients") {
+        Some("patient")
+    } else if path.starts_with("/api/appointments") {
+        Some("appointment")
+    } else if path.starts_with("/api/medications") {
+        Some("medication")
+    } else {
+        None
+    };
+    if let Some(entity) = entity {
+        let user = req.extensions().get::<AuthenticatedUser>();
+        let action = match req.method().as_str() {
+            "POST" => AuditAction::Create,
+            "PUT" | "PATCH" => AuditAction::Update,
+            "DELETE" => AuditAction::Delete,
+            _ => AuditAction::Read,
+        };
+        let id = path.split('/').nth(3);
+        // Protokolliert den Zugriffsversuch, keinen bestätigten fachlichen DB-Commit.
+        if audit
+            .log(
+                user.map(|u| u.user_id.as_str()),
+                action,
+                entity,
+                id,
+                None,
+                None,
+                Some(&addr.ip().to_string()),
+            )
+            .await
+            .is_err()
+        {
+            return json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "audit_unavailable",
+                "Audit-Protokollierung nicht verfügbar",
+            );
+        }
     }
-
-    // User aus Extensions lesen (falls bereits authifiziert)
-    let user_id: Option<String> = req
-        .extensions()
-        .get::<AuthenticatedUser>()
-        .map(|u| u.user_id.clone());
-
-    let entity_type = extract_entity_type(&path);
-    let entity_id = extract_entity_id(&path);
-    let action = action_from_method(&method);
-
-    // Audit-Log-Eintrag anlegen (asynchron)
-    audit.log(
-        user_id.as_deref(),
-        action,
-        &entity_type,
-        entity_id.as_deref(),
-        None,
-        None,
-        Some(addr.ip().to_string().as_str()),
-    );
-
     next.run(req).await
 }
 
-/// RateLimitMiddleware: gleitendes Fenster pro IP.
-///
-/// Scope "auth" für `/api/auth/*` (strenger), sonst "api".
 pub async fn rate_limit_middleware(
     State(limiter): State<Arc<SlidingWindowLimiter>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     req: Request,
     next: Next,
 ) -> Response {
-    let path = req.uri().path().to_string();
-    let scope = if path.starts_with("/api/auth") {
+    let scope = if req.uri().path().starts_with("/api/auth/") {
         "auth"
     } else {
         "api"
     };
-
     match limiter.check(&addr.ip().to_string(), scope) {
         RateLimitResult::Allowed => next.run(req).await,
-        RateLimitResult::RetryAfter(secs) => {
-            warn!(ip = %addr.ip(), scope, "Rate-Limit erreicht");
-            let mut resp = json_error(
-                axum::http::StatusCode::TOO_MANY_REQUESTS,
+        RateLimitResult::RetryAfter(seconds) => {
+            let mut response = json_error(
+                StatusCode::TOO_MANY_REQUESTS,
                 "rate_limited",
-                "Zu viele Anfragen — bitte später erneut versuchen",
+                "Zu viele Anfragen",
             );
-            resp.headers_mut().insert(
-                header::RETRY_AFTER,
-                secs.to_string().parse().unwrap(),
-            );
-            resp
+            if let Ok(value) = seconds.to_string().parse() {
+                response.headers_mut().insert(header::RETRY_AFTER, value);
+            }
+            response
         }
     }
 }
 
-/// Leitet die Entitäten-Art aus dem Pfad ab
-fn extract_entity_type(path: &str) -> &'static str {
-    if path.starts_with("/api/patients") {
-        "patient"
-    } else if path.starts_with("/api/appointments") {
-        "appointment"
-    } else if path.starts_with("/api/medications") {
-        "medication"
-    } else {
-        "other"
-    }
-}
-
-/// Extrahiert die ID aus `/api/patients/:id`
-fn extract_entity_id(path: &str) -> Option<String> {
-    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    // /api/patients/uuid → letztes Segment
-    segs.last().filter(|_| segs.len() >= 3).map(|s| s.to_string())
-}
-
-/// Übersetzt die HTTP-Methode in eine Audit-Action
-fn action_from_method(method: &axum::http::Method) -> AuditAction {
-    match method.as_str() {
-        "GET" => AuditAction::Read,
-        "POST" => AuditAction::Create,
-        "PUT" | "PATCH" => AuditAction::Update,
-        "DELETE" => AuditAction::Delete,
-        _ => AuditAction::Read,
-    }
-}
-
-/// Erzeugt eine JSON-Fehlerantwort mit Fehlercode und Nachricht
-pub fn json_error(status: axum::http::StatusCode, code: &str, message: &str) -> Response {
-    let body = serde_json::json!({
-        "error": message,
-        "code": code,
-        "status": status.as_u16(),
-    });
+pub fn json_error(status: StatusCode, code: &str, message: &str) -> Response {
     (
         status,
-        [(header::CONTENT_TYPE, "application/json")],
-        body.to_string(),
+        axum::Json(serde_json::json!({"error": message, "code": code, "status": status.as_u16()})),
     )
         .into_response()
 }

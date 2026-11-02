@@ -1,7 +1,7 @@
 //! CGM MEDICO FHIR R4 Client
 //!
 //! Bidirektionaler Datenaustausch mit CGM MEDICO über FHIR R4,
-//! OAuth 2.0 (Client Credentials), ISiK-konform.
+//! OAuth 2.0 (Client Credentials). Keine nachgewiesene ISiK-Konformität.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -11,7 +11,6 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-
 /// MEDICO FHIR Client mit OAuth 2.0 und Auto-Refresh
 pub struct MedicoClient {
     base_url: String,
@@ -19,6 +18,9 @@ pub struct MedicoClient {
     token: Option<String>,
     token_expiry: Option<DateTime<Utc>>,
     scopes: Vec<String>,
+    auth_endpoint: String,
+    client_id_env: String,
+    client_secret_env: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -78,6 +80,7 @@ pub struct MedicoIdentifier {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MedicoAddress {
     #[serde(default)]
     pub line: Vec<String>,
@@ -92,11 +95,13 @@ pub struct MedicoTelecom {
     pub system: String,
     pub value: String,
     #[serde(default)]
+    #[serde(rename = "use")]
     pub use_type: Option<String>,
 }
 
 /// MEDICO-Termin (FHIR R4 Appointment)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MedicoAppointment {
     pub id: String,
     #[serde(rename = "resourceType")]
@@ -111,9 +116,17 @@ pub struct MedicoAppointment {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
-    pub service_type: Vec<MedicoCoding>,
+    pub service_type: Vec<MedicoCodeableConcept>,
     #[serde(default)]
     pub participant: Vec<MedicoParticipant>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MedicoCodeableConcept {
+    #[serde(default)]
+    pub coding: Vec<MedicoCoding>,
+    #[serde(default)]
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +186,7 @@ pub struct Bundle {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BundleEntry {
     #[serde(default)]
     pub full_url: Option<String>,
@@ -199,30 +213,50 @@ impl MedicoClient {
     ///
     /// `base_url`: z.B. "https://fhir.medico.example.com/fhir/"
     /// `scopes`: OAuth 2.0 Scopes
-    pub fn new(base_url: &str, scopes: Vec<String>) -> Self {
+    pub fn new(base_url: &str, scopes: Vec<String>) -> Result<Self, MedicoError> {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .connect_timeout(Duration::from_secs(10))
-            .build()
-            .expect("HTTP Client konnte nicht erstellt werden");
-
-        Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        let base_url = base_url.trim_end_matches('/').to_string();
+        Ok(Self {
+            auth_endpoint: format!("{base_url}/auth/token"),
+            base_url,
             client,
             token: None,
             token_expiry: None,
             scopes,
-        }
+            client_id_env: "KIS_MEDICO_CLIENT_ID".into(),
+            client_secret_env: "KIS_MEDICO_CLIENT_SECRET".into(),
+        })
+    }
+
+    pub fn from_config(config: &crate::config::MedicoInterfaceConfig) -> Result<Self, MedicoError> {
+        let mut client = Self::new(&config.base_url, config.scopes.clone())?;
+        client.auth_endpoint = config.auth_endpoint.clone();
+        client.client_id_env = config.client_id_env.clone();
+        client.client_secret_env = config.client_secret_env.clone();
+        client.client = Client::builder()
+            .timeout(Duration::from_secs(config.request_timeout_seconds))
+            .connect_timeout(Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        Ok(client)
     }
 
     /// OAuth 2.0 Client Credentials Flow
     ///
     /// Credentials kommen ausschließlich aus ENV-Variablen, nie aus Code.
-    pub async fn get_token(&mut self, client_id: &str, client_secret: &str) -> Result<String, MedicoError> {
+    pub async fn get_token(
+        &mut self,
+        client_id: &str,
+        client_secret: &str,
+    ) -> Result<String, MedicoError> {
         let scope = self.scopes.join(" ");
         let response = self
             .client
-            .post(format!("{}/auth/token", self.base_url))
+            .post(&self.auth_endpoint)
             .form(&[
                 ("grant_type", "client_credentials"),
                 ("client_id", client_id),
@@ -235,11 +269,10 @@ impl MedicoClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            error!(status = %status, body = %body, "MEDICO OAuth Token-Fehler");
+            error!(status = %status, "MEDICO OAuth Token-Fehler");
             return Err(MedicoError::AuthError(format!(
-                "OAuth Token-Request fehlgeschlagen ({}): {}",
-                status, body
+                "OAuth Token-Request fehlgeschlagen ({})",
+                status
             )));
         }
 
@@ -254,6 +287,14 @@ impl MedicoClient {
             "MEDICO OAuth Token erfolgreich"
         );
 
+        if body.expires_in <= 0
+            || body.access_token.is_empty()
+            || !body.token_type.eq_ignore_ascii_case("bearer")
+        {
+            return Err(MedicoError::AuthError(
+                "Ungültige OAuth-Tokenantwort".into(),
+            ));
+        }
         self.token = Some(body.access_token.clone());
         self.token_expiry = Some(Utc::now() + chrono::Duration::seconds(body.expires_in - 60));
         Ok(body.access_token)
@@ -266,145 +307,128 @@ impl MedicoClient {
                 return Ok(());
             }
         }
-        let client_id = std::env::var("KIS_MEDICO_CLIENT_ID")
+        let client_id = std::env::var(&self.client_id_env)
             .map_err(|_| MedicoError::AuthError("KIS_MEDICO_CLIENT_ID nicht gesetzt".into()))?;
-        let client_secret = std::env::var("KIS_MEDICO_CLIENT_SECRET")
+        let client_secret = std::env::var(&self.client_secret_env)
             .map_err(|_| MedicoError::AuthError("KIS_MEDICO_CLIENT_SECRET nicht gesetzt".into()))?;
-        self.get_token(&client_id, &client_secret)
-            .await?;
+        self.get_token(&client_id, &client_secret).await?;
         Ok(())
     }
 
-    /// Patienten aus MEDICO importieren (seit letztem Update)
+    async fn fetch_resources<T: serde::de::DeserializeOwned>(
+        &mut self,
+        resource_type: &str,
+        parameters: &[(&str, String)],
+    ) -> Result<Vec<T>, MedicoError> {
+        self.ensure_token().await?;
+        let token = self
+            .token
+            .as_ref()
+            .ok_or_else(|| MedicoError::AuthError("Token fehlt".into()))?
+            .clone();
+        let base = reqwest::Url::parse(&format!("{}/", self.base_url))
+            .map_err(|e| MedicoError::ParseError(e.to_string()))?;
+        let mut page = base
+            .join(resource_type)
+            .map_err(|e| MedicoError::ParseError(e.to_string()))?;
+        for (key, value) in parameters {
+            page.query_pairs_mut().append_pair(key, value);
+        }
+        page.query_pairs_mut().append_pair("_count", "100");
+        let mut visited = std::collections::HashSet::new();
+        let mut resources = Vec::new();
+        loop {
+            if page.origin() != base.origin()
+                || !page.path().starts_with(base.path())
+                || !page.username().is_empty()
+                || page.password().is_some()
+            {
+                return Err(MedicoError::ParseError(
+                    "Paging-Link verlässt die konfigurierte FHIR-Basis".into(),
+                ));
+            }
+            if visited.len() >= 10000 || !visited.insert(page.as_str().to_owned()) {
+                return Err(MedicoError::ParseError(
+                    "Zyklisches oder zu langes FHIR-Paging".into(),
+                ));
+            }
+            let response = self
+                .client
+                .get(page.clone())
+                .bearer_auth(&token)
+                .header("Accept", "application/fhir+json")
+                .send()
+                .await?
+                .error_for_status()?;
+            let bundle: Bundle = response.json().await?;
+            if bundle.resource_type != "Bundle" {
+                return Err(MedicoError::ParseError(
+                    "FHIR-Antwort ist kein Bundle".into(),
+                ));
+            }
+            for entry in bundle.entry {
+                let value = entry.resource.ok_or_else(|| {
+                    MedicoError::ParseError("Bundle-Eintrag ohne Ressource".into())
+                })?;
+                if value.get("resourceType").and_then(|v| v.as_str()) != Some(resource_type) {
+                    return Err(MedicoError::ParseError(
+                        "Unerwarteter Ressourcentyp im Suchergebnis".into(),
+                    ));
+                }
+                resources.push(
+                    serde_json::from_value(value)
+                        .map_err(|e| MedicoError::ParseError(e.to_string()))?,
+                );
+            }
+            let next: Vec<_> = bundle
+                .link
+                .iter()
+                .filter(|link| link.relation == "next")
+                .collect();
+            match next.as_slice() {
+                [] => break,
+                [link] => {
+                    page = page
+                        .join(&link.url)
+                        .map_err(|e| MedicoError::ParseError(e.to_string()))?
+                }
+                _ => {
+                    return Err(MedicoError::ParseError(
+                        "Mehrere next-Links im Bundle".into(),
+                    ))
+                }
+            }
+        }
+        Ok(resources)
+    }
+
     pub async fn import_patients(
         &mut self,
         since: &DateTime<Utc>,
     ) -> Result<Vec<MedicoPatient>, MedicoError> {
-        self.ensure_token().await?;
-        let token = self.token.as_ref().unwrap().clone();
-
-        let url = format!(
-            "{}/Patient?_lastUpdated=ge{}&_count=100",
-            self.base_url,
-            since.to_rfc3339()
-        );
-
-        let response = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", token))
-            .header("Accept", "application/fhir+json")
-            .send()
-            .await
-            .map_err(|e| MedicoError::Unreachable(e.to_string()))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            error!(status = %status, "MEDICO Patient-Import fehlgeschlagen");
-            return Err(MedicoError::HttpError(response.error_for_status().unwrap_err()));
-        }
-
-        let bundle: Bundle = response
-            .json()
-            .await
-            .map_err(|e| MedicoError::ParseError(e.to_string()))?;
-
-        let patients: Vec<MedicoPatient> = bundle
-            .entry
-            .iter()
-            .filter_map(|e| {
-                e.resource
-                    .as_ref()
-                    .and_then(|r| serde_json::from_value(r.clone()).ok())
-            })
-            .collect();
-
-        info!(count = patients.len(), "MEDICO Patient-Import");
-        Ok(patients)
+        self.fetch_resources(
+            "Patient",
+            &[("_lastUpdated", format!("ge{}", since.to_rfc3339()))],
+        )
+        .await
     }
-
-    /// Termine aus MEDICO importieren
     pub async fn import_appointments(
         &mut self,
         since: &DateTime<Utc>,
     ) -> Result<Vec<MedicoAppointment>, MedicoError> {
-        self.ensure_token().await?;
-        let token = self.token.as_ref().unwrap().clone();
-
-        let url = format!(
-            "{}/Appointment?_lastUpdated=ge{}&_count=100",
-            self.base_url,
-            since.to_rfc3339()
-        );
-
-        let response = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", token))
-            .header("Accept", "application/fhir+json")
-            .send()
-            .await
-            .map_err(|e| MedicoError::Unreachable(e.to_string()))?;
-
-        let bundle: Bundle = response
-            .json()
-            .await
-            .map_err(|e| MedicoError::ParseError(e.to_string()))?;
-
-        let appointments: Vec<MedicoAppointment> = bundle
-            .entry
-            .iter()
-            .filter_map(|e| {
-                e.resource
-                    .as_ref()
-                    .and_then(|r| serde_json::from_value(r.clone()).ok())
-            })
-            .collect();
-
-        info!(count = appointments.len(), "MEDICO Termin-Import");
-        Ok(appointments)
+        self.fetch_resources(
+            "Appointment",
+            &[("_lastUpdated", format!("ge{}", since.to_rfc3339()))],
+        )
+        .await
     }
-
-    /// Slots aus MEDICO importieren (für angegebene Tagesliste)
     pub async fn import_slots(&mut self, date: &str) -> Result<Vec<MedicoSlot>, MedicoError> {
-        self.ensure_token().await?;
-        let token = self.token.as_ref().unwrap().clone();
-
-        let url = format!("{}/Slot?start={}&_count=200", self.base_url, date);
-
-        let response = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", token))
-            .header("Accept", "application/fhir+json")
-            .send()
+        self.fetch_resources("Slot", &[("start", date.to_string())])
             .await
-            .map_err(|e| MedicoError::Unreachable(e.to_string()))?;
-
-        let bundle: Bundle = response
-            .json()
-            .await
-            .map_err(|e| MedicoError::ParseError(e.to_string()))?;
-
-        let slots: Vec<MedicoSlot> = bundle
-            .entry
-            .iter()
-            .filter_map(|e| {
-                e.resource
-                    .as_ref()
-                    .and_then(|r| serde_json::from_value(r.clone()).ok())
-            })
-            .collect();
-
-        info!(date = %date, count = slots.len(), "MEDICO Slot-Import");
-        Ok(slots)
     }
 
     /// Patienten in MEDICO exportieren (für Rollback während Migrationsphase)
-    pub async fn export_patient(
-        &mut self,
-        patient: &MedicoPatient,
-    ) -> Result<String, MedicoError> {
+    pub async fn export_patient(&mut self, patient: &MedicoPatient) -> Result<String, MedicoError> {
         self.ensure_token().await?;
         let token = self.token.as_ref().unwrap().clone();
 
@@ -421,7 +445,9 @@ impl MedicoClient {
         if !response.status().is_success() {
             let status = response.status();
             error!(status = %status, "MEDICO Patient-Export fehlgeschlagen");
-            return Err(MedicoError::HttpError(response.error_for_status().unwrap_err()));
+            return Err(MedicoError::HttpError(
+                response.error_for_status().unwrap_err(),
+            ));
         }
 
         let created: MedicoPatient = response
@@ -454,7 +480,9 @@ impl MedicoClient {
         if !response.status().is_success() {
             let status = response.status();
             error!(status = %status, "MEDICO Termin-Buchung fehlgeschlagen");
-            return Err(MedicoError::HttpError(response.error_for_status().unwrap_err()));
+            return Err(MedicoError::HttpError(
+                response.error_for_status().unwrap_err(),
+            ));
         }
 
         let result: MedicoAppointment = response
@@ -494,7 +522,9 @@ impl MedicoClient {
                 appointment_id = %appointment_id,
                 "MEDICO Termin-Storno fehlgeschlagen"
             );
-            return Err(MedicoError::HttpError(response.error_for_status().unwrap_err()));
+            return Err(MedicoError::HttpError(
+                response.error_for_status().unwrap_err(),
+            ));
         }
 
         info!(appointment_id = %appointment_id, "MEDICO Termin storniert");
@@ -503,23 +533,20 @@ impl MedicoClient {
 
     /// Health Check: Ist MEDICO erreichbar?
     pub async fn health_check(&mut self) -> bool {
-        self.ensure_token().await
-            .map(|_| true)
-            .unwrap_or(false)
+        self.ensure_token().await.map(|_| true).unwrap_or(false)
     }
 }
 
 /// Change-Detection: Polling + ID-Tracking
+#[derive(Default)]
 pub struct MedicoChangeDetector {
     last_processed: HashMap<String, DateTime<Utc>>,
-    processed_ids: std::collections::HashSet<String>,
 }
 
 impl MedicoChangeDetector {
     pub fn new() -> Self {
         Self {
             last_processed: HashMap::new(),
-            processed_ids: std::collections::HashSet::new(),
         }
     }
 
@@ -528,6 +555,7 @@ impl MedicoChangeDetector {
         &mut self,
         client: &mut MedicoClient,
     ) -> Result<MedicoChanges, MedicoError> {
+        let poll_started = Utc::now();
         let mut changes = MedicoChanges::default();
 
         // Patienten
@@ -535,32 +563,25 @@ impl MedicoChangeDetector {
             .last_processed
             .get("patient")
             .copied()
-            .unwrap_or_else(|| Utc::now() - chrono::Duration::hours(24));
+            .unwrap_or(DateTime::<Utc>::UNIX_EPOCH);
 
         let patients = client.import_patients(&since).await?;
-        for p in patients {
-            let key = format!("patient:{}", p.id);
-            if self.processed_ids.insert(key) {
-                changes.patients.push(p);
-            }
-        }
-        self.last_processed.insert("patient".into(), Utc::now());
+        changes.patients = patients;
 
         // Termine
         let since = self
             .last_processed
             .get("appointment")
             .copied()
-            .unwrap_or_else(|| Utc::now() - chrono::Duration::hours(24));
+            .unwrap_or(DateTime::<Utc>::UNIX_EPOCH);
 
         let appointments = client.import_appointments(&since).await?;
-        for a in appointments {
-            let key = format!("appointment:{}", a.id);
-            if self.processed_ids.insert(key) {
-                changes.appointments.push(a);
-            }
-        }
-        self.last_processed.insert("appointment".into(), Utc::now());
+        changes.appointments = appointments;
+        // Wiederholungen sind möglich und müssen beim DB-Upsert idempotent sein.
+        // Kein dauerhaftes Verwerfen aller späteren Versionen derselben ID.
+        self.last_processed.insert("patient".into(), poll_started);
+        self.last_processed
+            .insert("appointment".into(), poll_started);
 
         Ok(changes)
     }
@@ -570,28 +591,35 @@ impl MedicoChangeDetector {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdMapping {
     pub id: String,
-    pub externo_system: String,
-    pub externo_id: String,
-    pub kiso_id: String,
+    pub external_system: String,
+    pub external_id: String,
+    pub kis_id: String,
     pub entity_type: String,
     pub created_at: DateTime<Utc>,
 }
 
-/// GDT-Export: Patientenstammdaten als CSV
-pub fn export_gdt(
+/// Semikolon-CSV für Entwicklung; kein standardkonformer GDT-Export.
+pub fn export_patients_csv(
     patients: &[MedicoPatient],
     output_path: &std::path::Path,
 ) -> std::io::Result<()> {
     use std::io::Write;
 
     let mut buf = Vec::new();
-    buf.write_all(b"GDT-1;Patientenstammdaten;KIS;1.0;")?;
-    buf.write_all(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string().as_bytes())?;
-    buf.write_all(b"\n")?;
+    buf.write_all(b"id;last_name;first_name;birth_date;gender;identifier;address;phone\n")?;
 
     for p in patients {
-        let last = p.name.first().and_then(|n| n.family.as_deref()).unwrap_or("");
-        let first = p.name.first().and_then(|n| n.given.first()).map(String::as_str).unwrap_or("");
+        let last = p
+            .name
+            .first()
+            .and_then(|n| n.family.as_deref())
+            .unwrap_or("");
+        let first = p
+            .name
+            .first()
+            .and_then(|n| n.given.first())
+            .map(String::as_str)
+            .unwrap_or("");
         let birth = p.birth_date.as_deref().unwrap_or("");
         let gender = p.gender.as_deref().unwrap_or("");
         let insurance = p
@@ -613,13 +641,22 @@ pub fn export_gdt(
             .map(|t| t.value.as_str())
             .unwrap_or("");
 
-        buf.write_all(
-            format!(
-                "{};{};{};{};{};{};{};{}\n",
-                p.id, last, first, birth, gender, insurance, address, phone
-            )
-            .as_bytes(),
-        )?;
+        let fields = [
+            p.id.as_str(),
+            last,
+            first,
+            birth,
+            gender,
+            insurance,
+            address,
+            phone,
+        ];
+        let row = fields
+            .iter()
+            .map(|field| format!("\"{}\"", field.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(";");
+        writeln!(&mut buf, "{row}")?;
     }
 
     if let Some(parent) = output_path.parent() {
@@ -632,6 +669,106 @@ pub fn export_gdt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn mock_client(router: axum::Router) -> (MedicoClient, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/fhir/", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let mut client = MedicoClient::new(&base, vec![]).unwrap();
+        client.token = Some("mock-token".into());
+        client.token_expiry = Some(Utc::now() + chrono::Duration::hours(1));
+        (client, task)
+    }
+
+    #[tokio::test]
+    async fn import_follows_all_pages() {
+        use axum::{extract::Query, routing::get, Json};
+        let router = axum::Router::new().route("/fhir/Patient", get(|Query(parameters): Query<HashMap<String, String>>| async move {
+            let second = parameters.get("page").is_some_and(|p| p == "2");
+            let entries: Vec<_> = (if second { 100..151 } else { 0..100 }).map(|id|
+                serde_json::json!({"resource":{"resourceType":"Patient", "id":format!("P{id}")}})).collect();
+            Json(serde_json::json!({"resourceType":"Bundle", "type":"searchset", "entry":entries,
+                "link":if second { vec![] } else { vec![serde_json::json!({"relation":"next", "url":"?page=2"})] }}))
+        }));
+        let (mut client, task) = mock_client(router).await;
+        let patients = client
+            .import_patients(&DateTime::<Utc>::UNIX_EPOCH)
+            .await
+            .unwrap();
+        assert_eq!(patients.len(), 151);
+        assert_eq!(patients.last().unwrap().id, "P150");
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn later_versions_of_same_resource_are_not_dropped() {
+        use axum::{routing::get, Json};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let version = Arc::new(AtomicUsize::new(0));
+        let router = axum::Router::new()
+            .route("/fhir/Patient", get(move || { let version = version.clone(); async move {
+                let number = version.fetch_add(1, Ordering::SeqCst);
+                Json(serde_json::json!({"resourceType":"Bundle", "entry":[{"resource":{"resourceType":"Patient", "id":"P1", "name":[{"family":number.to_string()}]}}]}))
+            }}))
+            .route("/fhir/Appointment", get(|| async { Json(serde_json::json!({"resourceType":"Bundle", "entry":[]})) }));
+        let (mut client, task) = mock_client(router).await;
+        let mut detector = MedicoChangeDetector::new();
+        let first = detector.poll_changes(&mut client).await.unwrap();
+        let second = detector.poll_changes(&mut client).await.unwrap();
+        assert_eq!(first.patients.len(), 1);
+        assert_eq!(second.patients.len(), 1);
+        assert_ne!(
+            first.patients[0].name[0].family,
+            second.patients[0].name[0].family
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn errors_and_foreign_paging_links_are_rejected() {
+        use axum::{http::StatusCode, routing::get, Json};
+        let router = axum::Router::new()
+            .route("/fhir/Patient", get(|| async { Json(serde_json::json!({"resourceType":"Bundle", "link":[{"relation":"next", "url":"http://127.0.0.1:1/stolen"}]})) }))
+            .route("/fhir/Appointment", get(|| async { (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"resourceType":"OperationOutcome"}))) }))
+            .route("/fhir/Slot", get(|| async { Json(serde_json::json!({"resourceType":"Bundle", "entry":[{"resource":{"resourceType":"Slot"}}]})) }));
+        let (mut client, task) = mock_client(router).await;
+        assert!(matches!(
+            client.import_patients(&DateTime::<Utc>::UNIX_EPOCH).await,
+            Err(MedicoError::ParseError(_))
+        ));
+        assert!(client
+            .import_appointments(&DateTime::<Utc>::UNIX_EPOCH)
+            .await
+            .is_err());
+        assert!(client.import_slots("2026-11-02").await.is_err());
+        task.abort();
+    }
+
+    #[test]
+    fn fhir_camel_case_fields_survive_roundtrip() {
+        let address: MedicoAddress =
+            serde_json::from_value(serde_json::json!({"postalCode":"12345"})).unwrap();
+        assert_eq!(address.postal_code.as_deref(), Some("12345"));
+        assert_eq!(
+            serde_json::to_value(address).unwrap()["postalCode"],
+            "12345"
+        );
+        let appointment: MedicoAppointment = serde_json::from_value(serde_json::json!({"id":"A1", "serviceType":[{"coding":[{"code":"consult"}], "text":"Visit"}]})).unwrap();
+        assert_eq!(
+            appointment.service_type[0].coding[0].code.as_deref(),
+            Some("consult")
+        );
+        let entry: BundleEntry = serde_json::from_value(
+            serde_json::json!({"fullUrl":"https://example.test/Patient/P1"}),
+        )
+        .unwrap();
+        assert!(entry.full_url.is_some());
+    }
 
     #[test]
     fn test_patient_parsing() {
@@ -679,28 +816,27 @@ mod tests {
     }
 
     #[test]
-    fn test_gdt_export() {
-        let patients = vec![
-            MedicoPatient {
-                id: "MEDICO-001".into(),
-                resource_type: "Patient".into(),
-                name: vec![MedicoName {
-                    family: Some("Muster".into()),
-                    given: vec!["Max".into()],
-                }],
-                birth_date: Some("1980-01-15".into()),
-                gender: Some("male".into()),
-                identifier: vec![MedicoIdentifier {
-                    system: "MR".into(),
-                    value: "123456789".into(),
-                }],
-                address: vec![],
-                telecom: vec![],
-            },
-        ];
+    fn test_csv_export() {
+        let patients = vec![MedicoPatient {
+            id: "MEDICO-001".into(),
+            resource_type: "Patient".into(),
+            name: vec![MedicoName {
+                family: Some("Muster".into()),
+                given: vec!["Max".into()],
+            }],
+            birth_date: Some("1980-01-15".into()),
+            gender: Some("male".into()),
+            identifier: vec![MedicoIdentifier {
+                system: "MR".into(),
+                value: "123456789".into(),
+            }],
+            address: vec![],
+            telecom: vec![],
+        }];
 
-        let path = std::path::PathBuf::from("/tmp/test_gdt.csv");
-        export_gdt(&patients, &path).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("patients.csv");
+        export_patients_csv(&patients, &path).unwrap();
         assert!(path.exists());
         std::fs::remove_file(path).ok();
     }

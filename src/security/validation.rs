@@ -44,10 +44,7 @@ pub fn validate_email(email: &str) -> bool {
         if label.is_empty() || label.len() > 63 {
             return false;
         }
-        if !label
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-')
-        {
+        if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
             return false;
         }
         if label.starts_with('-') || label.ends_with('-') {
@@ -68,7 +65,10 @@ pub fn validate_phone(phone: &str) -> bool {
         .collect();
     // Mind. 6, max. 15 Ziffern (nach +)
     let count = digits_only.chars().filter(|c| c.is_ascii_digit()).count();
-    if count < 6 || count > 15 {
+    if !(6..=15).contains(&count)
+        || phone.matches('+').count() > 1
+        || (phone.contains('+') && !phone.starts_with('+'))
+    {
         return false;
     }
     // Nur erlaubte Zeichen: Ziffern, Leerzeichen, Klammern, Bindestrich, Plus
@@ -92,14 +92,14 @@ pub fn sanitize_name(name: &str) -> String {
         .chars()
         .filter(|c| {
             c.is_alphanumeric()
-                || matches!(c, ' ' | '-' | '.' | '\'' | '’' | 'à' | 'ä' | 'ö' | 'ü' | 'ß' | 'Ä' | 'Ö' | 'Ü')
+                || matches!(
+                    c,
+                    ' ' | '-' | '.' | '\'' | '’' | 'à' | 'ä' | 'ö' | 'ü' | 'ß' | 'Ä' | 'Ö' | 'Ü'
+                )
         })
         .collect();
     // Mehrere Leerzeichen zu einem reduzieren
-    let normalized: String = cleaned
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let normalized: String = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     // Auf 200 Zeichen begrenzen (Name sollte nicht länger sein)
     normalized.chars().take(200).collect()
 }
@@ -109,7 +109,7 @@ pub fn sanitize_name(name: &str) -> String {
 pub fn sanitize_text(text: &str, max_len: usize) -> String {
     let cleaned: String = text
         .chars()
-        .filter(|c| c.is_whitespace() || c.is_alphanumeric() || !c.is_control())
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
         .collect();
     cleaned.chars().take(max_len).collect()
 }
