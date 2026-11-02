@@ -9,9 +9,8 @@
 //! - Audit-Log: Hash-Chain, 10 Jahre, tamper-proof
 //! - Rate-Limiting: Sliding Window
 
+use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, KeyInit};
-use aes_gcm::aead::{Aead, Key, OsRng};
-use aes_gcm::KeyInit;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
@@ -75,6 +74,43 @@ impl Security {
             &EncodingKey::from_secret(self.jwt_secret.as_bytes()),
         )?;
         Ok(token)
+    }
+
+    /// Erzeugt einen Refresh-Token (24 h)
+    pub fn create_refresh_token(&self, user_id: &str) -> anyhow::Result<String> {
+        let now = chrono::Utc::now();
+        let expiry = now + chrono::Duration::hours(24);
+
+        let claims = Claims {
+            sub: user_id.to_string(),
+            role: "refresh".to_string(),
+            iat: now.timestamp(),
+            exp: expiry.timestamp(),
+            jti: uuid::Uuid::new_v4().to_string(),
+        };
+
+        let token = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(self.jwt_secret.as_bytes()),
+        )?;
+        Ok(token)
+    }
+
+    /// Access-Token-TTL in Sekunden
+    pub fn access_token_ttl(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.config.token_expiry as u64)
+    }
+
+    /// Audit-Log-Eintrag (synchroner Platzhalter — in Produktion: DB-Write)
+    pub async fn log_audit(
+        &self,
+        user_id: &str,
+        category: &str,
+        action: &str,
+        _data: Option<serde_json::Value>,
+    ) {
+        info!(user_id, category, action, "Audit-Log-Eintrag");
     }
 
     /// Verifiziert einen JWT-Token
@@ -166,7 +202,12 @@ impl Security {
         hasher.update(prev_hash.as_bytes());
         hasher.update(data.to_string().as_bytes());
         let result = hasher.finalize();
-        hex::encode(result)
+        // Hex-Encodierung ohne extra-Krate: byte-weises Formatieren
+        let mut hex_str = String::with_capacity(result.len() * 2);
+        for b in result {
+            hex_str.push_str(&format!("{:02x}", b));
+        }
+        hex_str
     }
 
     /// Prüft, ob ein User gesperrt ist

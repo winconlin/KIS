@@ -14,7 +14,7 @@
 
 use sqlx::postgres::{PgPoolOptions, PgConnectOptions};
 use sqlx::Pool;
-use std::sync::Arc;
+use std::str::FromStr;
 use tracing::{info, warn};
 
 pub struct Database {
@@ -36,31 +36,23 @@ impl Database {
         max_connections: u32,
     ) -> anyhow::Result<Self> {
         // Write-Pool
-        let write_options = PgConnectOptions::new()
-            .from_str(write_url)?
-            .max_connections(max_connections);
-
         let write_pool = PgPoolOptions::new()
             .max_connections(max_connections)
             .min_connections(max_connections / 5)
             .acquire_timeout(std::time::Duration::from_secs(10))
             .idle_timeout(std::time::Duration::from_secs(300))
-            .connect_with(write_options)
+            .connect(write_url)
             .await?;
 
         info!(max_connections = max_connections, "Write-Pool verbunden");
 
         // Read-Pool (optional: separate Read-Replica)
         let read_pool = if let Some(rurl) = read_url {
-            let read_options = PgConnectOptions::new()
-                .from_str(rurl)?
-                .max_connections(max_connections);
-
             let pool = PgPoolOptions::new()
                 .max_connections(max_connections)
                 .min_connections(max_connections / 5)
                 .acquire_timeout(std::time::Duration::from_secs(10))
-                .connect_with(read_options)
+                .connect(rurl)
                 .await?;
 
             info!(max_connections = max_connections, "Read-Pool (Replica) verbunden");
@@ -71,7 +63,9 @@ impl Database {
         };
 
         // Migrations auf dem Write-Pool
-        sqlx::migrate!("./migrations")
+        // Hinweis: Der Pfad ist relativ zur Crate (crates/kis-core) —
+        // die Workspace-Migrationen liegen unter /migrations
+        sqlx::migrate!("../../migrations")
             .run(&write_pool)
             .await?;
 

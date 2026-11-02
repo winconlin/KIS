@@ -1,0 +1,87 @@
+# KIS — systemd-Unit für Production-Deployment
+#
+# Installation:
+#   1. cp systemd/kis.service /etc/systemd/system/kis.service
+#   2. systemctl daemon-reload
+#   3. systemctl enable kis
+#   4. systemctl start kis
+#
+# Konfiguration: /data/config/kis.toml (oder ENV-Variablen)
+# Logs: journalctl -u kis -f
+# Status: systemctl status kis
+
+[Unit]
+Description=KIS — Krankenhaus-Informations-System
+Documentation=file:///data/docs/INSTALLATION.md
+After=network.target postgresql.target
+Wants=postgresql.target
+# Startet erst wenn PostgreSQL erreichbar ist
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+
+# Nicht-root-User (DSGVO: Principle of Least Privilege)
+User=kis
+Group=kis
+
+# Arbeitsverzeichnis
+WorkingDirectory=/data
+
+# Umgebungsvariablen (Secrets NIE in der Unit-Datei!)
+# JWT-Secret und AES-Masterkey kommen aus einem Secure-File:
+EnvironmentFile=-/etc/kis/kis.env
+
+# Binary-Pfad
+ExecStart=/usr/local/bin/kis
+
+# Graceful Shutdown: SIGTERM → KIS schließt sauber (max 30s)
+ExecStop=/bin/kill -s SIGTERM $MAINPID
+TimeoutStopSec=30
+
+# Neustart bei Crash (max 5x in 5 Minuten)
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# --- Ressourcen-Limits (tausende User) ---
+# Open-Files: 200+ DB-Connections + HTTP-Sockets
+LimitNOFILE=65535
+LimitNPROC=4096
+
+# --- Security-Härtung (Hardening) ---
+# Read-only Dateisystem (nur /data, /data/logs, /data/exports beschreibbar)
+ReadWritePaths=/data/data /data/logs /data/exports
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProtectKernelLogs=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false  # Rust: kein JIT, kann true sein
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# --- Logging ---
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kis
+LogLevelMax=info
+
+[Install]
+WantedBy=multi-user.target

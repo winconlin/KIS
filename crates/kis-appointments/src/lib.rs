@@ -1,11 +1,851 @@
-//! KIS appointments — selbstständiges Modul im KIS-Workspace.
+//! KIS Appointments — Termin-Service (Phase 1)
 //!
-//! Modularer Aufbau: Diese Crate kann unabhängig entwickelt, getestet
-//! und deaktivierte werden. Neues Modul = neue Crate + Feature-Flag.
+//! Vollständige Implementierung mit:
+//! - CRUD + Optimistic Locking (version) + Soft-Delete (deleted_at)
+//! - Doppelbuchungsprüfung (zeitliche Überlappung pro Arzt)
+//! - ISiK-Integration (book/cancel — Placeholder für FHIR-Appointments)
+//! - Kalender-Ansicht (GET /:doctor_id/calendar)
+//! - Slot-Verfügbarkeit (GET /slots)
+//!
+//! Endpunkte:
+//!   GET    /api/v1/appointments             — Liste (Filter: date_from, date_to, doctor_id, patient_id, status)
+//!   GET    /api/v1/appointments/:id         — Einzeltermin
+//!   POST   /api/v1/appointments             — Termin anlegen (mit Doppelbuchungsprüfung)
+//!   PUT    /api/v1/appointments/:id         — Termin aktualisieren (Optimistic Locking + Doppelbuchungsprüfung)
+//!   DELETE /api/v1/appointments/:id         — Soft-Delete
+//!   POST   /api/v1/appointments/:id/book    — ISiK: Termin buchen
+//!   POST   /api/v1/appointments/:id/cancel  — ISiK: Termin stornieren
+//!   GET    /api/v1/appointments/:doctor_id/calendar — Kalender-Ansicht
+//!   GET    /api/v1/appointments/slots       — Slot-Verfügbarkeit
 
-use serde::Serialize;
+use std::sync::Arc;
+use axum::{
+    extract::{Path, Query, State},
+    routing::{get, post, put, delete},
+    Json, Router,
+};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use tracing::{info, warn, error};
+use uuid::Uuid;
+use sqlx::postgres::PgPool;
 
-/// Modul-Status für das Dashboard
+
+// ===========================================================================
+// Modelle
+// ===========================================================================
+
+/// Termin — vollständiges DB-Modell
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct Appointment {
+    pub id: Uuid,
+    pub patient_id: Uuid,
+    pub doctor_id: Uuid,
+    /// Kategorie: ordination, konsultation, kontrolle, etc.
+    pub category: String,
+    /// Status: geplant, bestaetigt, abgesagt, abgeschlossen
+    pub status: String,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    pub reason: Option<String>,
+    pub cancelled_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub version: i32,
+}
+
+/// Termin mit Patient- und Arzt-Namen (JOIN)
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppointmentDetail {
+    pub id: Uuid,
+    pub patient_id: Uuid,
+    pub patient_name: String,
+    pub doctor_id: Uuid,
+    pub doctor_name: String,
+    pub category: String,
+    pub status: String,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    pub reason: Option<String>,
+    pub cancelled_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub version: i32,
+}
+
+/// Termin anlegen
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateAppointment {
+    pub patient_id: Uuid,
+    pub doctor_id: Uuid,
+    pub category: Option<String>,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    pub reason: Option<String>,
+}
+
+/// Termin aktualisieren
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAppointment {
+    /// PFLICHT: Aktuelle Version (Optimistic Locking)
+    pub version: i32,
+    pub patient_id: Option<Uuid>,
+    pub doctor_id: Option<Uuid>,
+    pub category: Option<String>,
+    pub start_time: Option<DateTime<Utc>>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub reason: Option<String>,
+}
+
+/// Listenfilter
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListAppointmentsQuery {
+    /// Beginn des Zeitraums
+    pub date_from: Option<DateTime<Utc>>,
+    /// Ende des Zeitraums
+    pub date_to: Option<DateTime<Utc>>,
+    pub doctor_id: Option<Uuid>,
+    pub patient_id: Option<Uuid>,
+    /// Status-Filter: geplant, bestaetigt, abgesagt, abgeschlossen
+    pub status: Option<String>,
+    /// Cursor-Pagination
+    pub cursor: Option<Uuid>,
+    pub limit: Option<i64>,
+}
+
+/// Paginierte Termin-Liste
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppointmentPage {
+    pub items: Vec<Appointment>,
+    pub next_cursor: Option<Uuid>,
+    pub count: usize,
+}
+
+/// Slot für die Terminvergabe
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Slot {
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    /// Verfügbar?
+    pub available: bool,
+    /// Grund für Nicht-Verfügbarkeit (wenn nicht verfügbar)
+    pub reason: Option<String>,
+}
+
+/// Slot-Response
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotList {
+    pub doctor_id: Uuid,
+    pub date: chrono::NaiveDate,
+    pub slots: Vec<Slot>,
+    pub total: usize,
+    pub available_count: usize,
+}
+
+/// Kalender-Eintrag
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarEntry {
+    pub id: Uuid,
+    pub patient_id: Uuid,
+    pub patient_name: String,
+    pub category: String,
+    pub status: String,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    pub reason: Option<String>,
+}
+
+/// Kalender-Response
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DoctorCalendar {
+    pub doctor_id: Uuid,
+    pub from: DateTime<Utc>,
+    pub to: DateTime<Utc>,
+    pub entries: Vec<CalendarEntry>,
+}
+
+// ===========================================================================
+// Fehler-Typen
+// ===========================================================================
+
+#[derive(Debug, thiserror::Error)]
+pub enum AppointmentError {
+    #[error("Termin nicht gefunden: {0}")]
+    NotFound(Uuid),
+    #[error("Versionenkonflikt (Optimistic Locking): erwartet {expected}, aber {actual}")]
+    VersionConflict { expected: i32, actual: i32 },
+    #[error("Doppelbuchung: Zeitliche Überlappung mit Termin {existing_id} ({existing_start} – {existing_end})")]
+    DoubleBooking { existing_id: Uuid, existing_start: String, existing_end: String },
+    #[error("Ungültiger Zeitraum: start_time muss vor end_time liegen")]
+    InvalidTimeRange,
+    #[error("Patient nicht gefunden: {0}")]
+    PatientNotFound(Uuid),
+    #[error("Arzt nicht gefunden: {0}")]
+    DoctorNotFound(Uuid),
+    #[error("Datenbank-Fehler: {0}")]
+    Db(String),
+}
+
+impl From<&AppointmentError> for axum::http::StatusCode {
+    fn from(e: &AppointmentError) -> Self {
+        match e {
+            AppointmentError::NotFound(_) | AppointmentError::PatientNotFound(_) | AppointmentError::DoctorNotFound(_) => axum::http::StatusCode::NOT_FOUND,
+            AppointmentError::VersionConflict { .. } => axum::http::StatusCode::CONFLICT,
+            AppointmentError::DoubleBooking { .. } => axum::http::StatusCode::CONFLICT,
+            AppointmentError::InvalidTimeRange => axum::http::StatusCode::BAD_REQUEST,
+            AppointmentError::Db(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ErrorBody {
+    pub success: bool,
+    pub error: String,
+}
+
+impl From<AppointmentError> for axum::response::Response {
+    fn from(e: AppointmentError) -> Self {
+        let status: axum::http::StatusCode = (&e).into();
+        axum::response::Response::builder()
+            .status(status)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(
+                serde_json::to_string(&ErrorBody { success: false, error: e.to_string() })
+                    .unwrap_or_else(|_| "{}".into()),
+            ))
+            .unwrap_or_else(|_| axum::response::Response::builder().status(500).body(axum::body::Body::empty()).unwrap())
+    }
+}
+
+// ===========================================================================
+// Router
+// ===========================================================================
+
+/// Registriert den Termin-Router
+pub fn register_router(db: Arc<PgPool>) -> Router {
+    Router::new()
+        .route("/api/v1/appointments", get(list_appointments).post(create_appointment))
+        .route("/api/v1/appointments/slots", get(list_slots))
+        .route(
+            "/api/v1/appointments/:doctor_id/calendar",
+            get(doctor_calendar),
+        )
+        .route(
+            "/api/v1/appointments/:id",
+            get(get_appointment).put(update_appointment).delete(delete_appointment),
+        )
+        .route(
+            "/api/v1/appointments/:id/book",
+            post(book_appointment),
+        )
+        .route(
+            "/api/v1/appointments/:id/cancel",
+            post(cancel_appointment),
+        )
+        .with_state(db)
+}
+
+// ===========================================================================
+// Handler
+// ===========================================================================
+
+/// GET /api/v1/appointments
+///
+/// Liste Termine mit Filtern und Cursor-Pagination.
+async fn list_appointments(
+    State(db): State<Arc<PgPool>>,
+    Query(params): Query<ListAppointmentsQuery>,
+) -> Result<Json<AppointmentPage>, axum::response::Response> {
+    let limit = params.limit.unwrap_or(50).min(200).max(1);
+
+    // Dynamische WHERE-Bedingungen: alle Filter-Parameter sind typsicher
+    // (DateTime, Uuid, String) — keine SQL-Injection möglich.
+    let mut sql = String::from("SELECT * FROM appointments WHERE deleted_at IS NULL");
+    let mut conds: Vec<String> = Vec::new();
+
+    if params.date_from.is_some() {
+        conds.push("start_time >= $1".to_string());
+    }
+    if params.date_to.is_some() {
+        let offset = if params.date_from.is_some() { 1 } else { 0 };
+        conds.push(format!("end_time <= ${}", offset + 1));
+    }
+    if params.doctor_id.is_some() {
+        let mut offset = 0;
+        if params.date_from.is_some() { offset += 1; }
+        if params.date_to.is_some() { offset += 1; }
+        conds.push(format!("doctor_id = ${}", offset + 1));
+    }
+    if params.patient_id.is_some() {
+        let mut offset = 0;
+        if params.date_from.is_some() { offset += 1; }
+        if params.date_to.is_some() { offset += 1; }
+        if params.doctor_id.is_some() { offset += 1; }
+        conds.push(format!("patient_id = ${}", offset + 1));
+    }
+    if params.status.is_some() {
+        let mut offset = 0;
+        if params.date_from.is_some() { offset += 1; }
+        if params.date_to.is_some() { offset += 1; }
+        if params.doctor_id.is_some() { offset += 1; }
+        if params.patient_id.is_some() { offset += 1; }
+        conds.push(format!("status = ${}", offset + 1));
+    }
+    if let Some(ref cursor) = params.cursor {
+        conds.push(format!("id > '{}'", cursor));
+    }
+
+    if !conds.is_empty() {
+        sql.push_str(&format!(" AND {}", conds.join(" AND ")));
+    }
+    sql.push_str(" ORDER BY start_time ASC, id ASC LIMIT ");
+    sql.push_str(&limit.to_string());
+
+    let pool = db.as_ref();
+    let mut query = sqlx::query_as::<_, Appointment>(&sql);
+    if let Some(ref df) = params.date_from {
+        query = query.bind(*df);
+    }
+    if let Some(ref dt) = params.date_to {
+        query = query.bind(*dt);
+    }
+    if let Some(ref did) = params.doctor_id {
+        query = query.bind(*did);
+    }
+    if let Some(ref pid) = params.patient_id {
+        query = query.bind(*pid);
+    }
+    if let Some(ref status) = params.status {
+        query = query.bind(status.clone());
+    }
+    let rows: Vec<Appointment> = query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+    let next_cursor = rows.last().map(|a| a.id);
+    Ok(Json(AppointmentPage {
+        count: rows.len(),
+        items: rows,
+        next_cursor,
+    }))
+}
+
+/// GET /api/v1/appointments/:id — Einzeltermin
+async fn get_appointment(
+    State(db): State<Arc<PgPool>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Appointment>, axum::response::Response> {
+    let pool = db.as_ref();
+    let appt: Option<Appointment> = sqlx::query_as(
+        "SELECT * FROM appointments WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+    match appt {
+        Some(a) => Ok(Json(a)),
+        None => Err(axum::response::Response::from(AppointmentError::NotFound(id))),
+    }
+}
+
+/// POST /api/v1/appointments — Termin anlegen
+///
+/// Mit Doppelbuchungsprüfung: Prüft, ob der Arzt bereits einen Termin
+/// im selben Zeitfenster hat (zeitliche Überlappung).
+async fn create_appointment(
+    State(db): State<Arc<PgPool>>,
+    Json(body): Json<CreateAppointment>,
+) -> Result<Json<Appointment>, axum::response::Response> {
+    let pool = db.as_ref();
+
+    // 1. Zeitfenster validieren
+    if body.start_time >= body.end_time {
+        return Err(axum::response::Response::from(AppointmentError::InvalidTimeRange));
+    }
+
+    // 2. Patient und Arzt existieren?
+    check_patient_doctor(pool, body.patient_id, body.doctor_id).await?;
+
+    // 3. Doppelbuchungsprüfung: zeitliche Überlappung
+    //    Zwei Zeitintervalle [a1, a2] und [b1, b2] überlappen sich, wenn
+    //    a1 < b2 AND b1 < a2.
+    let overlap: Option<Appointment> = sqlx::query_as(
+        r#"
+        SELECT * FROM appointments
+        WHERE doctor_id = $1
+          AND start_time < $3
+          AND end_time > $2
+          AND status != 'abgesagt'
+          AND deleted_at IS NULL
+        "#,
+    )
+    .bind(body.doctor_id)
+    .bind(body.start_time)
+    .bind(body.end_time)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+    if let Some(existing) = overlap {
+        error!(
+            doctor_id = %body.doctor_id,
+            existing_id = %existing.id,
+            "Doppelbuchung erkannt"
+        );
+        return Err(axum::response::Response::from(AppointmentError::DoubleBooking {
+            existing_id: existing.id,
+            existing_start: existing.start_time.to_rfc3339(),
+            existing_end: existing.end_time.to_rfc3339(),
+        }));
+    }
+
+    // 4. Termin anlegen
+    let appt: Appointment = sqlx::query_as(
+        r#"
+        INSERT INTO appointments (
+            patient_id, doctor_id, category, status,
+            start_time, end_time, reason,
+            created_at, updated_at, version
+        ) VALUES (
+            $1, $2, $3, 'geplant',
+            $4, $5, $6, now(), now(), 1
+        )
+        RETURNING *
+        "#,
+    )
+    .bind(body.patient_id)
+    .bind(body.doctor_id)
+    .bind(body.category.unwrap_or_else(|| "ordination".to_string()))
+    .bind(body.start_time)
+    .bind(body.end_time)
+    .bind(&body.reason)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+    info!(appointment_id = %appt.id, doctor_id = %appt.doctor_id, "Termin angelegt");
+    Ok(Json(appt))
+}
+
+/// PUT /api/v1/appointments/:id — Termin aktualisieren
+///
+/// Mit Optimistic Locking + Doppelbuchungsprüfung (nur bei Zeit-/Arzt-Änderung).
+async fn update_appointment(
+    State(db): State<Arc<PgPool>>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateAppointment>,
+) -> Result<Json<Appointment>, axum::response::Response> {
+    let pool = db.as_ref();
+
+    // 1. Aktuelle Version prüfen
+    let current: Option<(i32,)> = sqlx::query_as(
+        "SELECT version FROM appointments WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+    let current_version = match current {
+        Some((v,)) => v,
+        None => return Err(axum::response::Response::from(AppointmentError::NotFound(id))),
+    };
+
+    if current_version != body.version {
+        warn!(appointment_id = %id, expected = body.version, actual = current_version, "Versionenkonflikt");
+        return Err(axum::response::Response::from(AppointmentError::VersionConflict {
+            expected: body.version,
+            actual: current_version,
+        }));
+    }
+
+    // 2. Doppelbuchungsprüfung nur, wenn sich Zeit oder Arzt ändert
+    if body.start_time.is_some() || body.end_time.is_some() || body.doctor_id.is_some() {
+        // Aktuellen Termin laden, um die neuen Werte zu berechnen
+        let existing: Appointment = sqlx::query_as(
+            "SELECT * FROM appointments WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+        let new_start = body.start_time.unwrap_or(existing.start_time);
+        let new_end = body.end_time.unwrap_or(existing.end_time);
+        let new_doctor = body.doctor_id.unwrap_or(existing.doctor_id);
+
+        if new_start >= new_end {
+            return Err(axum::response::Response::from(AppointmentError::InvalidTimeRange));
+        }
+
+        let overlap: Option<Appointment> = sqlx::query_as(
+            r#"
+            SELECT * FROM appointments
+            WHERE doctor_id = $1
+              AND id != $2
+              AND start_time < $4
+              AND end_time > $3
+              AND status != 'abgesagt'
+              AND deleted_at IS NULL
+            "#,
+        )
+        .bind(new_doctor)
+        .bind(id)
+        .bind(new_start)
+        .bind(new_end)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+        if let Some(ex) = overlap {
+            return Err(axum::response::Response::from(AppointmentError::DoubleBooking {
+                existing_id: ex.id,
+                existing_start: ex.start_time.to_rfc3339(),
+                existing_end: ex.end_time.to_rfc3339(),
+            }));
+        }
+    }
+
+    // 3. Update mit WHERE version = $expected (atomar)
+    let new_version = body.version + 1;
+    let appt: Option<Appointment> = sqlx::query_as(
+        r#"
+        UPDATE appointments SET
+            patient_id = COALESCE($2, patient_id),
+            doctor_id  = COALESCE($3, doctor_id),
+            category   = COALESCE($4, category),
+            start_time = COALESCE($5, start_time),
+            end_time   = COALESCE($6, end_time),
+            reason     = COALESCE($7, reason),
+            updated_at = now(),
+            version    = $8
+        WHERE id = $1 AND version = $9 AND deleted_at IS NULL
+        RETURNING *
+        "#,
+    )
+    .bind(id)
+    .bind(body.patient_id)
+    .bind(body.doctor_id)
+    .bind(&body.category)
+    .bind(body.start_time)
+    .bind(body.end_time)
+    .bind(&body.reason)
+    .bind(new_version)
+    .bind(body.version)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+    match appt {
+        Some(a) => {
+            info!(appointment_id = %a.id, new_version = a.version, "Termin aktualisiert");
+            Ok(Json(a))
+        }
+        None => Err(axum::response::Response::from(AppointmentError::VersionConflict {
+            expected: body.version,
+            actual: current_version,
+        })),
+    }
+}
+
+/// DELETE /api/v1/appointments/:id — Soft-Delete
+async fn delete_appointment(
+    State(db): State<Arc<PgPool>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, axum::response::Response> {
+    let pool = db.as_ref();
+    let result = sqlx::query(
+        r#"
+        UPDATE appointments
+        SET deleted_at = now(), updated_at = now(), version = version + 1
+        WHERE id = $1 AND deleted_at IS NULL
+        RETURNING id
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+    match result {
+        Some(_) => {
+            info!(appointment_id = %id, "Termin soft-gelöscht");
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "message": "Termin soft-gelöscht",
+                "id": id.to_string(),
+            })))
+        }
+        None => Err(axum::response::Response::from(AppointmentError::NotFound(id))),
+    }
+}
+
+/// POST /api/v1/appointments/:id/book — ISiK: Termin buchen
+///
+/// Setzt den Status von 'geplant' auf 'bestaetigt'.
+/// (ISiK-Integration: In der Produktion wird hier zusätzlich
+///  ein FHIR-Appointment-Resource erstellt/synchronisiert.)
+async fn book_appointment(
+    State(db): State<Arc<PgPool>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Appointment>, axum::response::Response> {
+    let pool = db.as_ref();
+
+    let appt: Option<Appointment> = sqlx::query_as(
+        r#"
+        UPDATE appointments
+        SET status = 'bestaetigt', updated_at = now(), version = version + 1
+        WHERE id = $1
+          AND status = 'geplant'
+          AND deleted_at IS NULL
+        RETURNING *
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+    match appt {
+        Some(a) => {
+            info!(appointment_id = %a.id, "Termin via ISiK gebucht");
+            Ok(Json(a))
+        }
+        None => Err(axum::response::Response::from(AppointmentError::NotFound(id))),
+    }
+}
+
+/// POST /api/v1/appointments/:id/cancel — ISiK: Termin stornieren
+///
+/// Setzt den Status auf 'abgesagt' und setzt cancelled_at.
+async fn cancel_appointment(
+    State(db): State<Arc<PgPool>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Appointment>, axum::response::Response> {
+    let pool = db.as_ref();
+
+    let appt: Option<Appointment> = sqlx::query_as(
+        r#"
+        UPDATE appointments
+        SET status = 'abgesagt',
+            cancelled_at = now(),
+            updated_at = now(),
+            version = version + 1
+        WHERE id = $1
+          AND status != 'abgesagt'
+          AND deleted_at IS NULL
+        RETURNING *
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+    match appt {
+        Some(a) => {
+            info!(appointment_id = %a.id, "Termin via ISiK storniert");
+            Ok(Json(a))
+        }
+        None => Err(axum::response::Response::from(AppointmentError::NotFound(id))),
+    }
+}
+
+/// GET /api/v1/appointments/:doctor_id/calendar — Kalender-Ansicht
+///
+/// Query-Parameter:
+///   date_from — Beginn (ISO 8601, Default: heute 00:00)
+///   date_to   — Ende (ISO 8601, Default: heute 23:59)
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CalendarQuery {
+    pub date_from: Option<DateTime<Utc>>,
+    pub date_to: Option<DateTime<Utc>>,
+}
+
+async fn doctor_calendar(
+    State(db): State<Arc<PgPool>>,
+    Path(doctor_id): Path<Uuid>,
+    Query(params): Query<CalendarQuery>,
+) -> Result<Json<DoctorCalendar>, axum::response::Response> {
+    let pool = db.as_ref();
+    let now = Utc::now();
+    let today = now.date_naive();
+    let date_from = params.date_from.unwrap_or_else(|| {
+        today.and_hms_opt(0, 0, 0).unwrap().and_utc()
+    });
+    let date_to = params.date_to.unwrap_or_else(|| {
+        today.and_hms_opt(23, 59, 59).unwrap().and_utc()
+    });
+
+    let rows: Vec<(Uuid, Uuid, String, String, String, DateTime<Utc>, DateTime<Utc>, Option<String>)> =
+        sqlx::query_as(
+            r#"
+            SELECT a.id,
+                   a.patient_id,
+                   (p.name_family || ' ' || p.name_given) AS patient_name,
+                   a.category, a.status,
+                   a.start_time, a.end_time, a.reason
+            FROM appointments a
+            JOIN patients p ON p.id = a.patient_id
+            WHERE a.doctor_id = $1
+              AND a.start_time >= $2
+              AND a.end_time <= $3
+              AND a.deleted_at IS NULL
+            ORDER BY a.start_time ASC
+            "#,
+        )
+        .bind(doctor_id)
+        .bind(date_from)
+        .bind(date_to)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+    let entries: Vec<CalendarEntry> = rows
+        .into_iter()
+        .map(|(id, patient_id, patient_name, category, status, start, end, reason)| CalendarEntry {
+            id, patient_id, patient_name, category, status, start_time: start, end_time: end, reason,
+        })
+        .collect();
+
+    Ok(Json(DoctorCalendar { doctor_id, from: date_from, to: date_to, entries }))
+}
+
+/// GET /api/v1/appointments/slots — Slot-Verfügbarkeit
+///
+/// Query-Parameter:
+///   doctor_id — PFLICHT: Arzt-ID
+///   date      — Datum (YYYY-MM-DD, Default: heute)
+///
+/// Erzeugt 30-Minuten-Blöcke von 08:00 bis 16:00 und prüft,
+/// ob für jeden Slot ein Termin vorliegt.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SlotsQuery {
+    pub doctor_id: Uuid,
+    pub date: Option<chrono::NaiveDate>,
+}
+
+async fn list_slots(
+    State(db): State<Arc<PgPool>>,
+    Query(params): Query<SlotsQuery>,
+) -> Result<Json<SlotList>, axum::response::Response> {
+    let pool = db.as_ref();
+    let date = params.date.unwrap_or_else(|| Utc::now().date_naive());
+
+    // Arbeitstage: 08:00–16:00, 30-Min-Blöcke
+    let mut slots: Vec<Slot> = Vec::new();
+    for hour in 8..16 {
+        for minute in [0, 30] {
+            let start = chrono::NaiveDateTime::new(
+                date,
+                chrono::NaiveTime::from_hms_opt(hour, minute, 0).unwrap(),
+            )
+            .and_utc();
+            let end = start + chrono::Duration::minutes(30);
+
+            // Prüfen, ob ein Termin diesen Slot überlappt
+            let booked: (bool,) = sqlx::query_as(
+                r#"
+                SELECT EXISTS (
+                    SELECT 1 FROM appointments
+                    WHERE doctor_id = $1
+                      AND start_time < $4
+                      AND end_time > $3
+                      AND status != 'abgesagt'
+                      AND deleted_at IS NULL
+                )
+                "#,
+            )
+            .bind(params.doctor_id)
+            .bind(start)
+            .bind(end)
+            .bind(end)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+            slots.push(Slot {
+                start_time: start,
+                end_time: end,
+                available: !booked.0,
+                reason: if booked.0 {
+                    Some("Termin belegt".to_string())
+                } else {
+                    None
+                },
+            });
+        }
+    }
+
+    let available_count = slots.iter().filter(|s| s.available).count();
+
+    Ok(Json(SlotList {
+        doctor_id: params.doctor_id,
+        date,
+        total: slots.len(),
+        available_count,
+        slots,
+    }))
+}
+
+// ===========================================================================
+// Hilfsfunktionen
+// ===========================================================================
+
+/// Prüft, ob Patient und Arzt existieren (und nicht soft-gelöscht sind).
+async fn check_patient_doctor(
+    pool: &sqlx::PgPool,
+    patient_id: Uuid,
+    doctor_id: Uuid,
+) -> Result<(), AppointmentError> {
+    let p: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM patients WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(patient_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+    if p.is_none() {
+        return Err(AppointmentError::PatientNotFound(patient_id));
+    }
+
+    let d: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM doctors WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(doctor_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AppointmentError::Db(e.to_string()))?;
+
+    if d.is_none() {
+        return Err(AppointmentError::DoctorNotFound(doctor_id));
+    }
+
+    Ok(())
+}
+
+// ===========================================================================
+// Modul-Status
+// ===========================================================================
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ModuleStatus {
     pub name: String,
@@ -13,11 +853,5 @@ pub struct ModuleStatus {
     pub description: String,
 }
 
-/// Registriert den Modul-Router
-pub fn register_router() -> axum::Router {
-    axum::Router::new()
-        .route("/health", axum::routing::get(|| async { "ok" }))
-}
-
 pub const MODULE_NAME: &str = "kis-appointments";
-pub const MODULE_DESCRIPTION: &str = "kis-appointments — Phase 1/3/4";
+pub const MODULE_DESCRIPTION: &str = "KIS Termin-Service — Phase 1: CRUD, Doppelbuchungsprüfung, ISiK, Kalender, Slots";

@@ -1,5 +1,27 @@
+# ============================================================
+# KIS Medications — Medikations-Service (Phase 1)
+# CRUD + Optimistic Locking + Soft-Delete + Patient-Filter
+# ============================================================
+
 [package]
+name = "kis-medications"
+version = "0.1.0"
+edition = "2021"
+description = "KIS Medikations-Service: CRUD, Optimistic Locking, Patient-Filter"
+license = "MIT"
+
 [lib]
+name = "kis_medications"
+path = "src/lib.rs"
 
 [dependencies]
-name = "kis_medications"
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }

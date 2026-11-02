@@ -1,85 +1,227 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KIS — Krankenhaus-Informations-System</title>
-    <style>
-        :root {
-            --bg: #0f172a;
-            --surface: #1e293b;
-            --border: #334155;
-            --text: #f1f5f9;
-            --text-muted: #94a3b8;
-            --accent: #3b82f6;
-            --accent-hover: #2563eb;
-            --success: #22c55e;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-        }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            min-height: 100vh;
-        }
-        .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
-        header {
-            display: flex; align-items: center; justify-content: space-between;
-            padding: 1rem 2rem; background: var(--surface);
-            border-bottom: 1px solid var(--border); margin-bottom: 2rem;
-        }
-        h1 { font-size: 1.5rem; font-weight: 600; }
-        h1 span { color: var(--accent); }
-        .status { display: flex; gap: 1rem; align-items: center; }
-        .status-badge {
-            padding: 0.25rem 0.75rem; border-radius: 999px;
-            font-size: 0.8rem; font-weight: 500;
-        }
-        .status-badge.ok { background: rgba(34,197,94,0.15); color: var(--success); }
-        .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
-        .card {
-            background: var(--surface); border: 1px solid var(--border);
-            border-radius: 12px; padding: 1.5rem; transition: border-color 0.2s;
-        }
-        .card:hover { border-color: var(--accent); }
-        .card h3 { font-size: 1rem; margin-bottom: 0.5rem; color: var(--text-muted); }
-        .card .value { font-size: 2rem; font-weight: 700; }
-        .card .sub { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem; }
-    </style>
+    <meta name="description" content="KIS — Krankenhausinformationssystem">
+    <meta name="color-scheme" content="dark light">
+    <title>KIS — Krankenhausinformationssystem</title>
+    <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-    <header>
-        <h1>KIS <span>Krankenhaus-Informations-System</span></h1>
-        <div class="status">
-            <span class="status-badge ok">● Online</span>
-            <span style="color: var(--text-muted); font-size: 0.85rem;">v0.1.0</span>
-        </div>
-    </header>
-    <div class="container">
-        <div class="cards">
-            <div class="card">
-                <h3>Patienten</h3>
-                <div class="value">0</div>
-                <div class="sub">Gesamt</div>
+    <!-- ============================================================ -->
+    <!-- Login-Overlay (wird via JS bei fehlendem Token eingeblendet) -->
+    <!-- ============================================================ -->
+    <div id="login-overlay" class="login-overlay" hidden>
+        <div class="login-card" role="dialog" aria-modal="true" aria-labelledby="login-title">
+            <div class="login-brand">
+                <h1 id="login-title" class="login-logo">KIS</h1>
+                <p class="login-subtitle">Krankenhausinformationssystem</p>
             </div>
-            <div class="card">
-                <h3>Termine heute</h3>
-                <div class="value">0</div>
-                <div class="sub">Geplant</div>
-            </div>
-            <div class="card">
-                <h3>Ärzte</h3>
-                <div class="value">0</div>
-                <div class="sub">Im System</div>
-            </div>
-            <div class="card">
-                <h3>Schnittstellen</h3>
-                <div class="value">3</div>
-                <div class="sub">HL7 · FHIR · DICOM</div>
+
+            <form id="login-form" class="login-form" novalidate>
+                <div class="form-group">
+                    <label for="login-email" class="form-label">E-Mail-Adresse</label>
+                    <input
+                        type="email"
+                        id="login-email"
+                        name="email"
+                        class="form-input"
+                        placeholder="name@klinik.de"
+                        autocomplete="email"
+                        required
+                        aria-describedby="login-email-error"
+                    >
+                    <span id="login-email-error" class="form-error" role="alert" hidden></span>
+                </div>
+
+                <div class="form-group">
+                    <label for="login-password" class="form-label">Passwort</label>
+                    <div class="password-wrapper">
+                        <input
+                            type="password"
+                            id="login-password"
+                            name="password"
+                            class="form-input"
+                            placeholder="••••••••"
+                            autocomplete="current-password"
+                            required
+                            aria-describedby="login-password-error"
+                        >
+                        <button
+                            type="button"
+                            class="password-toggle"
+                            id="password-toggle"
+                            aria-label="Passwort anzeigen"
+                            aria-pressed="false"
+                        >
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <span id="login-password-error" class="form-error" role="alert" hidden></span>
+                </div>
+
+                <div class="form-group" id="mfa-group" hidden>
+                    <label for="login-totp" class="form-label">MFA-Code (6-stellig)</label>
+                    <input
+                        type="text"
+                        id="login-totp"
+                        name="totp"
+                        class="form-input totp-input"
+                        placeholder="000000"
+                        maxlength="6"
+                        inputmode="numeric"
+                        autocomplete="one-time-code"
+                        aria-describedby="login-totp-error"
+                    >
+                    <span id="login-totp-error" class="form-error" role="alert" hidden></span>
+                </div>
+
+                <div class="form-group form-error-group">
+                    <span id="login-general-error" class="form-error general" role="alert" hidden></span>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block" id="login-submit">
+                    <span class="btn-text">Anmelden</span>
+                    <span class="btn-spinner" hidden></span>
+                </button>
+            </form>
+
+            <div class="login-footer">
+                <span class="login-version">KIS v1.0</span>
             </div>
         </div>
     </div>
+
+    <!-- ============================================================ -->
+    <!-- Haupt-Anwendung (SPA) -->
+    <!-- ============================================================ -->
+    <div id="app" class="app" hidden>
+        <!-- Sidebar-Navigation -->
+        <nav class="sidebar" id="sidebar" aria-label="Hauptnavigation">
+            <div class="sidebar-brand">
+                <span class="sidebar-logo">KIS</span>
+            </div>
+
+            <ul class="sidebar-nav" role="menubar" aria-orientation="vertical">
+                <li role="none">
+                    <a href="#/dashboard" class="sidebar-link active" role="menuitem" data-route="dashboard">
+                        <span class="sidebar-icon" aria-hidden="true">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="7" height="7"/>
+                                <rect x="14" y="3" width="7" height="7"/>
+                                <rect x="14" y="14" width="7" height="7"/>
+                                <rect x="3" y="14" width="7" height="7"/>
+                            </svg>
+                        </span>
+                        <span class="sidebar-text">Dashboard</span>
+                    </a>
+                </li>
+                <li role="none">
+                    <a href="#/patients" class="sidebar-link" role="menuitem" data-route="patients">
+                        <span class="sidebar-icon" aria-hidden="true">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                                <circle cx="9" cy="7" r="4"/>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                            </svg>
+                        </span>
+                        <span class="sidebar-text">Patienten</span>
+                    </a>
+                </li>
+                <li role="none">
+                    <a href="#/appointments" class="sidebar-link" role="menuitem" data-route="appointments">
+                        <span class="sidebar-icon" aria-hidden="true">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                <line x1="16" y1="2" x2="16" y2="6"/>
+                                <line x1="8" y1="2" x2="8" y2="6"/>
+                                <line x1="3" y1="10" x2="21" y2="10"/>
+                            </svg>
+                        </span>
+                        <span class="sidebar-text">Termine</span>
+                    </a>
+                </li>
+                <li role="none">
+                    <a href="#/settings" class="sidebar-link" role="menuitem" data-route="settings">
+                        <span class="sidebar-icon" aria-hidden="true">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="3"/>
+                                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                            </svg>
+                        </span>
+                        <span class="sidebar-text">Einstellungen</span>
+                    </a>
+                </li>
+            </ul>
+
+            <div class="sidebar-footer">
+                <div class="user-info" id="user-info">
+                    <div class="user-avatar" id="user-avatar" aria-hidden="true"></div>
+                    <div class="user-details">
+                        <span class="user-name" id="user-name">—</span>
+                        <span class="user-role" id="user-role">—</span>
+                    </div>
+                    <button class="btn-icon" id="logout-btn" aria-label="Abmelden" title="Abmelden">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                            <polyline points="16 17 21 12 16 7"/>
+                            <line x1="21" y1="12" x2="9" y2="12"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Haupt-Inhaltsbereich -->
+        <main class="main-content" id="main-content" role="main">
+            <!-- Top-Bar -->
+            <header class="topbar" role="banner">
+                <h1 class="topbar-title" id="topbar-title">Dashboard</h1>
+                <div class="topbar-actions">
+                    <button class="btn-icon" id="theme-toggle" aria-label="Theme wechseln" title="Dark/Light">
+                        <span class="theme-icon-sun" aria-hidden="true">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="5"/>
+                                <line x1="12" y1="1" x2="12" y2="3"/>
+                                <line x1="12" y1="21" x2="12" y2="23"/>
+                                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                                <line x1="1" y1="12" x2="3" y2="12"/>
+                                <line x1="21" y1="12" x2="23" y2="12"/>
+                                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                            </svg>
+                        </span>
+                        <span class="theme-icon-moon" aria-hidden="true">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                            </svg>
+                        </span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Routen-Inhalt (wird via JS gefüllt) -->
+            <section class="content" id="content" aria-live="polite">
+                <!-- Wird dynamisch gerendert -->
+            </section>
+        </main>
+    </div>
+
+    <!-- Toast-Bereiche -->
+    <div id="toast-container" class="toast-container" aria-live="assertive" aria-atomic="true"></div>
+
+    <!-- Modal-Container -->
+    <div id="modal-container" class="modal-container" aria-hidden="true"></div>
+
+    <!-- Scripts -->
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/auth.js"></script>
+    <script src="/static/js/app.js"></script>
 </body>
 </html>
