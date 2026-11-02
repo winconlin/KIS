@@ -1,4 +1,4 @@
-# KIS — REST API Referenz
+# KIS — HTTP-API
 
 > **Krankenhaus-Informations-System (KIS)**
 > Vollständige Referenz der HTTP-API. Endpunkte, Request/Response-Beispiele, Fehlercodes, Authentifizierung und Rate-Limiting.
@@ -7,9 +7,9 @@
 > **Basis-URL:** `http://<host>:8080/api` (Produktion: `https://<host>/api`)
 > **Content-Type:** `application/json; charset=utf-8`
 
----
+Basis für lokale Entwicklung: `http://127.0.0.1:8080`. Das Präfix `/api` wird genau einmal registriert. FHIR- und XDS-Routen sind noch nicht vorhanden.
 
-## 1. Überblick
+## Registrierte Routen
 
 Die API ist ein RESTful-JSON-Interface, implementiert mit **Axum** (siehe `src/api/mod.rs`). Sie ist unter dem Präfix `/api/` erreichbar. Zusätzlich liegen die FHIR-R4-Endpoints unter `/fhir/` (siehe [INTERFACES.md](INTERFACES.md)).
 
@@ -27,63 +27,40 @@ Die API ist ein RESTful-JSON-Interface, implementiert mit **Axum** (siehe `src/a
 
 | Methode | Pfad | Handler | Status |
 |---|---|---|---|
-| `GET` | `/api/health` | `health_check` | ✅ Implementiert (liefert `"OK"`) |
-| `GET` | `/api/patients` | `list_patients` | 🔧 Grundgerüst |
-| `POST` | `/api/patients` | `create_patient` | 🔧 Grundgerüst |
-| `GET` | `/api/patients/:id` | `get_patient` | 🔧 Grundgerüst |
-| `GET` | `/api/appointments` | `list_appointments` | 🔧 Grundgerüst |
-| `POST` | `/api/appointments` | `create_appointment` | 🔧 Grundgerüst |
+| GET | `/` | Öffentlich | Text mit Prototyp-Hinweis |
+| GET | `/api/health` | Öffentlich | 200, Klartext `OK` |
+| POST | `/api/auth/login` | Öffentlich | Passwort prüfen, Token-Paar ausstellen |
+| POST | `/api/auth/refresh` | Refresh-Token im JSON-Body | Atomare Rotation |
+| POST | `/api/auth/logout` | Access-Token + eigenes Refresh-Token | Sitzung widerrufen, 204 |
+| POST | `/api/auth/mfa/setup` | Authentifiziert | 501, Setup noch nicht implementiert |
+| GET | `/api/patients` | Alle vier Rollen | 501 |
+| GET | `/api/patients/:id` | Alle vier Rollen | 501 |
+| POST | `/api/patients` | admin, reception | 501 |
+| GET, POST | `/api/appointments` | Alle vier Rollen | 501 |
+| GET | `/api/medications` | admin, doctor, nurse | 501 |
 
-> **Hinweis:** Die CRUD-Endpunkte für `doctors` und `medications` sind im aktuellen `create_router()` noch nicht registriert, obwohl die Modelle in `src/models/mod.rs` existieren. Die folgenden Spezifikationen beschreiben den **Soll-Zustand** (Vollständiges API-Design), auf den das Projekt hinsteuert.
+„Alle vier Rollen“ meint admin, doctor, nurse und reception. Eine Rollenangabe in der URL verändert keine Berechtigungen. Patientenbezogene Fall-/Teamzuordnungen sind vor einer späteren CRUD-Implementierung zusätzlich umzusetzen.
 
----
+CRUD, Paginierung, Idempotency-Key, Maskierung, Termin-Konfliktprüfung und die weiteren PUT/DELETE-/Arzt-Routen sind geplant. Aus einer registrierten Platzhalterroute folgt noch keine fachliche Funktion.
 
-## 2. Authentifizierung
-
-> **Soll-Zustand.** Die Authentifizierung ist in der aktuellen Codebasis noch nicht implementiert. Für den produktiven Betrieb ist sie **Pflicht** (siehe [SECURITY.md](SECURITY.md) → Zugriffskontrolle).
-
-### 2.1 Bearer-Token (JWT)
-
-Jeder authentifizierungs­pflichtige Request muss den Header tragen:
-
-```
-Authorization: Bearer <access_token>
-```
-
-### 2.2 Auth-Endpoints (Soll)
-
-| Methode | Pfad | Beschreibung |
-|---|---|---|
-| `POST` | `/api/auth/login` | Login, liefert Access- + Refresh-Token |
-| `POST` | `/api/auth/refresh` | Access-Token erneuern |
-| `POST` | `/api/auth/logout` | Session beenden, Token revocieren |
-| `GET` | `/api/auth/me` | Aktuelle Benutzer- und Rolleninfo |
-
-**Login-Request:**
+## Login
 
 ```http
 POST /api/auth/login
 Content-Type: application/json
 
-{
-  "username": "dr.mueller",
-  "password": "••••••••"
-}
+{"username":"admin","password":"ein-lokal-gesetztes-passwort"}
 ```
 
-**Login-Response (200 OK):**
+Ein erfolgreiches Login liefert folgende Struktur; Tokenwerte sind hier Platzhalter:
 
 ```json
 {
-  "access_token": "eyJhbGciOiJSUzI1NiIs...",
-  "refresh_token": "eyJhbGciOiJSUzI1NiIs...",
+  "access_token": "<access-token>",
+  "refresh_token": "<refresh-token>",
   "token_type": "Bearer",
   "expires_in": 900,
-  "user": {
-    "id": "9f1c2a4e-...",
-    "username": "dr.mueller",
-    "role": "doctor"
-  }
+  "role": "admin"
 }
 ```
 
@@ -174,175 +151,39 @@ OK
 > { "status": "ok", "version": "0.1.0", "db": "connected", "uptime_s": 3600 }
 > ```
 
----
+## Tokens und Sitzungen
 
-### 4.2 Patienten
+HS256 verwendet den aus `KIS_JWT_SECRET` gelesenen Schlüssel. Standardlaufzeiten: Access 900 Sekunden, Refresh 86400 Sekunden. Die Token-IDs beider Tokens werden einer persistenten Sitzung zugeordnet.
 
-#### `GET /api/patients` — Patientenliste
+Datenrouten verlangen `Authorization: Bearer ACCESS_TOKEN`. Ein Refresh-Token ist dort ungültig. Signatur und Ablauf allein reichen nicht aus: Sitzung, aktives Benutzerkonto und aktuelle Rolle werden ebenfalls geprüft.
 
-Liste aller Patienten (oder gefiltert). **Auth: admin, doctor, nurse, reception.**
+Refresh erwartet `{"refresh_token":"<refresh-token>"}`. Die alte Sitzung wird atomar widerrufen und durch ein neues Token-Paar ersetzt. Das macht auch das alte Access-Token ungültig. Zwei gleichzeitige Refresh-Anfragen können nicht beide gewinnen. Bei Logout wird die eigene Sitzung ebenfalls für beide Tokens widerrufen. Der Widerruf überlebt einen Neustart.
 
-**Query-Parameter:**
+Tokens werden als JSON zurückgegeben; automatische HttpOnly-Cookies, Concurrent-Session-Limit und Inaktivitäts-Logout sind nicht implementiert. Der Client muss Tokens sicher behandeln.
 
-| Parameter | Typ | Beschreibung |
-|---|---|---|
-| `q` | string | Volltextsuche (Vor-/Nachname) |
-| `last_name` | string | Filter nach Nachname (Prefix) |
-| `page` | int | Seitennummer (Default 1) |
-| `limit` | int | Einträge pro Seite (Default 20, Max 100) |
+## Fehler und Limits
 
-**Beispiel:**
-
-```http
-GET /api/patients?q=müller&limit=10
-Authorization: Bearer <token>
-```
-
-**Response (200 OK):**
+Eigene API-Fehler verwenden diese Struktur:
 
 ```json
-{
-  "data": [
-    {
-      "id": "9f1c2a4e-7b3d-4a1e-9c5f-1234567890ab",
-      "first_name": "Anna",
-      "last_name": "Müller",
-      "birth_date": "1985-03-12",
-      "insurance_number": "K123456789",
-      "created_at": "2026-01-15T09:30:00Z",
-      "updated_at": "2026-01-15T09:30:00Z"
-    }
-  ],
-  "pagination": {
-    "page": 1,
-    "limit": 10,
-    "total": 1,
-    "total_pages": 1
-  }
-}
+{"error":"Bearer-Token erforderlich","code":"missing_token","status":401}
 ```
 
-> **Datenschutz:** `insurance_number` wird nur für Rollen `admin` und `reception` zurückgegeben; für `doctor`/`nurse` maskiert (z. B. `K1****89`).
+Extractor-Fehler von Axum, etwa syntaktisch ungültiges JSON, sowie nicht registrierte Routen können andere Antwortkörper liefern.
 
----
-
-#### `POST /api/patients` — Patient anlegen
-
-**Auth: admin, reception.**
-
-**Request-Body:**
-
-```json
-{
-  "first_name": "Anna",
-  "last_name": "Müller",
-  "birth_date": "1985-03-12",
-  "insurance_number": "K123456789"
-}
-```
-
-**Validierung:**
-
-| Feld | Regel |
+| Status | Bedeutung |
 |---|---|
-| `first_name` | Erforderlich, 1–100 Zeichen |
-| `last_name` | Erforderlich, 1–100 Zeichen |
-| `birth_date` | Optional, `YYYY-MM-DD`, ≤ heute |
-| `insurance_number` | Optional, max. 50 Zeichen |
+| 401 | Zugangsdaten oder Token fehlen/ungültig |
+| 403 | Rolle nicht berechtigt |
+| 423 | Benutzerkonto nach Fehlversuchen gesperrt |
+| 429 | Rate-Limit, mit Retry-After |
+| 500 | Interner Auth-/Datenbankfehler |
+| 501 | Registrierte Funktion noch nicht implementiert |
+| 503 | Audit-DB-Schreibvorgang fehlgeschlagen |
 
-**Response (201 Created):**
+Der Sliding-Window-Limiter zählt pro tatsächlicher TCP-Gegenstellen-IP: 100 Anfragen/Minute für die API und 10/Minute für Auth-Routen. Er liegt vor der Authentifizierung. Hinter einem Proxy teilen Anfragen dessen IP-Limit; Forwarded-/X-Forwarded-For-Header werden nicht als vertrauenswürdig ausgewertet. Zusätzliche Proxy-Limits müssen dazu passen.
 
-```json
-{
-  "id": "9f1c2a4e-7b3d-4a1e-9c5f-1234567890ab",
-  "first_name": "Anna",
-  "last_name": "Müller",
-  "birth_date": "1985-03-12",
-  "insurance_number": "K123456789",
-  "created_at": "2026-11-01T12:00:00Z",
-  "updated_at": "2026-11-01T12:00:00Z"
-}
-```
-
-**Fehler-Beispiel (400):**
-
-```json
-{
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Ungültige Eingaben",
-    "details": [
-      { "field": "first_name", "issue": "required" }
-    ],
-    "request_id": "req-1a2b3c4d"
-  }
-}
-```
-
----
-
-#### `GET /api/patients/:id` — Einzelpatienten abrufen
-
-**Auth: admin, doctor, nurse, reception.**
-
-```http
-GET /api/patients/9f1c2a4e-7b3d-4a1e-9c5f-1234567890ab
-Authorization: Bearer <token>
-```
-
-**Response (200 OK):**
-
-```json
-{
-  "id": "9f1c2a4e-7b3d-4a1e-9c5f-1234567890ab",
-  "first_name": "Anna",
-  "last_name": "Müller",
-  "birth_date": "1985-03-12",
-  "insurance_number": "K123456789",
-  "created_at": "2026-01-15T09:30:00Z",
-  "updated_at": "2026-01-15T09:30:00Z",
-  "appointments": [
-    { "id": "...", "start_time": "2026-11-02T14:00:00Z", "status": "scheduled" }
-  ],
-  "medications": [
-    { "id": "...", "name": "Ibuprofen", "dosage": "600 mg 3x/Tag" }
-  ]
-}
-```
-
-> **Soll:** Rückgabe mit verknüpften Terminen und Medikationen (eager loading).
-> **Fehler (404):** `NOT_FOUND`, wenn die UUID nicht existiert.
-
----
-
-#### `PUT /api/patients/:id` — Patient aktualisieren *(Soll)*
-
-**Auth: admin, reception.**
-
-**Request-Body:** (teilweise Update möglich)
-
-```json
-{
-  "last_name": "Müller-Schmidt",
-  "insurance_number": "K987654321"
-}
-```
-
-**Response (200 OK):** aktualisiertes Objekt.
-
----
-
-#### `DELETE /api/patients/:id` — Patient löschen *(Soll)*
-
-**Auth: admin.**
-
-> **Datenschutz-Hinweis:** Löschung ist nur mit Begründung und wird im Audit-Log protokolliert (`patient.delete`). Alternativ: Anonymisierung statt Löschung.
-
-**Response (204 No Content).**
-
----
-
-### 4.3 Termine (Appointments)
+Cross-Origin-Zugriff ist nicht freigegeben. Es werden keine permissiven CORS-Header gesetzt.
 
 #### `GET /api/appointments` — Terminliste
 
@@ -1303,46 +1144,7 @@ Aktuell `CorsLayer::permissive()` in `src/api/mod.rs`. Für Produktion auf konkr
 ## 7. curl-Beispiele
 
 ```bash
-BASE=http://localhost:8080/api
-TOKEN="<access_token>"
-
-# Health-Check (ohne Auth)
-curl -fsS $BASE/health
-
-# Patientenliste
-curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/patients?limit=10"
-
-# Patient anlegen
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"first_name":"Anna","last_name":"Müller","birth_date":"1985-03-12"}' \
-  $BASE/patients
-
-# Termin anlegen
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"patient_id":"9f1c2a4e-...","start_time":"2026-11-02T14:00:00Z","end_time":"2026-11-02T14:30:00Z"}' \
-  $BASE/appointments
-
-# Medikament verschreiben
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"patient_id":"9f1c2a4e-...","name":"Ibuprofen","dosage":"600 mg 3x/Tag","start_date":"2026-11-01T00:00:00Z"}' \
-  $BASE/medications
+curl -fsS http://127.0.0.1:8080/api/health
 ```
 
----
-
-## 8. Versionierung und Kompatibilität
-
-- Die API ist unter `/api/` ohne Versions-Suffix.
-- **Bis v1.0:** breaking changes können in Minor-Releases auftreten; Änderungen werden im Changelog dokumentiert.
-- **Ab v1.0:** Semver-Prinzip; breaking changes nur in Major-Releases (`/api/v2/` als Parallelbetrieb).
-- Deprecation-Header für zurückgestellte Endpunkte: `Deprecation: true` + `Sunset: <date>`.
-
----
-
-**Verwandte Dokumente:** [SECURITY.md](SECURITY.md) · [INTERFACES.md](INTERFACES.md) · [DATABASE.md](DATABASE.md)
+Für Login-/Refresh- und Negativtests siehe `src/security/tests.rs`. Die erfolgreiche Antwort eines Daten-Platzhalters ist weiterhin HTTP 501, nicht ein erfundenes JSON-Datenobjekt.

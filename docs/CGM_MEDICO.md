@@ -272,7 +272,7 @@ X-Client-Id: <MEDICO_CLIENT_ID>
 
 Der JWT-Token wird beim Start des KIS anhand von `MEDICO_CLIENT_ID` und `MEDICO_CLIENT_SECRET` generiert und bei Bedarf erneuert.
 
----
+Der separat konstruierbare Client in `src/schnittstellen/fhir/medico.rs` bietet OAuth-Client-Credentials und FHIR-Leseoperationen für Patient, Appointment und Slot. Der Server startet ihn noch nicht als Import-/Pollingdienst.
 
 ## 5. API-Endpunkte
 
@@ -578,7 +578,7 @@ curl -X POST \
 | **Rate-Limiting** | Max. 1 Sync alle 30 Sekunden (konfigurierbar) |
 | **Fehler-Handling** | Fehler werden gesammelt, nie im Klartext in Logs protokolliert |
 
----
+**Noch offen:** Cursor ist nur im Speicher, es gibt keinen verbindlichen Import-Commit-/Acknowledgement-Ablauf. In einem vollständigen Dienst darf die Grenze erst nach dauerhaftem, idempotentem DB-Upsert und erfolgreichem Audit fortgeschrieben werden. Löschungen, Versionen, Historie, Retry-Queue und Fehlerfreigaben benötigen eigene Regeln.
 
 ## 8. Troubleshooting
 
@@ -616,7 +616,7 @@ curl -X POST \
 [AUDIT] medico_sync hash=sha256:... chain_prev=sha256:...
 ```
 
----
+Der Patienten-CSV-Export überträgt keine vollständige Termin-, Befund-, Medikations- oder Dokumenthistorie und ist daher kein vollständiger MEDICO-Rollback.
 
 ## 10. Verwandte Dokumente
 

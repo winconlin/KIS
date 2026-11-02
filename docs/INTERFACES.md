@@ -5,7 +5,7 @@
 >
 > **Ist-Zustand (Stand 01.11.2026):** Die Phase-3-Schnittstellen **HL7 v2.5**, **FHIR R4**, **DICOM** und **XDS** sind als **vollständige Implementierung** in `crates/kis-hl7`, `crates/kis-fhir`, `crates/kis-dicom` und `crates/kis-xds` vorhanden und kompilieren fehlerfrei. Zusätzlich ist die **Telematikinfrastruktur (TI)** in `crates/kis-ti/src/lib.rs` vollständig implementiert. Dieses Dokument beschreibt Protokoll, Konfiguration, Mapping und konkrete Beispiele für die Umsetzung.
 
----
+## Tatsächlicher Stand
 
 ## 0. Übersicht
 
@@ -34,102 +34,20 @@ HL7 v2.x-Nachrichten werden über **MLLP (Minimal Lower Layer Protocol)** übert
 
 | Frame-Zeichen | Hex | Bedeutung |
 |---|---|---|
-| **S** (Start Block) | `0x0B` | Beginn der Nachricht |
-| **E** (End Block) | `0x1C` | Ende der Nachricht |
-| **CR** (Carriage Return) | `0x0D` | Ende der Frame |
+| HL7 v2.5 | MLLP-Server/Client | Platzhalter, kein Listener |
+| FHIR R4 | Server mit abgestimmtem ISiK-Profil | Keine /fhir-Routen; separater MEDICO-Client |
+| DICOM | Abgestimmter SCP/PACS-Workflow | Platzhalter, kein Listener |
+| XDS.b / XDS-I.b | Definierte IHE-Akteure/Transaktionen | Platzhalter |
+| GDT | Versionierter Gerätedatentransfer | Nur Entwicklungs-CSV, kein GDT |
+| TI | Profilierte Anbindung | Ausbauziel |
 
-> **Hinweis:** MLLP ist ein rein binäres Framing auf TCP. Die HL7-Nachricht selbst ist zeilenorientiert (Segment-Trennung `<CR>` oder `<LF>`).
+Ein `enabled=true` in der Konfiguration startet diese noch fehlenden Dienste nicht.
 
-### 1.2 Konfiguration
+## HL7 v2.5: Grundlagen für die Umsetzung
 
-```toml
-[interfaces.hl7]
-enabled = true          # Schnittstelle aktivieren
-port = 6667             # MLLP-Port
-version = "2.5"         # HL7-Versionsnummer
-```
+MLLP rahmt eine Nachricht als Startbyte 0x0B, Nachricht, Endbyte 0x1C und 0x0D. Reguläre HL7-Segmente werden durch CR (0x0D) getrennt. Für Tests LF nicht ungeprüft als Gegenstellenstandard verwenden.
 
-**Empfohlene Firewall:** Nur vom LIS/HIS-Server (z. B. `10.0.0.50`) erreichbar.
-
-### 1.3 Unterstützte Nachrichtentypen
-
-| Nachrichtentyp | Richtung | Zweck | KIS-Mapping |
-|---|---|---|---|
-| **ADT** (Admit/Discharge/Transfer) | LIS → KIS | Aufnahme, Entlassung, Verlegung | `patients` (anlegen/aktualisieren) |
-| **ADT^A01** | LIS → KIS | Aufnahme | `POST /api/patients` |
-| **ADT^A03** | LIS → KIS | Entlassung | Patient-Status aktualisieren |
-| **ADT^A04** | LIS → KIS | Verlegung | Zimmer/Station aktualisieren |
-| **ORU** (Order Result) | LIS → KIS | Labor-/Diagnose-Ergebnis | Ergebnis speichern, an Arzt |
-| **ORU^R01** | LIS → KIS | Einzelnes Ergebnis | `medications` / Befunde |
-| **ORM** (Order) | KIS → LIS | Arztanordnung | Termin / Verordnung an LIS |
-| **ORM^O01** | KIS → LIS | Neue Bestellung | Verordnung an LIS |
-| **ACK** | Bidirektional | Bestätigung | Protokoll im Audit-Log |
-
-### 1.4 ADT^A01 — Beispiel (Aufnahme)
-
-**Eingehende HL7-Nachricht (LIS → KIS):**
-
-```
-MSH|^~\&|LIS|Klinik|KIS|KIS|20261101120000||ADT^A01|MSG00001|P|2.5
-EVN|A01|20261101120000
-PID|1||PAT-2026-001234||Müller^Anna^^^|19850312||260100||K123456789
-NK1|1||Müllers^Familie
-PV1|1|I|ST-05^Zimmer-12^Bett-3
-```
-
-**KIS-Mapping (ADT^A01 → `patients`):**
-
-| HL7-Feld | PID | KIS-Feld |
-|---|---|---|
-| Patient ID | `PID-3` (`PAT-2026-001234`) | `patients.id` |
-| Nachname | `PID-5.1` (`Müller`) | `patients.last_name` |
-| Vorname | `PID-5.2` (`Anna`) | `patients.first_name` |
-| Geburtsdatum | `PID-7` (`19850312` → `1985-03-12`) | `patients.birth_date` |
-| Kassennummer | `PID-18` (`K123456789`) | `patients.insurance_number` |
-| Station | `PV1-2` (`I`) | (Station, Soll: Feld) |
-| Bett | `PV1-3` | (Bett, Soll: Feld) |
-
-> **Datumsformat:** HL7 verwendet `YYYYMMDD[HHMMSS]`. Das KIS konvertiert intern nach ISO 8601 (`YYYY-MM-DD`).
-
-### 1.5 ORU^R01 — Beispiel (Labor-Ergebnis)
-
-```
-MSH|^~\&|LIS|Klinik|KIS|KIS|20261101130000||ORU^R01|MSG00002|P|2.5
-PID|1||PAT-2026-001234||Müller^Anna
-OBR|1|ORD-999|LAB-001|Glucose|
-OBX|1|NM|GLU||7.2||mmol/l||H|N|F
-```
-
-**KIS-Mapping:** Ergebnis wird als Befund an den behandelnden Arzt gemeldet (GUI-Notification + Audit-Log `interface.hl7.receive`).
-
-### 1.6 ORM^O01 — Beispiel (Verordnung, KIS → LIS)
-
-```
-MSH|^~\&|KIS|Klinik|LIS|LIS|20261101140000||ORM^O01|ORD0001|P|2.5
-PID|1||PAT-2026-001234||Müller^Anna
-ORC|NW|ORD-1000|||
-RXR|1|Ibuprofen|600||mg
-```
-
-### 1.7 Bestätigung (ACK)
-
-Nach erfolgreicher Verarbeitung sendet das KIS eine ACK-Nachricht:
-
-```
-MSH|^~\&|KIS|Klinik|LIS|LIS|20261101120001||ACK|MSG00001|P|2.5
-MSA|AA|MSG00001
-```
-
-| MSA-1 | Bedeutung |
-|---|---|
-| `AA` | Accept — Nachricht verarbeitet |
-| `AE` | Error — Verarbeitung fehlgeschlagen |
-| `AR` | Rejected |
-| `CA` | Accepted with corrections |
-
-### 1.8 Fehlerbehandlung
-
-| Fehler | Reaktion |
+| Triggerereignis | Bedeutung |
 |---|---|
 | Ungültiges MLLP-Frame | Nachricht verwerfen, ACK `AE` senden, Audit-Log |
 | Unbekanntes PID | ACK `AE`, Alarm an LIS |
@@ -171,17 +89,13 @@ Das Modul ist in `crates/kis-hl7/src/lib.rs` implementiert:
 
 ## 2. FHIR R4 (REST/JSON)
 
-### 2.1 Protokoll
+Logisches Beispiel mit einer Zeile pro Segment; auf dem Transport sind CR-Trennzeichen zu verwenden:
 
-FHIR R4 ist ein **RESTful-JSON-Interface** (bzw. XML). Das KIS stellt die FHIR-Resources unter dem HTTP-Port 8080 am Pfad `/fhir` bereit.
-
-### 2.2 Konfiguration
-
-```toml
-[interfaces.fhir]
-enabled = true
-base_url = "http://localhost:8080/fhir"   # Produktion: "https://fhir.klinik.de"
-version = "R4"
+```text
+MSH|^~\&|MEDICO|KLINIK|KIS|KLINIK|20261102120000||ADT^A01|MSG000001|P|2.5
+EVN|A01|20261102120000
+PID|1||P001^^^MEDICO||Mustermann^Max||19850315|M
+PV1|1|I|WARD^ROOM^BED
 ```
 
 ### 2.3 Unterstützte Resource-Typen
@@ -228,250 +142,50 @@ Authorization: Bearer <token>
 Accept: application/fhir+json
 ```
 
-**Response (200 OK):**
+Ein konsistentes Laborwert-Segment:
+
+```text
+OBX|1|NM|GLU^Glucose||7.2|mmol/L|3.9-5.5|H|||F
+```
+
+ACK-Codes AA/AE/AR beziehen sich auf Anwendungsannahme/-fehler/-ablehnung. CA/CE/CR gehören zum erweiterten Commit-Acknowledgement; CA heißt Commit Accept. Wann bestätigt, erneut gesendet oder quarantänisiert wird, muss das Gegenstellenprofil festlegen. Eine ACK darf keine dauerhafte Speicherung vortäuschen.
+
+Für MLLP gibt es keine pauschal vorauszusetzende STARTTLS-/Benutzer-Authentifizierung. Transportabsicherung und Identitäten sind mit der Gegenstelle festzulegen; bloße Sendernamen im MSH ersetzen keine starke Authentifizierung.
+
+## FHIR R4: Vorgaben und Beispiele
+
+FHIR R4 verwendet die Ressourcendefinitionen von Version 4.0.1. Die Basis-URL und implementierte Profile sind mit der Gegenstelle abzustimmen. Ein künftiger KIS-Server muss seine tatsächlichen Fähigkeiten über ein CapabilityStatement veröffentlichen.
+
+Suchparameter heißen beispielsweise `Patient?name=Mustermann&birthdate=1985-03-15`, ohne Unterstrich vor name/birthdate. `_lastUpdated` ist dagegen ein allgemeiner Suchparameter mit Unterstrich. Paging erfolgt anhand der vom Server gelieferten Bundle-Links, nicht durch einen allgemein angenommenen `_page`-Zähler.
+
+Geplantes Appointment-Beispiel:
 
 ```json
 {
-  "resourceType": "Patient",
-  "id": "9f1c2a4e-7b3d-4a1e-9c5f-1234567890ab",
-  "meta": {
-    "lastUpdated": "2026-11-01T12:00:00Z"
-  },
-  "name": [
-    {
-      "family": "Müller",
-      "given": ["Anna"]
-    }
-  ],
-  "gender": "female",
-  "birthDate": "1985-03-12",
-  "identifier": [
-    {
-      "system": "http://klinik.de/Kassennummer",
-      "value": "K123456789"
-    }
+  "resourceType": "Appointment",
+  "id": "appointment-1",
+  "status": "booked",
+  "start": "2026-11-02T14:00:00Z",
+  "end": "2026-11-02T14:30:00Z",
+  "participant": [
+    {"actor":{"reference":"Patient/patient-1"},"status":"accepted"},
+    {"actor":{"reference":"Practitioner/doctor-1"},"status":"accepted"}
   ]
 }
 ```
 
-### 2.6 Beispiel: Patient anlegen (FHIR)
+Interne Statuswerte wie scheduled sind keine automatisch gültigen FHIR-Statuscodes. Sie brauchen eine ausdrückliche, fachlich geprüfte Zuordnung.
 
-```http
-POST /fhir/Patient
-Authorization: Bearer <token>
-Content-Type: application/fhir+json
-
-{
-  "resourceType": "Patient",
-  "name": [
-    {
-      "family": "Müller",
-      "given": ["Anna"]
-    }
-  ],
-  "gender": "female",
-  "birthDate": "1985-03-12",
-  "identifier": [
-    {
-      "system": "http://klinik.de/Kassennummer",
-      "value": "K123456789"
-    }
-  ]
-}
-```
-
-**Response (201 Created):**
+Geplantes MedicationRequest-Beispiel:
 
 ```json
-{
-  "resourceType": "Patient",
-  "id": "9f1c2a4e-7b3d-4a1e-9c5f-1234567890ab",
-  "meta": {
-    "versionId": "1",
-    "lastUpdated": "2026-11-01T12:00:00Z"
-  },
-  ...
-}
-```
-
-### 2.7 Beispiel: Patient suchen (FHIR Search)
-
-```http
-GET /fhir/Patient?_name=Müller&gender=female
-Authorization: Bearer <token>
-```
-
-**Response (200 OK) — Bundle:**
-
-```json
-{
-  "resourceType": "Bundle",
-  "type": "searchset",
-  "total": 1,
-  "entry": [
-    {
-      "fullUrl": "http://localhost:8080/fhir/Patient/9f1c2a4e-...",
-      "resource": {
-        "resourceType": "Patient",
-        "id": "9f1c2a4e-...",
-        "name": [{ "family": "Müller", "given": ["Anna"] }],
-        "gender": "female"
-      }
-    }
-  ]
-}
-```
-
-### 2.8 Beispiel: Appointment lesen
-
-```http
-GET /fhir/Appointment?patient=9f1c2a4e-...&status=scheduled
-```
-
-**Response (200 OK) — Bundle:**
-
-```json
-{
-  "resourceType": "Bundle",
-  "type": "searchset",
-  "total": 1,
-  "entry": [
-    {
-      "resource": {
-        "resourceType": "Appointment",
-        "id": "a1b2c3d4-...",
-        "status": "booked",
-        "serviceType": [{
-          "text": "Kardiologie"
-        }],
-        "start": "2026-11-02T14:00:00Z",
-        "end": "2026-11-02T14:30:00Z",
-        "participant": [
-          {
-            "actor": { "reference": "Patient/9f1c2a4e-..." },
-            "type": [{ "text": "patient" }]
-          },
-          {
-            "actor": { "reference": "Practitioner/e5f6a7b8-..." },
-            "type": [{ "text": "practitioner" }]
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-### 2.9 Beispiel: MedicationRequest anlegen
-
-```http
-POST /fhir/MedicationRequest
-Authorization: Bearer <token>
-Content-Type: application/fhir+json
-
 {
   "resourceType": "MedicationRequest",
   "status": "active",
   "intent": "order",
-  "medicationCodeableConcept": {
-    "text": "Ibuprofen"
-  },
-  "subject": {
-    "reference": "Patient/9f1c2a4e-..."
-  },
-  "prescriber": {
-    "reference": "Practitioner/e5f6a7b8-..."
-  },
-  "authoredOn": "2026-11-01",
-  "dosageInstruction": [
-    {
-      "text": "600 mg 3x/Tag"
-    }
-  ]
-}
-```
-
-### 2.10 FHIR-Suchparameter (Auszug)
-
-| Resource | Parameter | Beispiel |
-|---|---|---|
-| Patient | `_name` | `?_name=Müller` |
-| Patient | `_birthdate` | `?_birthdate=ge1985-01-01` |
-| Patient | `identifier` | `?identifier=http://klinik.de/Kassennummer\|K123456789` |
-| Appointment | `patient` | `?patient=9f1c2a4e-...` |
-| Appointment | `status` | `?status=booked` |
-| Appointment | `date` | `?date=ge2026-11-01` |
-| MedicationRequest | `patient` | `?patient=9f1c2a4e-...` |
-
-### 2.11 FHIR-Fehlerformat
-
-Fehler folgen dem FHIR `OperationOutcome`:
-
-```json
-{
-  "resourceType": "OperationOutcome",
-  "issue": [
-    {
-      "severity": "error",
-      "code": "not-found",
-      "details": {
-        "text": "Patient 9f1c2a4e-... nicht gefunden."
-      }
-    }
-  ]
-}
-```
-
-| HTTP | FHIR-Severity | FHIR-Code |
-|---|---|---|
-| 400 | error | invalid |
-| 401 | error | login |
-| 403 | error | forbidden |
-| 404 | error | not-found |
-| 409 | error | exception |
-| 429 | error | throttled |
-
-### 2.12 CapabilityStatement (Metadata)
-
-```http
-GET /fhir/metadata
-```
-
-Liefert die `CapabilityStatement` (unterstützte Resources, Interaktionen):
-
-```json
-{
-  "resourceType": "CapabilityStatement",
-  "status": "active",
-  "date": "2026-11-01",
-  "publisher": "KIS",
-  "kind": "instance",
-  "software": {
-    "name": "KIS",
-    "version": "0.1.0"
-  },
-  "fhirVersion": "4.0.1",
-  "implementation": {
-    "description": "KIS FHIR R4 Server"
-  },
-  "rest": [
-    {
-      "mode": "server",
-      "security": {
-        "service": ["confidentiality"],
-        "extension": [{
-          "url": "http://fhir-registry.info/smart-app-platform/Definition/security",
-          "valueCode": "service-smart-on-fhir"
-        }]
-      },
-      "resource": [
-        { "type": "Patient", "interaction": [{"code": "read"}, {"code": "search-type"}, {"code": "create"}] },
-        { "type": "Practitioner", "interaction": [{"code": "read"}, {"code": "search-type"}] },
-        { "type": "Appointment", "interaction": [{"code": "read"}, {"code": "search-type"}, {"code": "create"}] },
-        { "type": "MedicationRequest", "interaction": [{"code": "read"}, {"code": "search-type"}, {"code": "create"}] }
-      ]
-    }
-  ]
+  "medicationCodeableConcept": {"text":"Synthetisches Testpräparat"},
+  "subject": {"reference":"Patient/patient-1"},
+  "requester": {"reference":"Practitioner/doctor-1"}
 }
 ```
 
@@ -502,46 +216,18 @@ Das FHIR-Modul ist in `crates/kis-fhir/src/lib.rs` als Axum-HTTP-Service impleme
 
 ## 3. DICOM (C-STORE + C-FIND SCP)
 
-### 3.1 Protokoll
+Referenz: [FHIR R4](https://hl7.org/fhir/R4/). Für eine Implementierung zusätzlich die konkret vereinbarte ISiK-Version, CapabilityStatement und OperationDefinitions der Gegenstelle prüfen. Proprietäre $book-/Storno-Operationen sind nicht ohne dieses Profil verallgemeinerbar.
 
-DICOM (Digital Imaging and Communications in Medicine) überträgt bildgebende Daten. Das KIS agiert als **SCP (Service Class Provider)** für **C-STORE** — es empfängt DICOM-Objekte von Modalities (CT, MRT, Ultraschall, Röntgen) und PACS.
+## DICOM
 
-### 3.2 Konfiguration
+Vor Implementierung sind SOP Classes, Transfer Syntaxes, Rollen, Patientenzuordnung, Quarantäne und TLS-Profile in einem Conformance Statement festzulegen. Ein AE Title ist ein Anwendungsname und allein kein kryptografischer Identitätsnachweis.
 
-```toml
-[interfaces.dicom]
-enabled = true
-port = 104          # DICOM-Standardport
-ae_title = "KIS"    # Application Entity Title (max. 16 Zeichen)
-```
-
-### 3.3 AE Title
-
-- **Eigene AE Title:** `KIS` (max. 16 Zeichen, alphanumerisch + `_`).
-- **Gegenstellen (Allowed AE):** Müssen konfiguriert werden (Whitelist):
-
-```toml
-# Soll-Erweiterung
-[interfaces.dicom.allowed_ae]
-"CT-01" = "10.0.1.10"
-"MR-01" = "10.0.1.20"
-"PACS-01" = "10.0.1.50"
-```
-
-### 3.4 C-STORE-Verfahren
-
-```
-[Modality (CT)]  ──C-STORE-Request──►  [KIS SCP]
-[Modality (CT)]  ◄─C-STORE-Response─  [KIS SCP]
-```
-
-| Parameter | Beschreibung |
+| C-STORE-Statusbereich | Bedeutung |
 |---|---|
-| **Presentation Context** | Transfer Syntax (z. B. JPEG 2000, Uncompressed) |
-| **SOP Class UID** | Art des Objekts (CT, MR, US, DX) |
-| **SOP Instance UID** | Eindeutige Instanz |
-| **Patient ID** | Verknüpfung mit `patients` |
-| **Study/Series/Instance** | DICOM-Hierarchie |
+| 0x0000 | Erfolg |
+| 0xA7xx | Ressourcenmangel |
+| 0xA9xx | Datensatz passt nicht zur SOP Class |
+| 0xCxxx | Datensatz nicht interpretierbar |
 
 ### 3.5 Modality-Mapping (SOP Class → KIS)
 
@@ -765,35 +451,10 @@ Content-Type: application/json
 **DICOM-Test mit DCMTK:**
 
 ```bash
-# C-STORE-Test: Senden einer DICOM-Datei an das KIS-SCP
-storescu \
-  --aec KIS \
-  --host 127.0.0.1 \
-  --port 104 \
-  --sop-class 1.2.840.10008.5.1.4.1.1.2 \
-  test.dcm
+storescu -aec KIS 127.0.0.1 104 test.dcm
 ```
 
-**HL7-Test (Python):**
-
-```python
-import socket
-
-def send_hl7(host, port, message):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect((host, port))
-        frame = b'\x0b' + message.encode('utf-8') + b'\x1c\x0d'
-        s.sendall(frame)
-        response = s.recv(4096)
-        return response.decode('utf-8', errors='replace')
-
-msg = (
-    "MSH|^~\\&|TEST|Klinik|KIS|KIS|20261101120000||ADT^A01|TEST001|P|2.5\n"
-    "EVN|A01|20261101120000\n"
-    "PID|1||PAT-TEST-001||Test^Anna||19850312||260100\n"
-)
-print(send_hl7("127.0.0.1", 6667, msg))
-```
+Host und Port sind Positionsargumente. Ein laufender KIS-DICOM-SCP ist derzeit nicht vorhanden; dieser Befehl ist deshalb keine aktuelle Installationsprüfung.
 
 **TI-Status-Test (curl):**
 
@@ -1215,16 +876,10 @@ Jede TI-Operation wird im Audit-Log protokolliert:
 
 ## 8. Troubleshooting
 
-| Problem | Ursache | Lösung |
-|---|---|---|
-| HL7: keine Verbindung auf Port 6667 | `enabled = false` | `interfaces.hl7.enabled = true` setzen, Neustart |
-| HL7: ACK `AE` | Parse-Fehler im HL7-Body | Nachricht prüfen, MSH-Field-Sequenz |
-| FHIR: 404 auf `/fhir/Patient` | `enabled = false` oder Route fehlt | `interfaces.fhir.enabled = true` |
-| FHIR: `OperationOutcome` invalid | Ungerichtete FHIR-Struktur | FHIR-Validator verwenden |
-| DICOM: C-STORE-Response `0xC011` | SOP Class nicht unterstützt | Modality-Mapping prüfen |
-| DICOM: Verbindung abgelehnt | AE Title stimmt nicht überein | `ae_title` und Gegenstellen-AE vergleichen |
-| XDS: 404 | Module noch nicht implementiert | XDS-Implementierung abwarten (Ist: Platzhalter) |
+Ein eigener JSON-Endpunkt namens /xds/registry wäre zunächst eine proprietäre API. Für XDS.b sind Akteure und passende Transaktionen festzulegen, etwa Registry Stored Query (ITI-18), Provide and Register Document Set-b (ITI-41), Register Document Set-b (ITI-42) und Retrieve Document Set (ITI-43).
 
----
+Metadaten, Identifikatoren, Policies, Registry-/Repository-Verhalten und Fehlerbehandlung brauchen eigene Konformitätstests. Das Vorhandensein von Upload-/Download-Beispielen belegt keine IHE-Konformität.
 
-**Verwandte Dokumente:** [CONFIGURATION.md](CONFIGURATION.md) · [SECURITY.md](SECURITY.md) · [API.md](API.md)
+## Verifikation vor einer Freigabe
+
+Pro Schnittstelle sind Nachrichten-/Ressourcenprofile, valide synthetische Beispiele, Fehler-/Retry-Verhalten, Identitätsmapping und Sicherheit zu testen. Parser- oder JSON-Syntaxprüfungen allein reichen nicht. Tests mit einer echten oder verbindlich spezifizierten Gegenstelle sind noch offen.

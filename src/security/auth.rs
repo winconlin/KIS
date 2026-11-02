@@ -9,6 +9,7 @@ use axum::{
     extract::{ConnectInfo, State},
     http::StatusCode,
     response::{IntoResponse, Json, Response},
+    Extension,
 };
 use chrono::Utc;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header};
@@ -16,12 +17,12 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::info;
 use uuid::Uuid;
 
+use super::audit::{AuditAction, AuditLogger};
 use crate::config::SecurityConfig;
 use crate::db::Database;
-use super::audit::{AuditAction, AuditLogger};
 
 /// Fehler bei der Authentifizierung
 #[derive(Debug, Error)]
@@ -56,11 +57,7 @@ impl AuthError {
 
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
-        let body = serde_json::json!({
-            "error": self.to_string(),
-            "code": self.code(),
-        });
-        (self.status(), Json(body)).into_response()
+        super::middleware::json_error(self.status(), self.code(), &self.to_string())
     }
 }
 
@@ -91,7 +88,7 @@ pub enum Role {
 }
 
 impl Role {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "admin" => Some(Self::Admin),
             "doctor" => Some(Self::Doctor),
@@ -135,8 +132,7 @@ pub struct AuthContext {
     pub lockout_duration: u64,
     pub db: Arc<Database>,
     pub audit: Arc<AuditLogger>,
-    /// Blacklist abgelaufener/gekündigter Refresh-Token (JTI -> Ablaufzeitpunkt)
-    pub revoked: Arc<tokio::sync::Mutex<std::collections::HashMap<String, i64>>>,
+    dummy_password_hash: String,
 }
 
 impl AuthContext {
@@ -152,9 +148,19 @@ impl AuthContext {
                 env = config.jwt_secret_env
             )
         })?;
-        if jwt_secret.len() < 32 {
-            anyhow::bail!("JWT-Secret muss mindestens 32 Zeichen lang sein");
-        }
+        Self::from_secret(config, db, audit, jwt_secret)
+    }
+
+    pub fn from_secret(
+        config: &SecurityConfig,
+        db: Arc<Database>,
+        audit: Arc<AuditLogger>,
+        jwt_secret: String,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            jwt_secret.len() >= 32,
+            "JWT-Secret muss mindestens 32 Bytes lang sein"
+        );
         Ok(Self {
             jwt_secret,
             token_expiry: config.token_expiry,
@@ -163,7 +169,8 @@ impl AuthContext {
             lockout_duration: config.lockout_duration,
             db,
             audit,
-            revoked: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            dummy_password_hash: Self::hash_password("dummy-account-password")
+                .map_err(|_| anyhow::anyhow!("Passwort-Initialisierung fehlgeschlagen"))?,
         })
     }
 
@@ -186,7 +193,12 @@ impl AuthContext {
     }
 
     /// Erzeugt Access- und Refresh-Token für einen Nutzer.
-    pub fn generate_tokens(&self, user_id: &str, username: &str, role: &str) -> Result<(String, String), AuthError> {
+    pub fn generate_tokens(
+        &self,
+        user_id: &str,
+        username: &str,
+        role: &str,
+    ) -> Result<(String, String), AuthError> {
         let now = Utc::now().timestamp();
         let access_claims = Claims {
             sub: user_id.to_string(),
@@ -235,59 +247,115 @@ impl AuthContext {
         Ok(data.claims)
     }
 
-    /// Kündigt einen Refresh-Token (Blacklisting).
+    /// Signatur, Token-Zweck, persistente Sitzung und aktuelles Benutzerkonto prüfen.
+    pub async fn verify_access_token(&self, token: &str) -> Result<Claims, AuthError> {
+        let claims = self.verify_token(token)?;
+        if claims.refresh {
+            return Err(AuthError::InvalidToken);
+        }
+        let role: Option<String> = sqlx::query_scalar(
+            "SELECT u.role FROM sessions s JOIN users u ON u.id = s.user_id
+            WHERE s.access_jti = ? AND s.user_id = ? AND s.revoked_at IS NULL
+            AND u.is_active = 1 AND u.deleted_at IS NULL",
+        )
+        .bind(&claims.jti)
+        .bind(&claims.sub)
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(|_| AuthError::Internal)?;
+        if role.as_deref() != Some(claims.role.as_str()) || Role::parse(&claims.role).is_none() {
+            return Err(AuthError::InvalidToken);
+        }
+        Ok(claims)
+    }
+
+    async fn store_session(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        access: &str,
+        refresh: &str,
+    ) -> Result<(), AuthError> {
+        let access = self.verify_token(access)?;
+        let refresh = self.verify_token(refresh)?;
+        let expires =
+            chrono::DateTime::<Utc>::from_timestamp(refresh.exp, 0).ok_or(AuthError::Internal)?;
+        sqlx::query("INSERT INTO sessions (id, user_id, jti, access_jti, issued_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
+            .bind(Uuid::new_v4().to_string()).bind(&refresh.sub).bind(&refresh.jti).bind(&access.jti)
+            .bind(Utc::now().to_rfc3339()).bind(expires.to_rfc3339()).execute(&mut **tx).await
+            .map_err(|_| AuthError::Internal)?;
+        Ok(())
+    }
+
+    pub async fn issue_tokens(
+        &self,
+        user_id: &str,
+        username: &str,
+        role: &str,
+    ) -> Result<(String, String), AuthError> {
+        let tokens = self.generate_tokens(user_id, username, role)?;
+        let mut tx = self
+            .db
+            .pool()
+            .begin()
+            .await
+            .map_err(|_| AuthError::Internal)?;
+        self.store_session(&mut tx, &tokens.0, &tokens.1).await?;
+        tx.commit().await.map_err(|_| AuthError::Internal)?;
+        Ok(tokens)
+    }
+
+    /// Beide Tokens der Sitzung widerrufen; der Zustand überlebt Neustarts.
     pub async fn revoke_refresh(&self, token: &str) -> Result<(), AuthError> {
         let claims = self.verify_token(token)?;
         if !claims.refresh {
             return Err(AuthError::InvalidToken);
         }
-        let mut guard = self.revoked.lock().await;
-        guard.insert(claims.jti.clone(), claims.exp);
-        info!(jti = %claims.jti, "Refresh-Token gekündigt");
+        sqlx::query("UPDATE sessions SET revoked_at = ? WHERE jti = ? AND user_id = ? AND revoked_at IS NULL")
+            .bind(Utc::now().to_rfc3339()).bind(&claims.jti).bind(&claims.sub)
+            .execute(self.db.pool()).await.map_err(|_| AuthError::Internal)?;
         Ok(())
     }
 
-    /// Prüft, ob ein Refresh-Token gekündigt wurde.
-    pub async fn is_revoked(&self, token: &str) -> bool {
-        match self.verify_token(token) {
-            Ok(claims) if claims.refresh => self
-                .revoked
-                .lock()
-                .await
-                .contains_key(&claims.jti),
-            _ => true,
-        }
-    }
-
-    /// Erzeugt neue Tokens aus einem gültigen Refresh-Token.
+    /// Atomare Rotation: nur ein Request kann die alte Sitzung verbrauchen.
     pub async fn refresh_tokens(&self, token: &str) -> Result<(String, String), AuthError> {
         let claims = self.verify_token(token)?;
         if !claims.refresh {
             return Err(AuthError::InvalidToken);
         }
-        if self.is_revoked(token).await {
+        let mut tx = self
+            .db
+            .pool()
+            .begin()
+            .await
+            .map_err(|_| AuthError::Internal)?;
+        let updated = sqlx::query("UPDATE sessions SET revoked_at = ? WHERE jti = ? AND user_id = ? AND revoked_at IS NULL")
+            .bind(Utc::now().to_rfc3339()).bind(&claims.jti).bind(&claims.sub)
+            .execute(&mut *tx).await.map_err(|_| AuthError::Internal)?;
+        if updated.rows_affected() != 1 {
             return Err(AuthError::InvalidToken);
         }
-        // Altes Refresh-Token kündigen (Rotation)
-        let mut guard = self.revoked.lock().await;
-        guard.insert(claims.jti.clone(), claims.exp);
-        drop(guard);
-
-        let role_str = claims.role.clone();
-        self.generate_tokens(&claims.sub, &claims.username, &role_str)
+        let user: Option<(String, String)> = sqlx::query_as("SELECT username, role FROM users WHERE id = ? AND is_active = 1 AND deleted_at IS NULL")
+            .bind(&claims.sub).fetch_optional(&mut *tx).await.map_err(|_| AuthError::Internal)?;
+        let (username, role) = user.ok_or(AuthError::InvalidToken)?;
+        if Role::parse(&role).is_none() {
+            return Err(AuthError::InvalidToken);
+        }
+        let tokens = self.generate_tokens(&claims.sub, &username, &role)?;
+        self.store_session(&mut tx, &tokens.0, &tokens.1).await?;
+        tx.commit().await.map_err(|_| AuthError::Internal)?;
+        Ok(tokens)
     }
 
-    /// Prüft die Login-Sperre und erhöht den Fehlversuchs-Zähler.
+    /// Prüft eine bestehende Login-Sperre; Fehlversuche werden separat gezählt.
     /// Liefert Ok(true) wenn das Konto gesperrt ist.
     pub async fn check_or_incr_failed(&self, user_id: &str) -> Result<bool, AuthError> {
         let pool = self.db.pool();
-        let row: Option<(u32, Option<String>)> = sqlx::query_as(
-            "SELECT failed_logins, locked_until FROM users WHERE id = ?",
-        )
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|_| AuthError::Internal)?;
+        let row: Option<(u32, Option<String>)> =
+            sqlx::query_as("SELECT login_attempts, locked_until FROM users WHERE id = ?")
+                .bind(user_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|_| AuthError::Internal)?;
 
         let (_failed, locked_until) = match row {
             Some(r) => r,
@@ -306,42 +374,33 @@ impl AuthContext {
 
     async fn register_failed_login(&self, user_id: &str) -> Result<(), AuthError> {
         let pool = self.db.pool();
-        let row: Option<(u32,)> = sqlx::query_as("SELECT failed_logins FROM users WHERE id = ?")
-            .bind(user_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|_| AuthError::Internal)?;
-
-        let failed = row.map(|r| r.0).unwrap_or(0) + 1;
-        if failed >= self.max_login_attempts {
-            let locked_until =
-                (Utc::now() + chrono::Duration::seconds(self.lockout_duration as i64)).to_rfc3339();
-            sqlx::query(
-                "UPDATE users SET failed_logins = 0, locked_until = ? WHERE id = ?",
-            )
-            .bind(&locked_until)
-            .bind(user_id)
-            .execute(pool)
-            .await
-            .map_err(|_| AuthError::Internal)?;
-            warn!(user_id, "Konto gesperrt bis {locked_until}");
-        } else {
-            sqlx::query("UPDATE users SET failed_logins = ? WHERE id = ?")
-                .bind(failed)
-                .bind(user_id)
-                .execute(pool)
-                .await
-                .map_err(|_| AuthError::Internal)?;
-        }
+        let locked_until =
+            (Utc::now() + chrono::Duration::seconds(self.lockout_duration as i64)).to_rfc3339();
+        // Zähler und mögliche Sperre in einem atomaren Schreibvorgang erhöhen.
+        sqlx::query(
+            "UPDATE users SET
+            login_attempts = CASE WHEN login_attempts + 1 >= ? THEN 0 ELSE login_attempts + 1 END,
+            locked_until = CASE WHEN login_attempts + 1 >= ? THEN ? ELSE locked_until END
+            WHERE id = ?",
+        )
+        .bind(self.max_login_attempts)
+        .bind(self.max_login_attempts)
+        .bind(&locked_until)
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .map_err(|_| AuthError::Internal)?;
         Ok(())
     }
 
-    async fn reset_failed_logins(&self, user_id: &str) {
+    async fn reset_login_attempts(&self, user_id: &str) -> Result<(), AuthError> {
         let pool = self.db.pool();
-        let _ = sqlx::query("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?")
+        sqlx::query("UPDATE users SET login_attempts = 0, locked_until = NULL WHERE id = ?")
             .bind(user_id)
             .execute(pool)
-            .await;
+            .await
+            .map_err(|_| AuthError::Internal)?;
+        Ok(())
     }
 
     /// Erzeugt einen TOTP-Geheimnis (Base32) — MFA-Setup.
@@ -349,15 +408,15 @@ impl AuthContext {
         let mut rng = rand::thread_rng();
         let mut bytes = [0u8; 20];
         rng.fill_bytes(&mut bytes);
-        use base64::{engine::general_purpose::URL_SAFE as B32, Engine};
-        B32.encode(bytes)
+        totp_rs::Secret::Raw(bytes.to_vec())
+            .to_encoded()
+            .to_string()
     }
 
     /// Prüft einen TOTP-Code gegen das Geheimnis (30 s-Periode, ±1 Toleranz).
     /// Implementiert nach RFC 6238, SHA-1 (Standard für TOTP).
     pub fn verify_totp(secret_b32: &str, code: &str) -> bool {
-        use base64::{engine::general_purpose::URL_SAFE as B32, Engine};
-        let Ok(secret) = B32.decode(secret_b32) else {
+        let Ok(secret) = totp_rs::Secret::Encoded(secret_b32.into()).to_bytes() else {
             return false;
         };
         let digits = code.trim();
@@ -434,51 +493,89 @@ pub async fn login_handler(
     let pool = auth.db.pool();
 
     // Nutzer suchen
-    let row: Option<(String, String, String, String, i32)> =
-        sqlx::query_as(
-            "SELECT id, username, password_hash, role, is_active
-             FROM users WHERE username = ?",
-        )
-        .bind(&req.username)
-        .fetch_optional(pool)
-        .await
-        .map_err(|_| AuthError::Internal)?;
+    let row: Option<(String, String, String, String, i32)> = sqlx::query_as(
+        "SELECT id, username, password_hash, role, is_active
+             FROM users WHERE username = ? AND deleted_at IS NULL",
+    )
+    .bind(&req.username)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AuthError::Internal)?;
 
     let (user_id, _username, password_hash, role, is_active) = match row {
         Some(r) => r,
         None => {
             // Zeitangriff-Schutz: trotzdem ein Passwort prüfen
-            let _ = Argon2::default().verify_password(
-                req.password.as_bytes(),
-                &PasswordHash::new("$argon2id$v=19$m=19456,t=2,p=1$ZG9udGNoYW5nZQ$invalid").unwrap(),
-            );
-            auth.audit.log(None, AuditAction::LoginFailed, "user", None, None, None, Some(&addr.ip().to_string()));
+            let _ = AuthContext::verify_password(&req.password, &auth.dummy_password_hash)?;
+            auth.audit
+                .log(
+                    None,
+                    AuditAction::LoginFailed,
+                    "user",
+                    None,
+                    None,
+                    None,
+                    Some(&addr.ip().to_string()),
+                )
+                .await
+                .map_err(|_| AuthError::Internal)?;
             return Err(AuthError::InvalidCredentials);
         }
     };
 
     if is_active == 0 {
-        auth.audit.log(Some(&user_id), AuditAction::LoginFailed, "user", Some(&user_id), None, None, Some(&addr.ip().to_string()));
+        auth.audit
+            .log(
+                Some(&user_id),
+                AuditAction::LoginFailed,
+                "user",
+                Some(&user_id),
+                None,
+                None,
+                Some(&addr.ip().to_string()),
+            )
+            .await
+            .map_err(|_| AuthError::Internal)?;
         return Err(AuthError::InvalidCredentials);
     }
 
     // Sperre prüfen
     if auth.check_or_incr_failed(&user_id).await? {
-        auth.audit.log(Some(&user_id), AuditAction::Lockout, "user", Some(&user_id), None, None, Some(&addr.ip().to_string()));
-        let until = sqlx::query_scalar::<_, String>(
-            "SELECT locked_until FROM users WHERE id = ?",
-        )
-        .bind(&user_id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or_default();
+        auth.audit
+            .log(
+                Some(&user_id),
+                AuditAction::Lockout,
+                "user",
+                Some(&user_id),
+                None,
+                None,
+                Some(&addr.ip().to_string()),
+            )
+            .await
+            .map_err(|_| AuthError::Internal)?;
+        let until = sqlx::query_scalar::<_, String>("SELECT locked_until FROM users WHERE id = ?")
+            .bind(&user_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or_default();
         return Err(AuthError::AccountLocked(until));
     }
 
     // Passwort prüfen
     if !AuthContext::verify_password(&req.password, &password_hash)? {
         auth.register_failed_login(&user_id).await?;
-        auth.audit.log(Some(&user_id), AuditAction::LoginFailed, "user", Some(&user_id), None, None, Some(&addr.ip().to_string()));
+        auth.audit
+            .log(
+                Some(&user_id),
+                AuditAction::LoginFailed,
+                "user",
+                Some(&user_id),
+                None,
+                None,
+                Some(&addr.ip().to_string()),
+            )
+            .await
+            .map_err(|_| AuthError::Internal)?;
         return Err(AuthError::InvalidCredentials);
     }
 
@@ -494,12 +591,34 @@ pub async fn login_handler(
         if !secret.is_empty() {
             match &req.mfa_code {
                 None => {
-                    auth.audit.log(Some(&user_id), AuditAction::Mfa, "user", Some(&user_id), None, None, Some(&addr.ip().to_string()));
+                    auth.audit
+                        .log(
+                            Some(&user_id),
+                            AuditAction::Mfa,
+                            "user",
+                            Some(&user_id),
+                            None,
+                            None,
+                            Some(&addr.ip().to_string()),
+                        )
+                        .await
+                        .map_err(|_| AuthError::Internal)?;
                     return Err(AuthError::MfaRequired);
                 }
                 Some(code) => {
                     if !AuthContext::verify_totp(&secret, code) {
-                        auth.audit.log(Some(&user_id), AuditAction::Mfa, "user", Some(&user_id), None, None, Some(&addr.ip().to_string()));
+                        auth.audit
+                            .log(
+                                Some(&user_id),
+                                AuditAction::Mfa,
+                                "user",
+                                Some(&user_id),
+                                None,
+                                None,
+                                Some(&addr.ip().to_string()),
+                            )
+                            .await
+                            .map_err(|_| AuthError::Internal)?;
                         return Err(AuthError::MfaInvalid);
                     }
                 }
@@ -508,16 +627,27 @@ pub async fn login_handler(
     }
 
     // Erfolg: Zähler zurücksetzen, Tokens ausstellen
-    auth.reset_failed_logins(&user_id).await;
-    let (access, refresh) = auth.generate_tokens(&user_id, &req.username, &role)?;
-    auth.audit.log(Some(&user_id), AuditAction::Login, "user", Some(&user_id), None, None, Some(&addr.ip().to_string()));
+    auth.reset_login_attempts(&user_id).await?;
+    let (access, refresh) = auth.issue_tokens(&user_id, &req.username, &role).await?;
+    auth.audit
+        .log(
+            Some(&user_id),
+            AuditAction::Login,
+            "user",
+            Some(&user_id),
+            None,
+            None,
+            Some(&addr.ip().to_string()),
+        )
+        .await
+        .map_err(|_| AuthError::Internal)?;
     info!(user_id = %user_id, role, "Login erfolgreich");
 
-    sqlx::query("UPDATE users SET last_login = datetime('now') WHERE id = ?")
+    sqlx::query("UPDATE users SET last_login_at = datetime('now') WHERE id = ?")
         .bind(&user_id)
         .execute(pool)
         .await
-        .ok();
+        .map_err(|_| AuthError::Internal)?;
 
     Ok(Json(LoginResponse {
         access_token: access,
@@ -535,7 +665,18 @@ pub async fn refresh_handler(
 ) -> Result<Json<LoginResponse>, AuthError> {
     let (access, refresh) = auth.refresh_tokens(&req.refresh_token).await?;
     let claims = auth.verify_token(&access)?;
-    auth.audit.log(Some(&claims.sub), AuditAction::Refresh, "user", Some(&claims.sub), None, None, None);
+    auth.audit
+        .log(
+            Some(&claims.sub),
+            AuditAction::Refresh,
+            "user",
+            Some(&claims.sub),
+            None,
+            None,
+            None,
+        )
+        .await
+        .map_err(|_| AuthError::Internal)?;
     Ok(Json(LoginResponse {
         access_token: access,
         refresh_token: refresh,
@@ -545,27 +686,40 @@ pub async fn refresh_handler(
     }))
 }
 
-/// Logout-Handler: POST /api/auth/logout (kündigt den Refresh-Token)
+/// Logout-Handler: widerruft Access- und Refresh-Token der eigenen Sitzung.
 pub async fn logout_handler(
     State(auth): State<Arc<AuthContext>>,
+    Extension(user): Extension<super::middleware::AuthenticatedUser>,
     Json(req): Json<LogoutRequest>,
 ) -> Result<StatusCode, AuthError> {
+    let claims = auth.verify_token(&req.refresh_token)?;
+    if claims.sub != user.user_id {
+        return Err(AuthError::InvalidToken);
+    }
     auth.revoke_refresh(&req.refresh_token).await?;
+    auth.audit
+        .log(
+            Some(&user.user_id),
+            AuditAction::Logout,
+            "user",
+            Some(&user.user_id),
+            None,
+            None,
+            None,
+        )
+        .await
+        .map_err(|_| AuthError::Internal)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// MFA-Setup-Handler: POST /api/auth/mfa/setup (liefert Geheimnis + QR-URI)
-pub async fn mfa_setup_handler(State(_auth): State<Arc<AuthContext>>) -> Result<Json<serde_json::Value>, AuthError> {
-    let secret = AuthContext::generate_mfa_secret();
-    // URI für TOTP-Apps (Google Authenticator & Co.)
-    let otpauth = format!(
-        "otpauth://totp/KIS:user?secret={secret}&issuer=KIS&algorithm=SHA1&digits=6&period=30"
-    );
-    // TODO: secret im DB-Speicher ablegen (muss vor Aktivierung geschehen)
-    Ok(Json(serde_json::json!({
-        "secret": secret,
-        "otpauth_url": otpauth,
-    })))
+/// Reservierter MFA-Setup-Handler; bis zur vollständigen Umsetzung HTTP 501.
+pub async fn mfa_setup_handler(State(_auth): State<Arc<AuthContext>>) -> Response {
+    // Erst mit persistenter Zuordnung und Bestätigung freischalten.
+    super::middleware::json_error(
+        StatusCode::NOT_IMPLEMENTED,
+        "not_implemented",
+        "MFA-Setup ist noch nicht implementiert",
+    )
 }
 
 #[cfg(test)]
@@ -579,36 +733,47 @@ mod tests {
         assert!(!AuthContext::verify_password("wrong", &hash).unwrap());
     }
 
+    #[tokio::test]
+    async fn concurrent_failed_logins_do_not_lose_increments() {
+        let (context, _directory) = crate::security::tests::auth_fixture().await;
+        let attempts = (0..5)
+            .map(|_| {
+                let context = context.clone();
+                tokio::spawn(async move {
+                    context.register_failed_login("u1").await.unwrap();
+                })
+            })
+            .collect::<Vec<_>>();
+        for attempt in attempts {
+            attempt.await.unwrap();
+        }
+        assert!(context.check_or_incr_failed("u1").await.unwrap());
+    }
+
     #[test]
     fn totp_verify() {
+        // RFC 6238: Zeit 59 s, SHA1, sechs statt acht Ausgabestellen.
+        assert_eq!(
+            AuthContext::totp_at(b"12345678901234567890", 1).as_deref(),
+            Some("287082")
+        );
         // Fester Secret für Tests
-        let secret = base64::engine::general_purpose::ALPHA.encode(b"12345678901234567890");
+        let secret = totp_rs::Secret::Raw(b"12345678901234567890".to_vec())
+            .to_encoded()
+            .to_string();
         // Erzeugt den aktuellen Code und prüft ihn
         let counter = (Utc::now().timestamp() / 30) as u64;
         let code = AuthContext::totp_at(b"12345678901234567890", counter).unwrap();
         assert!(AuthContext::verify_totp(&secret, &code));
     }
 
-    #[test]
-    fn token_roundtrip() {
-        // Manuell gebauten Kontext ohne DB (nur für Token-Tests)
-        use std::sync::Arc;
-        let ctx = crate::security::auth::AuthContext {
-            jwt_secret: "test-secret-key-min-32-chars-long!!".into(),
-            token_expiry: 900,
-            refresh_expiry: 86400,
-            max_login_attempts: 5,
-            lockout_duration: 900,
-            db: Arc::new(crate::db::Database::empty_for_tests()),
-            audit: Arc::new(crate::security::audit::tests::dummy_logger()),
-            revoked: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-        };
+    #[tokio::test]
+    async fn token_roundtrip() {
+        let (ctx, _directory) = crate::security::tests::auth_fixture().await;
         let (access, refresh) = ctx.generate_tokens("u1", "alice", "doctor").unwrap();
         let claims = ctx.verify_token(&access).unwrap();
         assert_eq!(claims.sub, "u1");
-        assert_eq!(claims.role, "doctor");
         assert!(!claims.refresh);
-        let rclaims = ctx.verify_token(&refresh).unwrap();
-        assert!(rclaims.refresh);
+        assert!(ctx.verify_token(&refresh).unwrap().refresh);
     }
 }

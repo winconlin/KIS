@@ -1,77 +1,43 @@
 # KIS — Dokumentation
 
-> **Krankenhaus-Informations-System (KIS)**
-> Version 0.1.0 · Lizenz MIT · Sprache: Deutsch
+Stand: 02.11.2026 · Paketversion 0.1.0 · Entwicklungsprototyp
 
-Dieses Dokument ist das zentrale Verzeichnis (Index) für die vollständige Dokumentation des KIS-Projekts. Alle Dokumente befinden sich im Verzeichnis `docs/` des Repositories und sind in professionellem, medizinisch-technischem Deutsch verfasst.
+Die Referenz beschreibt den aktiven Root-Build unter `src/`. Der PostgreSQL-Workspace unter `crates/` ist ein nicht eingebundener Architekturentwurf. Geplante Funktionen werden ausdrücklich als Ausbauziel bezeichnet.
 
-## Über das Projekt
+## Dokumente
 
-Das KIS ist ein minimalistisches, performantes Krankenhaus-Informations-System, entwickelt in [Rust](https://www.rust-lang.org/). Es ist bewusst auf minimale Hardware-Anforderungen und maximale Datenintegrität ausgelegt und adressiert die besonderen Anforderungen an Datenschutz, Sicherheit und Interoperabilität im klinischen Umfeld.
-
-| Eigenschaft | Wert |
+| Dokument | Inhalt |
 |---|---|
-| Sprache | Rust (Edition 2021) |
-| Web-Framework | Axum 0.7 |
-| Datenbank | SQLite (WAL-Modus), Zugriff über SQLX 0.7 |
-| Runtime | Tokio (asynchron) |
-| Standard-Port (HTTP) | 8080 |
-| Medizinschnittstellen | HL7 v2.5 · FHIR R4 · DICOM · XDS |
-| Lizenz | MIT |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Aktiver Datenfluss und geplante Zielarchitektur |
+| [INSTALLATION.md](INSTALLATION.md) | Toolchain, Entwicklung, Bootstrap, systemd und Docker |
+| [CONFIGURATION.md](CONFIGURATION.md) | TOML, tatsächlich verwendete Felder und ENV-Overrides |
+| [API.md](API.md) | Registrierte Routen, Authentifizierung und Antworten |
+| [DATABASE.md](DATABASE.md) | Aktuelles Schema und Migrationsverfahren |
+| [SECURITY.md](SECURITY.md) | Umgesetzte Maßnahmen, Grenzen und offene Anforderungen |
+| [OPERATION.md](OPERATION.md) | Health, Logs, getestete Backup-Werkzeuge und Restore |
+| [INTERFACES.md](INTERFACES.md) | Stand und technische Vorgaben für Schnittstellen |
+| [CGM_MEDICO.md](CGM_MEDICO.md) | Client-Prototyp, Datenmapping und geplante Migration |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | Struktur, Prüfungen und Arbeitsablauf |
+| [FAHRPLAN.md](FAHRPLAN.md) | Geplanter vollständiger Ausbau |
+| [REVIEW_STATUS.md](REVIEW_STATUS.md) | Korrekturen und verbleibende Prüfungsaufgaben |
+| [AGENTEN_AUFTRAG.md](AGENTEN_AUFTRAG.md) | Ausführbare nächste Etappe PG-00 bis PG-10 mit Zuständigkeiten und Abnahme |
+| [SICHERHEITS_ABNAHME.md](SICHERHEITS_ABNAHME.md) | Sicherheitsfälle, echte Testnachweise und getrennte spätere Freigaben |
 
-## Verzeichnis der Dokumente
+Agenten beginnen mit [AGENTS.md](../AGENTS.md). Der erste Auftrag ist PG-00; die PostgreSQL-Implementierung beginnt nach der dort festgelegten Bestands- und Vertragsklärung.
 
-| Dokument | Inhalt | Status |
-|---|---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Systemarchitektur, Komponentenübersicht, Schnittstellen- und LLM-Integration | ✅ Vorhanden |
-| [INSTALLATION.md](INSTALLATION.md) | Schritt-für-Schritt-Installation, Build, systemd, Docker, Hardware-Anforderungen | ✅ Neu |
-| [CONFIGURATION.md](CONFIGURATION.md) | Vollständiger Konfigurationsreferenz, ENV-Overrides, Sicherheitseinstellungen | ✅ Neu |
-| [SECURITY.md](SECURITY.md) | Datenschutz, Zugriffskontrolle, Audit-Logging, Netzwerk, Compliance, Threat Model | ✅ Neu |
-| [API.md](API.md) | Komplette REST-API-Referenz, Endpunkte, Beispiele, Fehlercodes | ✅ Neu |
-| [INTERFACES.md](INTERFACES.md) | Medizinische Schnittstellen: HL7 v2.5, FHIR R4, DICOM, XDS | ✅ Neu |
-| [DATABASE.md](DATABASE.md) | Datenbank-Schema, ER-Diagramm, Indizes, WAL, Backup, Migrationen | ✅ Neu |
-| [DEVELOPMENT.md](DEVELOPMENT.md) | Entwicklerhandbuch, Projektstruktur, Konventionen, Tests, LLM-Workflow, CI/CD | ✅ Neu |
-| [OPERATION.md](OPERATION.md) | Betriebshandbuch: Monitoring, Logging, Backups, Upgrades, Troubleshooting | ✅ Neu |
+## Funktionsstand
 
-## Leseempfehlung
-
-| Rolle | Empfohlene Reihenfolge |
+| Bereich | Ist-Zustand |
 |---|---|
-| **Betrieb / IT-Administrator** | INSTALLATION → OPERATION → SECURITY → CONFIGURATION |
-| **Entwickler** | ARCHITECTURE → DEVELOPMENT → API → DATABASE → INTERFACES |
-| **Datenschutzbeauftragte(r) / Compliance** | SECURITY → CONFIGURATION → OPERATION (Audit-Logging) |
-| **Integrationstechnik (Schnittstellen)** | INTERFACES → CONFIGURATION → API |
-| **Projektverantwortung / Review** | ARCHITECTURE → SECURITY → OPERATION → DEVELOPMENT |
+| Datenbank | SQLite über SQLx; WAL und Pool konfigurierbar |
+| HTTP | Standard `127.0.0.1:8080`; Health unter `/api/health` |
+| Root-Seite | Text mit Prototyp-Hinweis; GUI-Entwurf noch nicht angeschlossen |
+| Auth | Login, Refresh, Logout; persistenter Widerruf von Token-Paaren |
+| Fachliche API | Registrierte Platzhalter; nach Auth/Rollenprüfung HTTP 501 |
+| MFA | Hilfsfunktionen vorhanden; Setup-Endpunkt bewusst HTTP 501 |
+| Schnittstellen-Server | HL7, FHIR, DICOM, XDS und TI noch nicht gestartet/implementiert |
+| MEDICO | Separater FHIR-Client, kein vollständiger Migrationsdienst |
+| LLM | Konfigurationsentwurf, kein laufender OpenRouter-Client |
+| PostgreSQL/Workspace | Geplant; `crates/` wird nicht vom Root-Manifest gebaut |
 
-## Konventionen in der Doku
-
-- **`code`** bzw. `` `pfad` ``: Dateipfade, Konfigurationsfelder, Befehle.
-- **Fett**: Wichtige Warnungen oder zentrale Begriffe.
-- **Tabelle**: Strukturierte Referenzen (Felder, Ports, Fehlercodes).
-- **Beispiel**: Code- und JSON-Beispiele in geblockter Formatierung.
-- **Hinweis / Warnung / Wichtig**: Vorangestellte Blöcke kennzeichnen Kritikalität.
-
-> **Wichtig:** Alle in dieser Dokumentation genannten Pfade, Ports, Konfigurationsfelder und Datenbankschemata beziehen sich auf den **tatsächlichen Projektstand** in `config/kis.toml`, `src/`, `migrations/001_init.sql` und `static/index.html`.
-
-## Schnellstart (Kurzform)
-
-```bash
-# 1. Projekt klonen
-git clone <repo-url> && cd kis
-
-# 2. Build
-cargo build --release
-
-# 3. Start (Konfiguration: config/kis.toml)
-./target/release/kis
-```
-
-Die Benutzeroberfläche ist anschließend unter `http://<host>:8080/` erreichbar, die API unter `http://<host>:8080/api/`.
-
-## Versionsstand
-
-| Version | Datum | Hinweis |
-|---|---|---|
-| 0.1.0 | — | Erstes dokumentiertes Release; Kern-API-Endpunkte als Grundgerüst vorhanden, Schnittstellen in Entwicklung. |
-
-> **Status-Hinweis:** Die Module unter `src/schnittstellen/` (HL7, FHIR, DICOM, XDS) und Teile der API-Handler sind im aktuellen Stand als **Grundgerüst / In Entwicklung** vorhanden. Die Dokumentation beschreibt das **Soll-Konzept** sowie den Ist-Zustand, wo abweichend.
+Der Schnellstart erfordert erzeugte Schlüssel und eine beschreibbare Datenbankablage. Dafür die [vollständige Installationsanleitung](INSTALLATION.md) verwenden.

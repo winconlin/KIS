@@ -2,7 +2,7 @@
 # Alle Werte können per KIS_*-ENV-Variablen übergeben werden
 
 [server]
-host = "0.0.0.0"
+host = "127.0.0.1"
 port = 8080
 workers = 4
 
@@ -26,7 +26,7 @@ port = 6667
 version = "2.5"
 
 [interfaces.fhir]
-enabled = true
+enabled = false
 base_url = "http://localhost:8080/fhir"
 version = "R4"
 

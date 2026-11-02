@@ -1,17 +1,21 @@
-# KIS — Installation
+# KIS — Installation und lokaler Start
 
 > **Krankenhaus-Informations-System (KIS)**
 > Dieses Dokument beschreibt die Installation des KIS von der Toolchain-Vorbereitung bis zum produktiven Betrieb als systemd-Dienst oder Docker-Container.
 >
 > **Aktualisiert (Stand 01.11.2026):** Neue Crate-Struktur (`kis-core`, `kis-gdt`, `kis-medico`, `kis-ti`, `kis-ui`), statische UI-Dateien, MEDICO-Konfiguration, PostgreSQL-Setup.
 
----
+Diese Anleitung startet den aktuellen SQLite-Prototyp. Es gibt noch keine freigegebene klinische Installation oder einen vollständigen MEDICO-Ersatz.
 
-## 1. Systemvoraussetzungen
+## Voraussetzungen
 
-### 1.1 Minimale Hardware-Anforderungen
+- Linux und die in [rust-toolchain.toml](../rust-toolchain.toml) gepinnte Rust-Version 1.99.1 einschließlich Cargo.
+- C-Compiler/Build-Werkzeuge für native Dependencies.
+- OpenSSL-CLI zur Erzeugung zufälliger Entwicklungsschlüssel.
+- Optional Docker mit Compose; Python 3.11+ und age für die Backup-Werkzeuge.
 
-Das KIS ist bewusst ressourcenschonend konzipiert. Folgende Werte sind **Minimum** für eine produktive Nutzung mit mehreren gleichzeitigen Benutzern:
+Debian/Ubuntu: `sudo apt-get install build-essential pkg-config ca-certificates openssl python3 age sqlite3`.
+Rust wird über rustup eingerichtet. Im Repo installiert bzw. wählt rustup die gepinnte Toolchain. Rust 1.75/1.79 sind mit dem aktuellen Lockfile nicht die dokumentierte Build-Basis. Ein extern installierter Datenbankserver wird nicht verwendet.
 
 | Ressource | Minimum | Empfohlen |
 |---|---|---|
@@ -69,19 +73,22 @@ sudo apt install -y build-essential pkg-config libssl-dev
 ### 2.3 System-Pakete (RHEL/AlmaLinux)
 
 ```bash
-sudo dnf groupinstall "Development Tools"
-sudo dnf install -y pkg-config openssl-devel
+git clone https://github.com/winconlin/KIS.git
+cd KIS
+cargo build --locked --bins
+cargo test --locked
 ```
 
----
+Für optimierte Binärdateien: `cargo build --locked --release --bins`. Es gibt noch keine Modul-Feature-Flags. Die Entwürfe unter `crates/` gehören nicht zum Root-Build.
 
-## 3. Projekt beziehen und bauen
+## Schlüssel für eine neue Entwicklungsumgebung
 
-### 3.1 Repository klonen
+Die folgenden Werte gelten nur für diesen Shell-Prozess und seine Kindprozesse:
 
 ```bash
-git clone <repo-url> /opt/kis
-cd /opt/kis
+export KIS_JWT_SECRET="$(openssl rand -base64 48)"
+export KIS_MASTER_KEY="$(openssl rand -base64 32)"
+export KIS_SERVER__HOST=127.0.0.1
 ```
 
 ### 3.2 Workspace-Struktur
@@ -120,7 +127,7 @@ cargo build --release
 ls -lh target/release/kis
 ```
 
-> **Hinweis:** Der Release-Profil in `Cargo.toml` setzt `lto = "fat"`, `codegen-units = 1` und `strip = true` — der Build ist **langsam**, das Ergebnis aber extrem kompakt und performant.
+## Administrator anlegen
 
 ### 3.4 Datenbank-Initialisierung
 
@@ -140,10 +147,10 @@ sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE kis TO kis;"
 
 ### 3.5 Konfiguration prüfen
 
-Die Konfiguration liegt in `config/kis.toml`. Vor dem ersten Start prüfen:
+## Start und Prüfung
 
 ```bash
-cat config/kis.toml
+cargo run --locked --bin kis
 ```
 
 Alle Felder sind in [CONFIGURATION.md](CONFIGURATION.md) dokumentiert. Standardwerte sind bereits gesetzt; für Produktion sollten mindestens `server.host`, `database.url` und die MEDICO-Zugangsdaten angepasst werden.
@@ -157,31 +164,12 @@ Alle Felder sind in [CONFIGURATION.md](CONFIGURATION.md) dokumentiert. Standardw
 ### 4.1 Manueller Start (Entwicklung)
 
 ```bash
-# Aus dem Projektordner
-cargo run
-
-# Oder das Release-Binär direkt
-./target/release/kis
+curl -fsS http://127.0.0.1:8080/api/health
 ```
 
-Erwartete Startlog-Ausgabe (tracing):
+Erwartet wird `OK`. Unter `/` erscheint ein Text mit Prototyp-Hinweis. Die Datenendpunkte liefern nach Auth-/Rollenprüfung HTTP 501. Das ist kein vorhandenes Patientenverwaltungssystem.
 
-```
-KIS — Krankenhaus-Informations-System v0.1.0
-Starte System...
-KIS läuft
-```
-
-### 4.2 Zugriff
-
-| Dienst | URL |
-|---|---|
-| Benutzeroberfläche (GUI) | `http://<host>:8080/` |
-| Health-Check | `http://<host>:8080/api/health` |
-| Patienten-API | `http://<host>:8080/api/patients` |
-| Termine-API | `http://<host>:8080/api/appointments` |
-
-> **Hinweis:** Der Server bindet standardmäßig an `0.0.0.0:8080` (alle Interfaces). Für lokale Entwicklung ohne Netzwerkkopplung `server.host = "127.0.0.1"` setzen.
+Der Server legt DB-Elternverzeichnis und DB-Datei an und führt alle eingebetteten Migrationen aus. Bei Migrations- oder Audit-Prüffehlern startet der HTTP-Listener nicht. Datenbankfehler sind kein Anlass, vorhandene Daten zu löschen.
 
 ### 4.3 Statische UI-Dateien
 
@@ -270,20 +258,20 @@ Details zu allen Variablen: [CONFIGURATION.md](CONFIGURATION.md).
 
 ---
 
-## 5. Betrieb als systemd-Dienst (empfohlen für Produktion)
+## systemd für eine betreute Testinstanz
 
-### 5.1 Benutzer und Verzeichnis
+Diese Schritte setzen einen gebauten Release voraus. Sie sind eine technische Dienstkonfiguration, keine klinische Produktfreigabe.
 
 ```bash
-# Dedizierten Systembenutzer anlegen (keine Shell, kein Login)
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin kis
-
-# Verzeichnisse anlegen und Rechte setzen
-sudo mkdir -p /opt/kis /var/lib/kis /var/log/kis
-sudo chown -R kis:kis /var/lib/kis /var/log/kis
+sudo install -d /opt/kis/bin /etc/kis
+sudo install -d -o kis -g kis /var/lib/kis /var/log/kis
+sudo install -m 755 target/release/kis target/release/kis-admin /opt/kis/bin/
+sudo install -o root -g kis -m 640 config/kis.toml /etc/kis/kis.toml
+sudoedit /etc/kis/env
 ```
 
-### 5.2 Konfiguration in die Produktivlage kopieren
+`/etc/kis/env` muss echte, separat erzeugte Schlüssel enthalten. Die Namen und Pfade sind:
 
 ```bash
 sudo mkdir -p /etc/kis
@@ -296,14 +284,13 @@ sudo cp -r /opt/kis/static /opt/kis/static
 sudo chown -R kis:kis /opt/kis/static
 ```
 
-### 5.3 systemd-Unit-Datei
+`sudo chown root:root /etc/kis/env` und `sudo chmod 600 /etc/kis/env` schützen diese Datei. Die Platzhalter sind keine gültigen Schlüssel. systemd liest die Datei vor dem Benutzerwechsel.
 
-Datei: `/etc/systemd/system/kis.service`
+Unit unter `/etc/systemd/system/kis.service`:
 
 ```ini
 [Unit]
-Description=KIS - Krankenhaus-Informations-System
-Documentation=file:///opt/kis/docs/OPERATION.md
+Description=KIS Entwicklungsprototyp
 After=network.target
 
 [Service]
@@ -311,22 +298,15 @@ Type=simple
 User=kis
 Group=kis
 WorkingDirectory=/opt/kis
-ExecStart=/opt/kis/target/release/kis
-Restart=always
+ExecStart=/opt/kis/bin/kis
+EnvironmentFile=/etc/kis/env
+Restart=on-failure
 RestartSec=5
-Environment=RUST_LOG=info
-EnvironmentFile=-/etc/kis/env
-
-# Sicherheitshärtung
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/kis /var/log/kis
 PrivateTmp=true
-LimitNOFILE=65536
-
-# Ressourcen-Limits (optional)
-MemoryMax=1G
 
 [Install]
 WantedBy=multi-user.target
@@ -334,21 +314,11 @@ WantedBy=multi-user.target
 
 > **`EnvironmentFile=-/etc/kis/env`** enthält Secrets (z. B. `DATABASE_URL`, `MEDICO_CLIENT_SECRET`). Das `-` bedeutet: Datei optional. Diese Datei **niemals** in Versionskontrolle aufnehmen (`chmod 600 kis:kis`).
 
-### 5.4 Dienst aktivieren und starten
+Netzwerkzugriff erfordert TLS-Terminierung und abgestimmte Zugriffsbeschränkungen. Der KIS-Prozess bietet selbst nur HTTP.
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable kis
-sudo systemctl start kis
+## Docker Compose
 
-# Status prüfen
-sudo systemctl status kis
-
-# Logs anzeigen
-sudo journalctl -u kis -f
-```
-
-### 5.5 Smoke-Test
+Für eine neue Testinstallation erstellt dieser Befehl eine geschützte `.env`; eine vorhandene Datei wird nicht überschrieben:
 
 ```bash
 # Health-Check

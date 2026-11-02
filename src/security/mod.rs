@@ -16,6 +16,9 @@ pub mod middleware;
 pub mod rate_limit;
 pub mod validation;
 
+#[cfg(test)]
+pub mod tests;
+
 pub use audit::{AuditAction, AuditLog, AuditLogger};
 pub use auth::{AuthContext, AuthError, Claims, LoginRequest, LoginResponse, Role};
 pub use encryption::{init_crypto, CryptoError, CryptoService};
@@ -45,9 +48,8 @@ pub async fn initialize(
     let audit = std::sync::Arc::new(audit);
 
     // 3) Auth-Kontext
-    let auth_context = std::sync::Arc::new(
-        auth::AuthContext::new(config, db.clone(), audit.clone()).await?,
-    );
+    let auth_context =
+        std::sync::Arc::new(auth::AuthContext::new(config, db.clone(), audit.clone()).await?);
 
     // 4) Rate-Limiter
     let limiter = std::sync::Arc::new(SlidingWindowLimiter::new(

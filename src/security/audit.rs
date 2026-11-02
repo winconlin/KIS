@@ -1,20 +1,14 @@
 //! Audit-Log (append-only) mit Hash-Kette gegen Manipulation
 //!
 //! Jeder Eintrag enthält den SHA-256-Hash des vorherigen Eintrags (prev_hash).
-//! So ist jede nachträgliche Änderung erkennbar: verify_chain() findet die
-//! erste veränderte/entfernte Stelle.
-//!
-//! DSGVO: Aufbewahrung mindestens 10 Jahre (3650 Tage) — Einträge werden
-//! niemals gelöscht, sondern nur archiviert.
+//! Inhaltsprüfung und Verkettung; für Schutz vor vollständigem Umschreiben
+//! oder Abschneiden braucht der Betreiber einen getrennten externen Prüfanker.
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::Path;
-use std::sync::Mutex;
 
 /// Aktionen, die im Audit-Log protokolliert werden
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,7 +56,7 @@ impl AuditAction {
     }
 
     /// Liest eine Action-String aus der Datenbank wieder ein
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "read" => Some(Self::Read),
             "create" => Some(Self::Create),
@@ -97,6 +91,12 @@ pub struct AuditLog {
     pub prev_hash: String,
     /// SHA-256 dieses Eintrags inklusive prev_hash
     pub hash: String,
+    #[serde(default = "legacy_hash_version")]
+    pub hash_version: u32,
+}
+
+fn legacy_hash_version() -> u32 {
+    1
 }
 
 /// Fehler bei der Audit-Verarbeitung
@@ -110,116 +110,33 @@ pub enum AuditError {
     Db(#[from] sqlx::Error),
 }
 
-/// Audit-Logger: schreibt Einträge asynchron in Log-Datei + Datenbank.
-///
-/// Der Logger hält den letzten Hash der Kette und rechnet den Hash jedes
-/// neuen Eintrags aus, bevor er ihn schreibt.
+/// Ein serieller Writer je Instanz. Die Datenbank ist das maßgebliche Audit-Log.
+/// Die JSONL-Datei ist eine ergänzende Kopie und kann bei Dateifehlern zurückliegen.
 pub struct AuditLogger {
-    tx: tokio::sync::mpsc::Sender<AuditLog>,
-    /// Letzter bekannter Hash der Kette (wird im Writer-Task fortgeführt)
-    last_hash: Mutex<String>,
-    _handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    pool: sqlx::SqlitePool,
+    path: std::path::PathBuf,
+    writer: tokio::sync::Mutex<()>,
 }
 
 impl AuditLogger {
-    /// Startet den Audit-Logger mit Hintergrund-Writer.
-    ///
-    /// `path`: Pfad der append-only Log-Datei (z. B. `logs/audit.log`).
-    /// `db_pool`: Pool für die `audit_log`-Tabelle.
-    ///
-    /// Die Kette wird über Neustarts hinweg fortgesetzt, indem der letzte
-    /// Hash aus der Datenbank geladen wird.
-    pub async fn start(
-        path: &Path,
-        db_pool: sqlx::Pool<sqlx::Sqlite>,
-    ) -> anyhow::Result<Self> {
-        let dir = path.parent();
-        if let Some(dir) = dir {
-            std::fs::create_dir_all(dir)?;
-        }
-
-        // Letzten Hash aus der DB laden (Kettenfortsetzung)
-        let last_hash = Self::load_last_hash(&db_pool).await?;
-        tracing::info!(last_hash = %last_hash, "Audit-Kette fortgesetzt");
-
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<AuditLog>(1024);
-        let log_path = path.to_path_buf();
-
-        let handle = tokio::spawn(async move {
-            while let Some(entry) = rx.recv().await {
-                if let Err(e) = write_entry(&log_path, &db_pool, &entry).await {
-                    tracing::error!(error = %e, "Audit-Eintrag konnte nicht geschrieben werden");
-                }
+    pub async fn start(path: &Path, pool: sqlx::SqlitePool) -> anyhow::Result<Self> {
+        if let Some(dir) = path.parent() {
+            if !dir.as_os_str().is_empty() {
+                tokio::fs::create_dir_all(dir).await?;
             }
-            tracing::info!("Audit-Writer-Thread beendet");
-        });
-
+        }
+        Self::verify_chain(&pool).await?;
         Ok(Self {
-            tx,
-            last_hash: Mutex::new(last_hash),
-            _handle: Mutex::new(Some(handle)),
+            pool,
+            path: path.into(),
+            writer: tokio::sync::Mutex::new(()),
         })
     }
 
-    /// Lädt den letzten Hash aus der Datenbank.
-    async fn load_last_hash(pool: &sqlx::Pool<sqlx::Sqlite>) -> anyhow::Result<String> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1")
-                .fetch_optional(pool)
-                .await?;
-        Ok(row.map(|r| r.0).unwrap_or_else(genesis_hash))
-    }
-
-    /// Loggt einen Eintrag (asynchron — blockiert nicht).
-    ///
-    /// Rechnet prev_hash + hash aus dem letzten bekannten Hash aus,
-    /// aktualisiert den Zustand und übergibt den Eintrag an den Writer.
-    pub fn log(
+    /// Wartet auf den DB-Commit. Kein stilles Verwerfen bei Überlast.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn log(
         &self,
-        user_id: Option<&str>,
-        action: AuditAction,
-        entity_type: &str,
-        entity_id: Option<&str>,
-        old_value: Option<&str>,
-        new_value: Option<&str>,
-        ip_address: Option<&str>,
-    ) {
-        // Hash aus dem letzten bekannten Wert ableiten
-        let prev_hash = {
-            let guard = self.last_hash.lock().unwrap();
-            guard.clone()
-        };
-
-        let mut entry = AuditLog {
-            timestamp: Utc::now(),
-            user_id: user_id.map(String::from),
-            action,
-            entity_type: entity_type.to_string(),
-            entity_id: entity_id.map(String::from),
-            old_value: old_value.map(String::from),
-            new_value: new_value.map(String::from),
-            ip_address: ip_address.map(String::from),
-            prev_hash: prev_hash.clone(),
-            hash: String::new(),
-        };
-        entry.hash = compute_entry_hash(&entry);
-
-        // Letzten Hash auf den neuen aktualisieren
-        {
-            let mut guard = self.last_hash.lock().unwrap();
-            *guard = entry.hash.clone();
-        }
-
-        // Asynchron übergeben (kein Panic, wenn Channel voll)
-        let _ = self.tx.try_send(entry);
-    }
-
-    /// Synchroner Log-Call für Fälle ohne tokio-Runtime (z. B. Tests).
-    /// Schreibt direkt in Datei + DB.
-    pub async fn log_sync(
-        &self,
-        path: &Path,
-        pool: &sqlx::Pool<sqlx::Sqlite>,
         user_id: Option<&str>,
         action: AuditAction,
         entity_type: &str,
@@ -228,103 +145,109 @@ impl AuditLogger {
         new_value: Option<&str>,
         ip_address: Option<&str>,
     ) -> anyhow::Result<AuditLog> {
-        let prev_hash = {
-            let guard = self.last_hash.lock().unwrap();
-            guard.clone()
-        };
+        let _writer = self.writer.lock().await;
+        let mut tx = self.pool.begin().await?;
+        // SQLx 0.7 beginnt SQLite-Transaktionen deferred. Vor dem Lesen den
+        // Writer reservieren, damit parallele Session-Writes keinen veralteten
+        // Read-Snapshot erzeugen. WHERE 0 verändert keine Audit-Einträge.
+        sqlx::query("UPDATE audit_log SET current_hash = current_hash WHERE 0")
+            .execute(&mut *tx)
+            .await?;
+        let previous: Option<String> =
+            sqlx::query_scalar("SELECT current_hash FROM audit_log ORDER BY id DESC LIMIT 1")
+                .fetch_optional(&mut *tx)
+                .await?;
         let mut entry = AuditLog {
             timestamp: Utc::now(),
             user_id: user_id.map(String::from),
             action,
-            entity_type: entity_type.to_string(),
+            entity_type: entity_type.into(),
             entity_id: entity_id.map(String::from),
             old_value: old_value.map(String::from),
             new_value: new_value.map(String::from),
             ip_address: ip_address.map(String::from),
-            prev_hash: prev_hash.clone(),
+            prev_hash: previous.unwrap_or_else(genesis_hash),
             hash: String::new(),
+            hash_version: 2,
         };
         entry.hash = compute_entry_hash(&entry);
-
-        write_entry(path, pool, &entry).await?;
-
-        let mut guard = self.last_hash.lock().unwrap();
-        *guard = entry.hash.clone();
+        sqlx::query("INSERT INTO audit_log
+            (timestamp, user_id, action, entity_type, entity_id, old_value, new_value,
+             ip_address, prev_hash, current_hash, hash_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(entry.timestamp.to_rfc3339()).bind(&entry.user_id).bind(entry.action.as_str())
+            .bind(&entry.entity_type).bind(&entry.entity_id).bind(&entry.old_value).bind(&entry.new_value)
+            .bind(&entry.ip_address).bind(&entry.prev_hash).bind(&entry.hash).bind(entry.hash_version)
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
+        if let Err(error) = self.mirror(&entry).await {
+            tracing::error!(%error, "Audit-Dateikopie fehlgeschlagen; DB-Eintrag ist gespeichert");
+        }
         Ok(entry)
     }
 
-    /// Verifiziert die Integrität der Hash-Kette in der Datenbank.
-    ///
-    /// Lädt alle Einträge, rechnet die Kette neu durch und vergleicht.
-    /// Liefert `Ok(())` wenn die Kette intakt ist, `Err(AuditError)` mit
-    /// der Index-Information bei Manipulation.
-    pub async fn verify_chain(pool: &sqlx::Pool<sqlx::Sqlite>) -> anyhow::Result<()> {
-        // Alle Einträge laden (id, prev_hash, hash)
-        let rows: Vec<(i64, String, String)> =
-            sqlx::query_as("SELECT id, prev_hash, hash FROM audit_log ORDER BY id ASC")
-                .fetch_all(pool)
-                .await?;
+    async fn mirror(&self, entry: &AuditLog) -> anyhow::Result<()> {
+        use tokio::io::AsyncWriteExt;
+        let mut line = serde_json::to_vec(entry)?;
+        line.push(b'\n');
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+            .await?;
+        file.write_all(&line).await?;
+        Ok(())
+    }
 
-        let mut expected_prev = genesis_hash();
-        for (id, prev_hash, _hash) in &rows {
-            if prev_hash != &expected_prev {
-                anyhow::bail!(
-                    "Audit-Kette unterbrochen bei Eintrag {id} — Manipulation erkannt"
-                );
-            }
-            expected_prev = _hash.clone();
+    /// Prüft Inhalt und Verkettung. Ohne externen Prüfanker ist das Entfernen
+    /// des Kettenendes oder vollständiges Neuberechnen durch DB-Admins nicht erkennbar.
+    pub async fn verify_chain(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
+        use sqlx::Row;
+        let rows = sqlx::query("SELECT id, timestamp, user_id, action, entity_type, entity_id,
+            old_value, new_value, ip_address, prev_hash, current_hash, hash_version FROM audit_log ORDER BY id")
+            .fetch_all(pool).await?;
+        let mut previous = genesis_hash();
+        for row in rows {
+            let id: i64 = row.try_get("id")?;
+            let action: String = row.try_get("action")?;
+            let timestamp: String = row.try_get("timestamp")?;
+            let entry = AuditLog {
+                timestamp: DateTime::parse_from_rfc3339(&timestamp)?.with_timezone(&Utc),
+                user_id: row.try_get("user_id")?,
+                action: AuditAction::parse(&action)
+                    .ok_or_else(|| anyhow::anyhow!("Unbekannte Audit-Aktion bei {id}"))?,
+                entity_type: row.try_get("entity_type")?,
+                entity_id: row.try_get("entity_id")?,
+                old_value: row.try_get("old_value")?,
+                new_value: row.try_get("new_value")?,
+                ip_address: row.try_get("ip_address")?,
+                prev_hash: row.try_get("prev_hash")?,
+                hash: row.try_get("current_hash")?,
+                hash_version: row.try_get("hash_version")?,
+            };
+            anyhow::ensure!(
+                matches!(entry.hash_version, 1 | 2),
+                "Unbekannte Hash-Version bei {id}"
+            );
+            anyhow::ensure!(
+                entry.prev_hash == previous && entry.hash == compute_entry_hash(&entry),
+                "Audit-Inhalt oder Kette manipuliert bei Eintrag {id}"
+            );
+            previous = entry.hash;
         }
         Ok(())
     }
 
-    /// Prüft die Aufbewahrungsfrist: wie viele Einträge älter als retention_days sind.
-    /// Diese werden NICHT gelöscht (DSGVO), sondern nur gezählt —
-    /// eine Archivierungsstrategie muss separat umgesetzt werden.
-    pub async fn count_expired(pool: &sqlx::Pool<sqlx::Sqlite>, retention_days: i64) -> anyhow::Result<i64> {
-        let row: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM audit_log WHERE timestamp < datetime('now', ?)",
+    pub async fn count_expired(
+        pool: &sqlx::SqlitePool,
+        retention_days: i64,
+    ) -> anyhow::Result<i64> {
+        Ok(sqlx::query_scalar(
+            "SELECT COUNT(*) FROM audit_log WHERE julianday(timestamp) < julianday('now', ?)",
         )
         .bind(format!("-{retention_days} days"))
         .fetch_one(pool)
-        .await?;
-        Ok(row.0)
+        .await?)
     }
-}
-
-/// Schreibt einen Eintrag in Log-Datei + Datenbank.
-async fn write_entry(
-    path: &Path,
-    pool: &sqlx::Pool<sqlx::Sqlite>,
-    entry: &AuditLog,
-) -> anyhow::Result<()> {
-    let json_line = serde_json::to_string(entry)?;
-
-    // 1) Append-only Log-Datei (DSGVO: keine Löschung, nur Anhängen)
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    file.write_all(json_line.as_bytes())?;
-    file.write_all(b"\n")?;
-
-    // 2) Audit-Tabelle in der Datenbank
-    sqlx::query(
-        "INSERT INTO audit_log
-            (timestamp, user_id, action, entity_type, entity_id,
-             old_value, new_value, ip_address, prev_hash, hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(entry.timestamp.to_rfc3339())
-    .bind(&entry.user_id)
-    .bind(entry.action.as_str())
-    .bind(&entry.entity_type)
-    .bind(&entry.entity_id)
-    .bind(&entry.old_value)
-    .bind(&entry.new_value)
-    .bind(&entry.ip_address)
-    .bind(&entry.prev_hash)
-    .bind(&entry.hash)
-    .execute(pool)
-    .await?;
-
-    Ok(())
 }
 
 /// Erzeugt einen Genesis-Hash (Kettenanfang)
@@ -337,6 +260,31 @@ pub fn genesis_hash() -> String {
 /// Berechnet den Hash eines Eintrags: SHA-256 über alle Felder inkl. prev_hash
 pub fn compute_entry_hash(entry: &AuditLog) -> String {
     let mut hasher = Sha256::new();
+    if entry.hash_version == 2 {
+        hasher.update(b"KIS-AUDIT-V2");
+        let timestamp = entry.timestamp.to_rfc3339();
+        for value in [
+            Some(timestamp.as_str()),
+            entry.user_id.as_deref(),
+            Some(entry.action.as_str()),
+            Some(entry.entity_type.as_str()),
+            entry.entity_id.as_deref(),
+            entry.old_value.as_deref(),
+            entry.new_value.as_deref(),
+            entry.ip_address.as_deref(),
+            Some(entry.prev_hash.as_str()),
+        ] {
+            match value {
+                Some(text) => {
+                    hasher.update([1]);
+                    hasher.update((text.len() as u64).to_be_bytes());
+                    hasher.update(text.as_bytes());
+                }
+                None => hasher.update([0]),
+            }
+        }
+        return B64.encode(hasher.finalize());
+    }
     hasher.update(entry.timestamp.to_rfc3339().as_bytes());
     hasher.update(entry.user_id.as_deref().unwrap_or("-").as_bytes());
     hasher.update(entry.action.as_str().as_bytes());
@@ -353,17 +301,6 @@ pub fn compute_entry_hash(entry: &AuditLog) -> String {
 pub mod tests {
     use super::*;
 
-    /// Erzeugt einen Dummy-Audit-Logger ohne DB/Datei (nur für Unit-Tests).
-    /// Der Channel wird nicht abgelesen — Einträge bleiben im Buffer.
-    pub fn dummy_logger() -> AuditLogger {
-        let (tx, _rx) = tokio::sync::mpsc::channel::<AuditLog>(64);
-        AuditLogger {
-            tx,
-            last_hash: Mutex::new(genesis_hash()),
-            _handle: Mutex::new(None),
-        }
-    }
-
     fn entry(action: AuditAction, prev: &str) -> AuditLog {
         let mut e = AuditLog {
             timestamp: Utc::now(),
@@ -376,6 +313,7 @@ pub mod tests {
             ip_address: Some("127.0.0.1".into()),
             prev_hash: prev.to_string(),
             hash: String::new(),
+            hash_version: 2,
         };
         e.hash = compute_entry_hash(&e);
         e

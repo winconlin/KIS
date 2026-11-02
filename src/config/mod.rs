@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 #[serde(default)]
 pub struct AppConfig {
     pub server: ServerConfig,
@@ -12,6 +12,7 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
@@ -21,7 +22,7 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            host: "0.0.0.0".into(),
+            host: "127.0.0.1".into(),
             port: 8080,
             workers: 4,
         }
@@ -29,6 +30,7 @@ impl Default for ServerConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct DatabaseConfig {
     /// Pfad zur SQLite-Datei (oder ENV `KIS_DATABASE_PATH`)
     #[serde(default = "default_db_path")]
@@ -41,9 +43,15 @@ pub struct DatabaseConfig {
     pub journal_mode: String,
 }
 
-fn default_db_path() -> String { "data/kis.db".into() }
-fn default_pool_size() -> u32 { 8 }
-fn default_journal_mode() -> String { "wal".into() }
+fn default_db_path() -> String {
+    "data/kis.db".into()
+}
+fn default_pool_size() -> u32 {
+    8
+}
+fn default_journal_mode() -> String {
+    "wal".into()
+}
 
 impl Default for DatabaseConfig {
     fn default() -> Self {
@@ -56,6 +64,7 @@ impl Default for DatabaseConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct UiConfig {
     pub theme: String,
     pub language: String,
@@ -72,7 +81,8 @@ impl Default for UiConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
 pub struct InterfaceConfig {
     pub hl7: Hl7Config,
     pub fhir: FhirConfig,
@@ -82,6 +92,7 @@ pub struct InterfaceConfig {
 
 /// CGM MEDICO Integration (FHIR R4 + OAuth 2.0 + GDT)
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct MedicoInterfaceConfig {
     pub enabled: bool,
     pub base_url: String,
@@ -140,18 +151,8 @@ impl Default for MedicoInterfaceConfig {
     }
 }
 
-impl Default for InterfaceConfig {
-    fn default() -> Self {
-        Self {
-            hl7: Hl7Config::default(),
-            fhir: FhirConfig::default(),
-            dicom: DicomConfig::default(),
-            medico: MedicoInterfaceConfig::default(),
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct Hl7Config {
     pub enabled: bool,
     pub port: u16,
@@ -169,6 +170,7 @@ impl Default for Hl7Config {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct FhirConfig {
     pub enabled: bool,
     pub base_url: String,
@@ -178,7 +180,7 @@ pub struct FhirConfig {
 impl Default for FhirConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             base_url: "http://localhost:8080/fhir".into(),
             version: "R4".into(),
         }
@@ -186,6 +188,7 @@ impl Default for FhirConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct DicomConfig {
     pub enabled: bool,
     pub port: u16,
@@ -203,6 +206,7 @@ impl Default for DicomConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct SecurityConfig {
     /// Umgebungsvariable, aus der der JWT-Signaturschlüssel gelesen wird
     pub jwt_secret_env: String,
@@ -220,19 +224,22 @@ pub struct SecurityConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct AuditConfig {
-    /// Aufbewahrungsfrist in Tagen — DSGVO: mindestens 3650 (10 Jahre)
+    /// Betriebliche Aufbewahrungsfrist; keine pauschale gesetzliche Vorgabe.
     pub retention_days: u64,
     pub log_file: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct RateLimitConfig {
     pub requests_per_minute: u32,
     pub auth_requests_per_minute: u32,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct EncryptionConfig {
     /// Umgebungsvariable, aus der der AES-256-Masterkey (Base64, 32 Bytes) gelesen wird
     pub master_key_env: String,
@@ -280,6 +287,7 @@ impl Default for EncryptionConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct LlmConfig {
     /// LLM-Provider (z. B. "openrouter")
     pub provider: String,
@@ -306,34 +314,80 @@ impl Default for LlmConfig {
     }
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            database: DatabaseConfig::default(),
-            ui: UiConfig::default(),
-            interfaces: InterfaceConfig::default(),
-            llm: LlmConfig::default(),
-            security: SecurityConfig::default(),
-        }
-    }
-}
-
 impl AppConfig {
     pub fn load() -> anyhow::Result<Self> {
         use figment::providers::{Env, Format, Toml};
-        
 
         // Konfiguration aus TOML-Datei laden (falls vorhanden)
-        let toml_provider = Toml::file("config/kis.toml");
+        let config_path =
+            std::env::var("KIS_CONFIG_PATH").unwrap_or_else(|_| "config/kis.toml".into());
+        let toml_provider = Toml::file(config_path);
         let figment = figment::Figment::new()
             .merge(toml_provider)
             // Umgebungsvariablen mit Präfix KIS_ überlagern die Datei
-            .merge(Env::prefixed("KIS_"));
+            .merge(Env::prefixed("KIS_").split("__"));
 
         let config: AppConfig = figment
             .extract()
             .map_err(|e| anyhow::anyhow!("Konfigurationsfehler: {e}"))?;
+        config.validate()?;
         Ok(config)
+    }
+}
+
+impl AppConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(self.server.port > 0, "server.port muss größer als 0 sein");
+        anyhow::ensure!(
+            self.server.workers > 0,
+            "server.workers muss größer als 0 sein"
+        );
+        anyhow::ensure!(
+            self.database.pool_size > 0,
+            "database.pool_size muss größer als 0 sein"
+        );
+        anyhow::ensure!(
+            matches!(self.database.journal_mode.as_str(), "wal" | "delete"),
+            "database.journal_mode muss wal oder delete sein"
+        );
+        anyhow::ensure!(
+            self.security.token_expiry > 0
+                && self.security.refresh_expiry >= self.security.token_expiry,
+            "Token-Laufzeiten müssen positiv sein; Refresh darf nicht kürzer als Access sein"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use figment::providers::{Format, Toml};
+
+    #[test]
+    fn partial_sections_keep_nested_defaults() {
+        let config: AppConfig = figment::Figment::new()
+            .merge(Toml::string(
+                "[server]\nport=9090\n[security.audit]\nlog_file='custom.log'",
+            ))
+            .extract()
+            .unwrap();
+        assert_eq!(config.server.port, 9090);
+        assert_eq!(config.server.workers, 4);
+        assert_eq!(config.security.audit.retention_days, 3650);
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn invalid_connection_and_token_settings_are_rejected() {
+        let mut config = AppConfig::default();
+        config.database.pool_size = 0;
+        assert!(config.validate().is_err());
+        config.database.pool_size = 8;
+        config.database.journal_mode = "off".into();
+        assert!(config.validate().is_err());
+        config.database.journal_mode = "wal".into();
+        config.security.refresh_expiry = 1;
+        assert!(config.validate().is_err());
     }
 }

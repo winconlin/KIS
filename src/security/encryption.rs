@@ -7,8 +7,7 @@
 
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
-    Aes256Gcm,
-    Nonce,
+    Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use hmac::Mac;
@@ -118,7 +117,9 @@ impl CryptoService {
             .expect("HMAC akzeptiert jede Schlüsselgröße");
         mac.update(b"KIS-RECORD-KEY-V1");
         mac.update(record_id.as_bytes());
-        mac.finalize().into_bytes().to_vec()[..32].try_into().unwrap()
+        mac.finalize().into_bytes().to_vec()[..32]
+            .try_into()
+            .unwrap()
     }
 
     /// Erzeugt einen zufälligen 32-Byte-Masterkey (Base64) — für Initialisierung/Rotation.

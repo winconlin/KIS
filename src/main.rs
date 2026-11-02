@@ -1,59 +1,37 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
-
-use axum::{
-    routing::get,
-    Router,
-};
+use axum::{routing::get, Router};
+use kis::{api::create_router, config::AppConfig, db::Database, security};
+use std::{net::SocketAddr, sync::Arc};
 use tracing_subscriber::EnvFilter;
 
-use kis::api::create_router;
-use kis::config::AppConfig;
-use kis::db::Database;
-use kis::security;
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Logging initialisieren (RUST_LOG Umgebungsvariable, Default: info)
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
-    tracing::info!("KIS — Krankenhaus-Informations-System startet");
-
-    // 1) Konfiguration laden
     let config = AppConfig::load()?;
-    tracing::info!(
-        host = %config.server.host,
-        port = config.server.port,
-        "Konfiguration geladen"
-    );
-
-    // 2) Datenbank verbinden (SQLite, Migrations anwenden)
-    let db_url = format!("sqlite://{}", config.database.path);
-    let db = Arc::new(Database::connect(&db_url).await?);
-    tracing::info!(path = %config.database.path, "Datenbank verbunden");
-
-    // 3) Sicherheits-Stack initialisieren (Krypto, Audit, Auth, Rate-Limit)
-    let security_stack = Arc::new(security::initialize(&config.security, db.clone()).await?);
-    tracing::info!("Sicherheits-Stack initialisiert");
-
-    // 4) Router mit Sicherheits-Middleware aufbauen
-    let api_router = create_router(security_stack);
-
-    // 5) Health-Check auf Root + API-Router mounten
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(config.server.workers)
+        .enable_all()
+        .build()?
+        .block_on(run(config))
+}
+async fn run(config: AppConfig) -> anyhow::Result<()> {
+    let db = Arc::new(Database::from_config(&config.database).await?);
+    let security_stack = Arc::new(security::initialize(&config.security, db).await?);
+    // Der API-Router enthält sein Präfix bereits. Kein zweites /api-Nesting.
     let app = Router::new()
-        .route("/", get(|| async { "KIS" }))
-        .nest("/api", api_router)
-        // ConnectInfo ist nötig für IP-Extraktion (Rate-Limit + Audit)
+        .route("/", get(|| async { "KIS — Entwicklungsprototyp" }))
+        .merge(create_router(security_stack))
         .into_make_service_with_connect_info::<SocketAddr>();
-
-    // 6) Server starten (TLS: Zertifikat aus ENV laden, falls vorhanden)
-    let bind_addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port).parse()?;
-    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-    tracing::info!(%bind_addr, "Server lauscht");
-
-    axum::serve(listener, app).await?;
+    // HTTP; für Netzbetrieb ist ein TLS-Terminator erforderlich.
+    let listener =
+        tokio::net::TcpListener::bind((config.server.host.as_str(), config.server.port)).await?;
+    tracing::info!(address = %listener.local_addr()?, "KIS lauscht (HTTP)");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await?;
     Ok(())
 }

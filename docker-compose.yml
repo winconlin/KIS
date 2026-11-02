@@ -1,89 +1,20 @@
-# KIS Deployment
-#
-# PostgreSQL + KIS mit Read-Replica (optional)
-#
-# Usage: docker compose up -d
-
-version: "3.8"
-
 services:
-  # --- PostgreSQL (primär) ---
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: kis
-      POSTGRES_USER: kis
-      POSTGRES_PASSWORD: ${KIS_DB_PASSWORD:?Set KIS_DB_PASSWORD in .env}
-    volumes:
-      - db_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kis -d kis"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-
-  # --- Optional: Read-Replica (entfernen wenn nicht benötigt) ---
-  # db_read:
-  #   image: postgres:16-alpine
-  #   environment:
-  #     POSTGRES_DB: kis
-  #     POSTGRES_USER: kis
-  #     POSTGRES_PASSWORD: ${KIS_DB_PASSWORD:?}
-  #   volumes:
-  #     - db_read_data:/var/lib/postgresql/data
-  #   ports:
-  #     - "5433:5432"
-  #   depends_on:
-  #     - db
-  #   restart: unless-stopped
-
-  # --- KIS ---
   kis:
-    build:
-      context: .
-      args:
-        # Feature-Flags: Welche Module sollen kompiliert werden?
-        # Alle Module: "patients,doctors,appointments,medications,fhir,medico,ui"
-        # Nur MEDICO: "medico"
-        FEATURES: ${KIS_FEATURES:-patients,doctors,appointments,medications,fhir,medico,ui}
+    build: .
     environment:
-      # Server
-      KIS_SERVER_HOST: "0.0.0.0"
-      KIS_SERVER_PORT: "8080"
-      # Datenbank
-      KIS_DATABASE_WRITE_URL: "postgresql://kis:${KIS_DB_PASSWORD}@db:5432/kis"
-      # Optional Read-Replica:
-      # KIS_DATABASE_READ_URL: "postgresql://kis:${KIS_DB_PASSWORD}@db_read:5432/kis"
-      # KIS_DATABASE_POOL_SIZE: "200"
-      # Security
-      KIS_JWT_SECRET: ${KIS_JWT_SECRET:?Set KIS_JWT_SECRET in .env}
-      KIS_MASTER_KEY: ${KIS_MASTER_KEY:?Set KIS_MASTER_KEY in .env}
-      # MEDICO
-      KIS_MEDICO_BASE_URL: ${KIS_MEDICO_BASE_URL:-}
-      KIS_MEDICO_CLIENT_ID: ${KIS_MEDICO_CLIENT_ID:-}
-      KIS_MEDICO_CLIENT_SECRET: ${KIS_MEDICO_CLIENT_SECRET:-}
-      # LLM
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      KIS_SERVER__HOST: "0.0.0.0"
+      KIS_SERVER__PORT: "8080"
+      KIS_DATABASE__PATH: "/data/data/kis.db"
+      KIS_SECURITY__AUDIT__LOG_FILE: "/data/logs/audit.log"
+      KIS_JWT_SECRET: ${KIS_JWT_SECRET:?Generate KIS_JWT_SECRET in .env}
+      KIS_MASTER_KEY: ${KIS_MASTER_KEY:?Generate KIS_MASTER_KEY in .env}
     ports:
-      - "8080:8080"    # API + GUI
-      - "6667:6667"    # HL7 v2.5 (optional)
-      - "104:104"      # DICOM (optional)
+      - "127.0.0.1:8080:8080"
     volumes:
       - kis_data:/data/data
       - kis_logs:/data/logs
-      - kis_exports:/data/exports
       - ./config:/data/config:ro
-    depends_on:
-      db:
-        condition: service_healthy
     restart: unless-stopped
-
 volumes:
-  db_data:
-  # db_read_data:
   kis_data:
   kis_logs:
-  kis_exports:
