@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use std::path::PathBuf;
+use figment::providers::Format;
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
@@ -10,6 +11,7 @@ pub struct AppConfig {
     pub interfaces: InterfaceConfig,
     pub llm: LlmConfig,
     pub security: SecurityConfig,
+    pub logging: LoggingConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -90,6 +92,7 @@ pub struct InterfaceConfig {
     pub fhir: FhirConfig,
     pub dicom: DicomConfig,
     pub medico: MedicoInterfaceConfig,
+    pub ti: TiInterfaceConfig,
 }
 
 /// CGM MEDICO Integration (FHIR R4 + OAuth 2.0 + GDT)
@@ -152,6 +155,51 @@ impl Default for MedicoInterfaceConfig {
     }
 }
 
+/// Telematikinfrastruktur (eGK, ePA, eRezept, eAU, mTLS)
+#[derive(Debug, Deserialize, Clone)]
+pub struct TiInterfaceConfig {
+    pub enabled: bool,
+    pub base_url: String,
+    pub tls_cert_path: String,
+    pub tls_key_path: String,
+    pub tls_ca_path: String,
+    pub egk_reader_path: String,
+    pub request_timeout_seconds: u64,
+    pub max_concurrent_requests: usize,
+}
+
+impl Default for TiInterfaceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: "https://ti.backend.example.com".into(),
+            tls_cert_path: "/etc/kis/tls/cert.pem".into(),
+            tls_key_path: "/etc/kis/tls/key.pem".into(),
+            tls_ca_path: "/etc/kis/tls/ca.pem".into(),
+            egk_reader_path: "/dev/ttyUSB0".into(),
+            request_timeout_seconds: 30,
+            max_concurrent_requests: 10,
+        }
+    }
+}
+
+impl TiInterfaceConfig {
+    /// Pfad zum Client-Zertifikat (PEM)
+    pub fn cert_path(&self) -> PathBuf {
+        PathBuf::from(&self.tls_cert_path)
+    }
+
+    /// Pfad zum Private Key (PEM)
+    pub fn key_path(&self) -> PathBuf {
+        PathBuf::from(&self.tls_key_path)
+    }
+
+    /// Pfad zum CA-Bundle (PEM)
+    pub fn ca_path(&self) -> PathBuf {
+        PathBuf::from(&self.tls_ca_path)
+    }
+}
+
 impl Default for InterfaceConfig {
     fn default() -> Self {
         Self {
@@ -159,6 +207,7 @@ impl Default for InterfaceConfig {
             fhir: FhirConfig::default(),
             dicom: DicomConfig::default(),
             medico: MedicoInterfaceConfig::default(),
+            ti: TiInterfaceConfig::default(),
         }
     }
 }
@@ -303,6 +352,24 @@ pub struct LlmConfig {
     pub rotation_interval: u64,
 }
 
+/// Logging-Konfiguration
+#[derive(Debug, Deserialize, Clone)]
+pub struct LoggingConfig {
+    /// Log-Level: trace, debug, info, warn, error
+    pub level: String,
+    /// Ausgabe-Format: "json" (Production) oder "pretty" (Entwicklung)
+    pub format: String,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: "info".into(),
+            format: "json".into(),
+        }
+    }
+}
+
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
@@ -327,20 +394,23 @@ impl Default for AppConfig {
             interfaces: InterfaceConfig::default(),
             llm: LlmConfig::default(),
             security: SecurityConfig::default(),
+            logging: LoggingConfig::default(),
         }
     }
 }
 
 impl AppConfig {
     pub fn load() -> anyhow::Result<Self> {
-        let config = figment::Figment::new()
-            .merge(figment::providers::Env::prefixed("KIS_"))
-            .merge(
-                figment::providers::Toml::file("config/kis.toml")
-                    .map(|f| figment::providers::Data::from(f))
-                    .unwrap_or_else(|_| figment::providers::Data::from(AppConfig::default())),
-            )
-            .extract::<AppConfig>()?;
+        // TOML-Datei optional: wird nur gemergt, wenn die Datei existiert.
+        // Env-Variablen (KIS_*) ergänzen.
+        let mut figment = figment::Figment::new().merge(
+            figment::providers::Env::prefixed("KIS_").global(),
+        );
+        let toml_path = "config/kis.toml";
+        if std::path::Path::new(toml_path).exists() {
+            figment = figment.merge(figment::providers::Toml::file(toml_path));
+        }
+        let config = figment.extract::<AppConfig>()?;
         Ok(config)
     }
 }

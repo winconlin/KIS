@@ -1,5 +1,38 @@
 [package]
-[lib]
+name = "kis-core"
+version = "0.1.0"
+edition = "2021"
+description = "KIS Core: Konfiguration, PostgreSQL-Zugang, Sicherheit, API-Router, gemeinsame Modelle"
+license = "MIT"
 
-[dependencies]
+# Lib (lib.rs): Fundament, auf dem alle Module aufbauen
+[lib]
 name = "kis_core"
+path = "src/lib.rs"
+
+# Alle Dependencies zentral aus dem Workspace vererben
+[dependencies]
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+figment = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+jsonwebtoken = { workspace = true }
+argon2 = { workspace = true }
+aes-gcm = { workspace = true }
+ring = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
+totp-rs = { workspace = true }
+reqwest = { workspace = true }

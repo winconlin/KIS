@@ -1,5 +1,28 @@
+# ============================================================
+# KIS Patients — Patient-Service (Phase 1)
+# CRUD + Optimistic Locking + Soft-Delete + Cursor-Pagination
+# ============================================================
+
 [package]
+name = "kis-patients"
+version = "0.1.0"
+edition = "2021"
+description = "KIS Patient-Service: CRUD, Audit-Log, Optimistic Locking"
+license = "MIT"
+
 [lib]
+name = "kis_patients"
+path = "src/lib.rs"
 
 [dependencies]
-name = "kis_patients"
+# Externe Abhängigkeiten (alle zentral aus dem Workspace)
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }

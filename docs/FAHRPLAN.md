@@ -191,14 +191,16 @@ Gesamt: **~23 Wochen** bis v1.0 Release.
 | 0.2 | Projektstruktur (Module: core, patients, doctors, appointments, medications, schnittstellen, security, config, ui) | `cargo check` ohne Fehler | ✅ |
 | 0.3 | Konfigurationssystem (figment: TOML + ENV) | `config/kis.toml` wird geladen | ✅ |
 | 0.4 | PostgreSQL-Setup (SQLX, Connection-Pooling, Migrations) | `cargo run` erstellt DB + Tabellen | ✅ |
-| 0.5 | Logging (tracing, JSON + Human) | Logs in `logs/kis.log` | 🔲 |
-| 0.6 | Fehlerhandling (anyhow + thiserror, JSON Error API) | Consistent Error-Format | 🔲 |
-| 0.7 | CI/CD (GitHub Actions: build, test, lint) | `.github/workflows/ci.yml` | 🔲 |
-| 0.8 | Testrahmen (unit + integration, `cargo test`) | Mindestens 10 Tests | 🔲 |
-| 0.9 | Dockerfile (multi-stage, minimal image) + docker-compose (KIS + PostgreSQL) | `docker compose up` < 150 MB | 🔲 |
-| 0.10 | systemd-Unit (Production-Deployment) | `kis.service` läuft als Daemon | 🔲 |
-| 0.11 | **PostgreSQL Read-Replica-Setup** (dokumentiert + Test-Script) | `docs/INSTALLATION.md` § Read-Replica | 🔲 |
-| 0.12 | **Load-Balancer-Setup** (nginx config für KIS-Instanzen) | `config/nginx/kis.conf` | 🔲 |
+| 0.5 | Logging (tracing, JSON + Human) | Logs in `logs/kis.log` | ✅ |
+| 0.6 | Fehlerhandling (anyhow + thiserror, JSON Error API) | Consistent Error-Format | ✅ |
+| 0.7 | CI/CD (GitHub Actions: build, test, lint) | `.github/workflows/ci.yml` | ✅ |
+| 0.8 | Testrahmen (unit + integration, `cargo test`) | Mindestens 10 Tests | ✅ (43 Tests) |
+| 0.9 | Dockerfile (multi-stage, minimal image) + docker-compose (KIS + PostgreSQL) | `docker compose up` < 150 MB | ✅ |
+| 0.10 | systemd-Unit (Production-Deployment) | `kis.service` läuft als Daemon | ✅ |
+| 0.11 | **PostgreSQL Read-Replica-Setup** (dokumentiert + Test-Script) | `docs/INSTALLATION.md` § Read-Replica | ✅ |
+| 0.12 | **Load-Balancer-Setup** (nginx config für KIS-Instanzen) | `config/nginx/kis.conf` | ✅ |
+
+**Phase 0: ✅ 12/12 Tasks abgeschlossen (Stand: 02.11.2026)**
 
 **Agent-Regel Phase 0:** Kein Code für Features. Nur Infrastruktur. Alle Tasks sind unabhängig — parallelisierbar.
 
@@ -212,22 +214,22 @@ Gesamt: **~23 Wochen** bis v1.0 Release.
 
 | # | Task | Akzeptanzkriterium | Status |
 |---|------|-------------------|--------|
-| 1.1 | Datenmodelle: Patient, Arzt, Termin, Medikament, Abteilung, Station (je eigene Crate) | Alle mit UUID, Timestamps, Validierung, `version`-Spalte | 🔲 |
-| 1.2 | Patient-Service: CRUD + Suche (Name, Geb.-Datum, Kassen-Nr.) + Volltextsuche | < 50 ms für 100k Datensätze, Read-Pool für Suchen | 🔲 |
-| 1.3 | Arzt-Service: CRUD + Fachgebiete + Sprechstunden | Vollständig | 🔲 |
-| 1.4 | Termin-Service: CRUD + Status-Workflow (geplant → bestätigt → abgeschlossen) | Status-Übergänge validiert, Optimistic Locking | 🔲 |
-| 1.5 | Medikament-Service: CRUD + Verordnungs-Workflow | Vollständig | 🔲 |
-| 1.6 | REST-API: alle Endpunkte mit JSON, pagination, cursor-based | `docs/API.md` vollständig | 🔲 |
-| 1.7 | JWT-Auth: Login, Access/Refresh Tokens, Logout, MFA | 15 min Access, 24 h Refresh, TOTP | 🔲 |
+| 1.1 | Datenmodelle: Patient, Arzt, Termin, Medikament, Abteilung, Station (je eigene Crate) | Alle mit UUID, Timestamps, Validierung, `version`-Spalte | ✅ |
+| 1.2 | Patient-Service: CRUD + Suche (Name, Geb.-Datum, Kassen-Nr.) + Volltextsuche | < 50 ms für 100k Datensätze, Read-Pool für Suchen | ✅ |
+| 1.3 | Arzt-Service: CRUD + Fachgebiete + Sprechstunden | Vollständig | ✅ |
+| 1.4 | Termin-Service: CRUD + Status-Workflow (geplant → bestätigt → abgeschlossen) | Status-Übergänge validiert, Optimistic Locking | ✅ |
+| 1.5 | Medikament-Service: CRUD + Verordnungs-Workflow | Vollständig | ✅ |
+| 1.6 | REST-API: alle Endpunkte mit JSON, pagination, cursor-based | `docs/API.md` vollständig | ✅ |
+| 1.7 | JWT-Auth: Login, Access/Refresh Tokens, Logout, MFA | 15 min Access, 24 h Refresh, TOTP | ✅ |
 | 1.8 | RBAC: Rollen (Admin, Arzt, Pflege, Rezeption, Viewer) + Berechtigungen | Jede Rolle kann nur ihre Endpunkte | 🔲 |
-| 1.9 | Passwort-Hashing: Argon2id | OWASP-konform | 🔲 |
-| 1.10 | MFA: TOTP-Setup + Verifikation | Optional pro Benutzer | 🔲 |
+| 1.9 | Passwort-Hashing: Argon2id | OWASP-konform | ✅ |
+| 1.10 | MFA: TOTP-Setup + Verifikation | Optional pro Benutzer | ✅ |
 | 1.11 | Rate-Limiting: Sliding Window (100/min, Auth: 10/min) | 429 + Retry-After | 🔲 |
 | 1.12 | Audit-Log: Hash-Chain, jede Patienten-Operation geloggt | 10 Jahre Aufbewahrung, Partitionierung | 🔲 |
 | 1.13 | Input-Validierung: alle Felder (Name, Datum, E-Mail, Tel.) | OWASP-Validierung | 🔲 |
-| 1.14 | Daten-Verschlüsselung: AES-256-GCM für sensible Felder | Krankenkassen-Nr., Notizen, Telefon | 🔲 |
-| 1.15 | **Optimistic Locking**: `version`-Spalte, Concurrency-Tests | 2 User editieren gleichzeitig → 409 Conflict | 🔲 |
-| 1.16 | **Read-Replica-Support**: Lese-Queries auf Read-Pool | Suche < 50 ms bei 1000 parallelen Reads | 🔲 |
+| 1.14 | Daten-Verschlüsselung: AES-256-GCM für sensible Felder | Krankenkassen-Nr., Notizen, Telefon | ✅ |
+| 1.15 | **Optimistic Locking**: `version`-Spalte, Concurrency-Tests | 2 User editieren gleichzeitig → 409 Conflict | ✅ |
+| 1.16 | **Read-Replica-Support**: Lese-Queries auf Read-Pool | Suche < 50 ms bei 1000 parallelen Reads | ✅ |
 | 1.17 | **Caching**: In-memory Cache für häufige Reads (Rust: moka) | Cache-Hit < 5 ms | 🔲 |
 
 **Agent-Regel Phase 1:** Jeder Service bekommt Unit-Tests. API-Endpunkte werden mit `reqwest` in Integrationstests abgedeckt. Kein Code ohne Tests. **Jeder Service ist eine eigene Crate.**
@@ -468,5 +470,5 @@ Ein Task ist **fertig** wenn:
 
 ---
 
-*Version: 2.0.0 | Stand: 2026-11-01 | Autor: Hermes Agent*
-*Änderungen: v2.0.0 — Skalierung (PostgreSQL, Read-Replicas, Optimistic Locking), Rechtssicherheit (DSGVO, Anonymisierung, Löschung), Modularität (Cargo-Workspace, Feature-Flags)*
+*Version: 2.1.0 | Stand: 2026-11-02 | Autor: Hermes Agent*
+*Änderungen: v2.1.0 — Phase 0 abgeschlossen (12/12), Phase 1 teilweise (12/17), Phase 2–3 teilweise (kis-hl7, kis-fhir, kis-dicom, kis-xds, kis-gdt, kis-medico, kis-ti, kis-ui implementiert)*

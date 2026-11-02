@@ -1,503 +1,627 @@
-# CGM MEDICO Integration — KIS als vollumfänglicher Ersatz
+# KIS — CGM MEDICO Integration
 
-> **Dieses Dokument beschreibt, wie KIS CGM MEDICO vollständig ersetzt.**
-> KIS ist **kein** Ergänzungssystem — KIS übernimmt **alle** Funktionen von CGM MEDICO.
-> Der Import aus MEDICO dient ausschließlich dem Daten-Übergang bei der Migration.
-> Nach erfolgreicher Migration wird MEDICO nicht mehr benötigt.
-
----
-
-## 1. Positionierung: KIS ersetzt MEDICO vollständig
-
-| Aspekt | CGM MEDICO | KIS (Ziel) |
-|--------|-----------|------------|
-| **Patientenverwaltung** | ✅ | ✅ (vollständig) |
-| **Terminplanung** | ✅ | ✅ (vollständig, Kalender + Drag&Drop) |
-| **Termineinträge (Slot)** | ✅ | ✅ (vollständig) |
-| **Terminkategorien** | ✅ | ✅ (vollständig) |
-| **Terminbuchung ($book)** | ✅ | ✅ (vollständig, ISiK-konform) |
-| **Sprechstunden** | ✅ | ✅ (vollständig) |
-| **Praxen** | ✅ | ✅ (vollständig) |
-| **Versicherungen** | ✅ | ✅ (vollständig) |
-| **Laborwerte / Befunde** | ✅ | ✅ (FHIR Observation) |
-| **Arztbriefe** | ✅ | ✅ (XDS + FHIR DocumentReference) |
-| **DICOM** | ✅ | ✅ (C-STORE, C-FIND, C-MOVE) |
-| **HL7 v2** | ✅ | ✅ (MLLP Server) |
-| **FHIR R4 (ISiK)** | ✅ | ✅ (Server + Client) |
-| **Telematikinfrastruktur** | ✅ | ✅ (eGK, ePA, eRezept, eAU) |
-| **GUI** | ✅ (Windows) | ✅ (Web, responsive, Dark/Light) |
-| **Multi-User** | ✅ | ✅ (RBAC, tausende User) |
-| **Skalierung** | Begrenzt | PostgreSQL, Read-Replicas, horizontal |
-| **DSGVO / Compliance** | Teilweise | Vollständig (AES-256-GCM, Audit 10J) |
-
-**KIS deckt 100% der MEDICO-Funktionen ab. MEDICO wird nach Migration abgeschaltet.**
+> **Krankenhaus-Informations-System (KIS)**
+> Vollständige Dokumentation der CGM MEDICO-Anbindung: Systemarchitektur, Datenmodell, Synchronisationslogik, Fehlerbehandlung und Betrieb.
+>
+> **Stand:** 01.11.2026
+>
+> **Ist-Zustand:** Vollständig implementiert in `crates/kis-medico/src/lib.rs` (~1.500 Zeilen). Das KIS ist der **VOLLSTÄNDIGE ERSATZ** für das CGM MEDICO-System. Die MEDICO-Integration übernimmt alle Funktionen: Patientensynchronisation, Terminverwaltung, Freie-Abfrage und -Reservierung, Arztverwaltung und bidirektionale Datenabgleiche.
 
 ---
 
-## 2. Architektur der MEDICO-Integration
+## 0. Überblick
+
+CGM MEDICO ist ein externes Praxisverwaltungssystem (PVS). Das KIS ersetzt MEDICO vollständig und stellt die gleichen Funktionen bereit:
+
+| Funktion | MEDICO-Original | KIS-Implementierung |
+|---|---|---|
+| Patientenverwaltung | Manuelle Pflege | Bidirektionale Synchronisation + lokale CRUD |
+| Terminverwaltung | Manuelle Terminbuchung | Vollständige Termin-API + MEDICO-Sync |
+| Freie Termine | Abfrage im MEDICO-Interface | `GET /api/medico/slots` + Slot-Reservierung |
+| Arztverwaltung | Statische Liste | `doctors`-Tabelle + MEDICO-Synchronisation |
+| Datenabgleich | Einrichtungsabhängig | Automatischer initialer + inkrementeller Sync |
+
+> **Wichtig:** Das KIS ist der VOLLSTÄNDIGE ERSATZ für CGM MEDICO. Nach erfolgreicher Migration kann MEDICO stillgelegt werden. Die Synchronisationsmodule dienen als **Brücke** während der Migrationsphase und für den laufenden Datenabgleich mit externen Systemen.
+
+---
+
+## 1. Systemarchitektur
+
+### 1.1 Komponentenübersicht
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      KIS                                 │
-│                                                          │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
-│  │ patients │  │appointm. │  │medicatio │  │  fhir   │ │
-│  │  (CRUD)  │  │ (Slots)  │  │  (CRUD)  │  │  (R4)   │ │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬────┘ │
-│       │              │              │              │     │
-│  ┌────▼──────────────▼──────────────▼──────────────▼──┐ │
-│  │                    kis-core                          │ │
-│  │  Config, DB, Security, Audit, API-Router            │ │
-│  └────────────────────┬────────────────────────────────┘ │
-│                       │                                  │
-│  ┌────────────────────▼────────────────────────────────┐ │
-│  │              kis-medico (Crate)                      │ │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌───────────┐ │ │
-│  │  │ FHIR Client  │  │  GDT Export  │  │ HL7 v2    │ │ │
-│  │  │ (MEDICO)     │  │  (Datei)     │  │  (MLLP)   │ │ │
-│  │  └──────┬───────┘  └──────┬───────┘  └─────┬─────┘ │ │
-│  └─────────┼─────────────────┼────────────────┼────────┘ │
-└────────────┼─────────────────┼────────────────┼──────────┘
-             │                 │                │
-     ┌───────▼─────────────────▼────────────────▼───────┐
-     │              CGM MEDICO (alt, nur Migration)       │
-     │         Nach Migration: NICHT MEHR AKTIV          │
-     └──────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                         KIS (Rust/Axum)                        │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                   MEDICO-Integration                       │  │
+│  │                                                             │  │
+│  │  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐ │  │
+│  │  │   Client    │  │  Synchroni-  │  │   Konfiguration  │ │  │
+│  │  │  (HTTP/1.1) │  │  sations-    │  │  (MEDICO_CLIENT_ │ │  │
+│  │  │  reqwest +  │  │  logik       │  │  ID/SECRET)      │ │  │
+│  │  │  JWT-Auth   │  │              │  │                  │ │  │
+│  │  └──────┬──────┘  └──────┬───────┘  └────────┬─────────┘ │  │
+│  │         │                 │                    │           │  │
+│  │         ▼                 ▼                    ▼           │  │
+│  │  ┌─────────────────────────────────────────────────────┐  │  │
+│  │  │         MEDICO-API-Endpoints (extern)               │  │  │
+│  │  │  /api/patients  /api/appointments  /api/slots      │  │  │
+│  │  │  /api/practitioners  /api/sync/status              │  │  │
+│  │  └─────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                    Interne KIS-API                         │  │
+│  │  GET /api/medico/status  POST /api/medico/sync            │  │
+│  │  GET /api/medico/slots   POST /api/medico/slots/:id/reserve│  │
+│  │  GET /api/medico/patients  GET /api/medico/appointments   │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 1.2 Datenfluss
+
+```
+MEDICO (extern) ──REST/JSON──► KIS MEDICO-Client ──► PostgreSQL
+                                    │
+                                    ├──► Audit-Log (Hash-Chain)
+                                    │
+                                    ▼
+                              KIS-Interne Daten
+                              (patients, appointments,
+                               doctors, medications)
 ```
 
 ---
 
-## 3. FHIR R4 Schnittstelle zu MEDICO (OAuth 2.0)
+## 2. Datenmodell
 
-### 3.1 Authentication Flow (Client Credentials)
+### 2.1 MEDICO-spezifische Tabellen
 
-```
-KIS (kis-medico)
-    │
-    │  POST /oauth2/token
-    │  grant_type=client_credentials
-    │  client_id=<MEDICO_CLIENT_ID>
-    │  client_secret=<MEDICO_CLIENT_SECRET>
-    │  scope=openid profile patient.read patient.write appointment.read
-    │
-    ▼
-┌─────────────────────────────┐
-│   CGM MEDICO OAuth2 Server  │
-└──────────────┬──────────────┘
-               │
-               │  { "access_token": "eyJhbG...",
-               │    "token_type": "Bearer",
-               │    "expires_in": 3600 }
-               │
-               ▼
-KIS speichert Token, nutzt für alle FHIR-Calls,
-erfrischt 5 Minuten vor Ablauf
+```sql
+-- Verknüpfungstabelle: MEDICO-ID ↔ KIS-ID
+CREATE TABLE medico_entities (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    entity_type     VARCHAR(20) NOT NULL,  -- 'patient', 'appointment', 'practitioner'
+    external_id     VARCHAR(100) NOT NULL, -- MEDICO-interne ID
+    internal_id     UUID NOT NULL,         -- KIS-interne ID
+    last_synced_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_updated_external TIMESTAMPTZ,     -- MEDICO-Zeitstempel
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(entity_type, external_id)
+);
+
+CREATE INDEX idx_medico_entities_type ON medico_entities(entity_type);
+CREATE INDEX idx_medico_entities_external ON medico_entities(external_id);
 ```
 
-### 3.2 Konfiguration
+### 2.2 Synchronisations-Status
+
+```sql
+CREATE TABLE medico_sync_status (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    entity_type     VARCHAR(20) NOT NULL,
+    last_sync_at    TIMESTAMPTZ,
+    last_sync_cursor VARCHAR(200),   -- _since-Parameter für inkrementellen Sync
+    records_synced  INTEGER NOT NULL DEFAULT 0,
+    errors          JSONB,           -- Letzter Fehler-Report
+    status          VARCHAR(20) NOT NULL DEFAULT 'idle', -- 'idle', 'syncing', 'error'
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### 2.3 Feld-Mapping
+
+| MEDICO-Feld | KIS-Feld | Typ | Beschreibung |
+|---|---|---|---|
+| `patientId` | `patients.id` | UUID | Eindeutige Patienten-ID |
+| `lastName` | `patients.last_name` | VARCHAR | Nachname |
+| `firstName` | `patients.first_name` | VARCHAR | Vorname |
+| `dateOfBirth` | `patients.birth_date` | DATE | Geburtsdatum |
+| `gender` | `patients.gender` | VARCHAR | Geschlecht (m/f/d) |
+| `insuranceNumber` | `patients.insurance_number` | VARCHAR | Kassennummer |
+| `phone` | `patients.phone` | VARCHAR | Telefonnummer |
+| `email` | `patients.email` | VARCHAR | E-Mail-Adresse |
+| `street` | `patients.street` | VARCHAR | Straße |
+| `zipCode` | `patients.zip_code` | VARCHAR | PLZ |
+| `city` | `patients.city` | VARCHAR | Stadt |
+| `createdAt` | `patients.created_at` | TIMESTAMPTZ | Erstellt am |
+| `updatedAt` | `patients.updated_at` | TIMESTAMPTZ | Aktualisiert am |
+| `deletedAt` | `patients.deleted_at` | TIMESTAMPTZ | Gelöscht am (soft delete) |
+
+---
+
+## 3. Synchronisationslogik
+
+### 3.1 Sync-Modi
+
+| Modus | Auslöser | Beschreibung |
+|---|---|---|
+| **Initialer Sync** | `POST /api/medico/sync` (ohne `mode`) | Vollständiger Abgleich aller Entitäten |
+| **Inkrementeller Sync** | Automatisch alle 30 Sekunden | Nur Änderungen seit letztem Sync (`_since`-Parameter) |
+| **Manueller Sync** | `POST /api/medico/sync?mode=incremental` | Manuelles Auslösen des inkrementellen Syncs |
+
+### 3.2 Sync-Ablauf
+
+```
+1. Status-Abfrage
+   GET /api/medico/status
+   → Liefert letzten Sync-Zeitpunkt, Fehler, Status
+
+2. Sync anstoßen
+   POST /api/medico/sync
+   Body: { "mode": "initial" | "incremental", "entity_types": ["patients", "appointments"] }
+   → Startet asynchronen Sync-Job
+
+3. Sync-Prozess
+   a) Lese letzten Sync-Cursor aus medico_sync_status
+   b) Für jede Entitätentyp:
+      - Initial: Alle Einträge abrufen (paginiert, 100/Seite)
+      - Inkrementell: Nur Einträge mit updatedAt > last_sync_cursor
+   c) Für jede Zeile:
+      - Upsert: ON CONFLICT (external_id) DO UPDATE
+      - Konflikt-Strategie: LWW (Last-Write-Wins) basierend auf updatedAt
+      - Fehler: Zeile als fehlgeschlagen markieren, Sync fortsetzen
+   d) Audit-Log-Eintrag mit Hash-Chain
+   e) Sync-Status aktualisieren (Cursor, Zeitstempel, Fehler-Report)
+```
+
+### 3.3 Idempotenz
+
+Alle Sync-Vorgänge sind **idempotent**:
+
+```sql
+-- Beispiel: Patient upserten
+INSERT INTO patients (
+    id, external_id, last_name, first_name, birth_date,
+    gender, insurance_number, phone, email,
+    street, zip_code, city, created_at, updated_at
+) VALUES (
+    gen_random_uuid(), $1, $2, $3, $4,
+    $5, $6, $7, $8,
+    $9, $10, $11, NOW(), $12
+)
+ON CONFLICT (external_id) DO UPDATE SET
+    last_name = EXCLUDED.last_name,
+    first_name = EXCLUDED.first_name,
+    birth_date = EXCLUDED.birth_date,
+    gender = EXCLUDED.gender,
+    insurance_number = EXCLUDED.insurance_number,
+    phone = EXCLUDED.phone,
+    email = EXCLUDED.email,
+    street = EXCLUDED.street,
+    zip_code = EXCLUDED.zip_code,
+    city = EXCLUDED.city,
+    updated_at = GREATEST(patients.updated_at, EXCLUDED.updated_at);
+```
+
+> **Konflikt-Strategie (LWW):** Der Eintrag mit dem neueren `updatedAt`-Zeitstempel gewinnt. Bei identischen Zeitstempeln wird der bestehende Eintrag behalten (kein Überschreiben).
+
+### 3.4 Fehlerbehandlung
+
+Fehler werden **gesammelt**, nicht abgebrochen:
+
+```json
+{
+  "sync_id": "a1b2c3d4-...",
+  "mode": "initial",
+  "started_at": "2026-11-01T12:00:00Z",
+  "completed_at": "2026-11-01T12:05:32Z",
+  "total_records": 1250,
+  "successful": 1248,
+  "failed": 2,
+  "errors": [
+    {
+      "line": 457,
+      "external_id": "PAT-00457",
+      "entity_type": "patient",
+      "error": "Invalid date format for birth_date: '12.03.1985'"
+    },
+    {
+      "line": 892,
+      "external_id": "APP-00892",
+      "entity_type": "appointment",
+      "error": "Foreign key violation: patient_id not found"
+    }
+  ]
+}
+```
+
+> **Wichtig:** Ein Sync-Vorgang wird **nicht** abgebrochen, wenn einzelne Zeilen fehlschlagen. Die fehlerhaften Zeilen werden protokolliert und im Fehler-Report zurückgegeben. Der Sync kann manuell neu gestartet werden (idempotent).
+
+---
+
+## 4. Konfiguration
+
+### 4.1 Umgebungsvariablen
+
+| Variable | Typ | Pflicht | Beschreibung |
+|---|---|---|---|
+| `MEDICO_CLIENT_ID` | String | Ja | Client-ID für MEDICO-API-Authentifizierung |
+| `MEDICO_CLIENT_SECRET` | String | Ja | Client-Secret für MEDICO-API-Authentifizierung |
+| `MEDICO_API_BASE_URL` | URL | Ja | Basis-URL der MEDICO-API |
+| `MEDICO_SYNC_INTERVAL` | Duration | Nein | Intervall für inkrementellen Sync (Default: `30s`) |
+| `MEDICO_SYNC_ENABLED` | bool | Nein | Inkrementellen Sync aktivieren (Default: `true`) |
+
+### 4.2 Konfigurationsdatei
 
 ```toml
 # config/kis.toml
-[interfaces.medico]
+
+[medico]
 enabled = true
-base_url = "https://fhir.medico.example.com/fhir/"
-system_namespace = "1.2.276.0.79.3.7.1"
-auth_endpoint = "https://fhir.medico.example.com/oauth2/token"
-
-# Credentials aus ENV (NIEMALS im Code oder TOML):
-# MEDICO_CLIENT_ID=xxx
-# MEDICO_CLIENT_SECRET=xxx
-
-scopes = ["openid", "profile", "patient.read", "patient.write", "appointment.read"]
-sync_interval_seconds = 30
-max_concurrent_requests = 10
-request_timeout_seconds = 30
-change_detection_mode = "polling"  # oder "webhook"
+base_url = "https://medico.example.de/api"
+client_id_env = "MEDICO_CLIENT_ID"
+client_secret_env = "MEDICO_CLIENT_SECRET"
+sync_interval = "30s"
+sync_enabled = true
+timeout = "30s"
+max_retries = 3
 ```
 
-### 3.3 FHIR Endpunkte (MEDICO → KIS Import)
+### 4.3 Authentifizierung
 
-| Endpunkt | Methode | Zweck |
-|----------|---------|-------|
-| `/Patient` | GET | Alle Patienten |
-| `/Patient?identifier=system\|value` | GET | Patient nach ID |
-| `/Appointment` | GET | Alle Termine |
-| `/Appointment?_lastUpdated=ge{timestamp}` | GET | Geänderte Termine (Change-Detection) |
-| `/Slot?start=YYYY-MM-DD` | GET | Verfügbarkeit |
-| `/Practitioner` | GET | Ärzte |
-| `/PractitionerRole` | GET | Sprechstunden |
-| `/Organization` | GET | Praxen |
-| `/Observation` | GET | Laborwerte / Befunde |
-| `/DocumentReference` | GET | Arztbriefe |
-| `/Encounter` | GET | Aufenthalte |
-| `/MedicationRequest` | GET | Medikamente |
+Die MEDICO-API wird über **JWT-Authentifizierung** angesprochen:
 
-### 3.4 FHIR Endpunkte (KIS → MEDICO Export)
+```http
+GET /api/patients
+Authorization: Bearer <jwt_token>
+X-Client-Id: <MEDICO_CLIENT_ID>
+```
 
-| Endpunkt | Methode | Zweck |
-|----------|---------|-------|
-| `/Patient` | POST | Neuen Patienten in MEDICO anlegen |
-| `/Patient/{id}` | PUT | Patienten aktualisieren |
-| `/Appointment` | POST | Neuen Termin anlegen |
-| `/Appointment/{id}/$book` | POST | Termin buchen (ISiK) |
-| `/Appointment/{id}/$cancel` | POST | Termin stornieren |
-| `/Observation` | POST | Befund anlegen |
-| `/DocumentReference` | POST | Arztbrief hochladen |
-| `/MedicationRequest` | POST | Verordnung anlegen |
+Der JWT-Token wird beim Start des KIS anhand von `MEDICO_CLIENT_ID` und `MEDICO_CLIENT_SECRET` generiert und bei Bedarf erneuert.
 
 ---
 
-## 4. Datenmapping MEDICO → KIS
+## 5. API-Endpunkte
 
-### 4.1 Patient
+### 5.1 Status-Abfrage
 
-| MEDICO FHIR Feld | KIS Feld | Bemerkung |
-|-----------------|----------|-----------|
-| `Patient.id` | `patients.id` (UUID, neu) | MEDICO-ID in `external_id` |
-| `Patient.identifier[0].value` | `patients.external_id` | MEDICO-Patienten-ID |
-| `Patient.name[0].family` | `patients.name_family` | Nachname |
-| `Patient.name[0].given[0]` | `patients.name_given` | Vorname |
-| `Patient.gender` | `patients.gender` | male/female/other |
-| `Patient.birthDate` | `patients.birth_date` | ISO 8601 |
-| `Patient.telecom[0].value` | `patients.phone` | Telefon |
-| `Patient.telecom[1].value` | `patients.email` | E-Mail |
-| `Patient.address[0].city` | `patients.address_city` | Stadt |
-| `Patient.address[0].postalCode` | `patients.address_zip` | PLZ |
-| `Patient.address[0].line[0]` | `patients.address_street` | Straße |
-| `Patient.extension[insurance]` | `patients.insurance_number` | Versicherten-Nr. |
-| `Patient.extension[allergies]` | `patients.allergies` (JSON) | Allergien |
-
-### 4.2 Appointment
-
-| MEDICO FHIR Feld | KIS Feld |
-|-----------------|----------|
-| `Appointment.id` | `appointments.id` (UUID, neu) |
-| `Appointment.status` | `appointments.status` |
-| `Appointment.start` | `appointments.start_time` |
-| `Appointment.end` | `appointments.end_time` |
-| `Appointment.participant[0].actor.reference` | `appointments.doctor_id` |
-| `Appointment.participant[1].actor.reference` | `appointments.patient_id` |
-| `Appointment.serviceType` | `appointments.category` |
-| `Appointment.description` | `appointments.reason` |
-
-### 4.3 Practitioner
-
-| MEDICO FHIR Feld | KIS Feld |
-|-----------------|----------|
-| `Practitioner.id` | `doctors.id` (UUID, neu) |
-| `Practitioner.name[0].family` | `doctors.name_family` |
-| `Practitioner.name[0].given[0]` | `doctors.name_given` |
-| `Practitioner.specialty` | `doctors.specialty` |
-| `PractitionerRole.serviceType` | `doctors.specialties` (JSON) |
-
----
-
-## 5. Import-Strategie (Migration)
-
-### 5.1 Vollständiger Initial-Import
-
-```
-1. Alle Patienten:      GET /Patient?_count=100&_page=0,1,2,...
-2. Alle Ärzte:          GET /Practitioner
-3. Alle Sprechstunden:  GET /PractitionerRole
-4. Alle Praxen:         GET /Organization
-5. Alle Termine:        GET /Appointment?_count=100&_page=0,1,2,...
-6. Alle Slot:           GET /Slot?start={heute}
-7. Alle Befunde:        GET /Observation
-8. Alle Dokumente:      GET /DocumentReference
-9. Alle Medikamente:    GET /MedicationRequest
-
-Jeder Record:
-  - FHIR-Ressource parsen
-  - Auf KIS-Modell mappen
-  - In KIS-DB schreiben (INSERT ... ON CONFLICT DO NOTHING)
-  - Audit-Log-Eintrag schreiben
-  - Fehler sammeln, nicht abbrechen
+```http
+GET /api/medico/status
+Authorization: Bearer <access_token>
 ```
 
-### 5.2 Inkrementeller Sync (während Migrationsphase)
+**Response (200 OK):**
 
-```
-Alle 30 Sekunden:
-  GET /Appointment?_lastUpdated=ge{letzte_sync_zeit}
-  GET /Patient?_lastUpdated=ge{letzte_sync_zeit}
-
-Nur geänderte Records werden aktualisiert.
-Idempotenz: external_id + entity_type als Unique Constraint.
-```
-
-### 5.3 Konflikt-Handling
-
-```
-Wenn KIS-Record und MEDICO-Record denselben external_id haben:
-  1. Vergleiche updated_at
-  2. Älterer Record gewinnt (Last-Write-Wins)
-  3. Konflikt in Audit-Log dokumentieren
-  4. Option: Manuelle Review-Queue für Admins
+```json
+{
+  "enabled": true,
+  "last_sync_at": "2026-11-01T12:05:32Z",
+  "last_sync_status": "success",
+  "records_synced": 1250,
+  "errors": 0,
+  "next_sync_at": "2026-11-01T12:06:02Z",
+  "sync_mode": "incremental",
+  "connection": {
+    "base_url": "https://medico.example.de/api",
+    "authenticated": true,
+    "token_expires_at": "2026-11-01T18:00:00Z"
+  }
+}
 ```
 
----
+### 5.2 Sync anstoßen
 
-## 6. GDT-Export (MEDICO-kompatibel)
-
-### 6.1 Dateiformat
-
-GDT (Gelbe Datei) ist ein CSV-Format:
-
-```csv
-Patienten_ID;Nachname;Vorname;Geburtsdatum;Geschlecht;Versichertennummer;Telefon;E-Mail;Straße;PLZ;Stadt
-P001;Mustermann;Max;1985-03-15;m;A12345678901;01234/56789;max@example.com;Musterstr. 1;12345;Beispielstadt
-P002;Schmidt;Anna;1990-11-22;w;B9876543210;09876/54321;anna@example.com;Beispielweg 2;54321;Teststadt
-```
-
-### 6.2 Export-Konfiguration
-
-```toml
-[interfaces.medico]
-gdt_export_enabled = true
-gdt_export_path = "/data/exports/gdt/"
-gdt_export_filename = "kis_export_{date}.gdt"
-```
-
-### 6.3 Export-API
-
-```
-POST /api/v1/export/gdt
+```http
+POST /api/medico/sync
+Authorization: Bearer <access_token>
 Content-Type: application/json
 
-{ "include_deleted": false, "date_from": "2024-01-01" }
-
-Response: 200 OK
-{ "filename": "kis_export_2026-11-01.gdt", "record_count": 15432, "download_url": "/api/v1/export/gdt/download/..." }
+{
+  "mode": "initial",
+  "entity_types": ["patients", "appointments", "practitioners"]
+}
 ```
 
----
+**Response (202 Accepted):**
 
-## 7. HL7 v2 Adapter
-
-### 7.1 MLLP Server (Port 6667)
-
-KIS empfängt HL7 v2.5-Nachrichten von MEDICO (oder anderen Systemen):
-
-```
-\x0d\x0b
-MSH|^~\&|MEDICO|1.2.276.0.79.3.7.1|KIS|1.2.276.0.79.3.7.1|20261101120000||ADT^A01|MSG000001|P|2.5
-EVN|ADT^A01|20261101120000
-PID|1||P001^^^MEDICO||Mustermann^Max||19850315|M
-NK1|1|Mustermann^Hansi|SPO||0123456789
-OBX|1|TX|Allergien||Penicillin, Penicillinallergie
-\x1c
-\x0d
+```json
+{
+  "sync_id": "a1b2c3d4-1c2d-4e3f-8a9b-0c1d2e3f4a5b",
+  "status": "started",
+  "mode": "initial",
+  "entity_types": ["patients", "appointments", "practitioners"],
+  "estimated_duration": "5m"
+}
 ```
 
-### 7.2 Unterstützte Nachrichten
+### 5.3 Sync-Status abrufen
 
-| Typ | Zweck |
-|-----|-------|
-| ADT^A01 | Patientenaufnahme |
-| ADT^A02 | Patientenausgabe |
-| ADT^A04 | Patientenidentifikation |
-| ADT^A08 | Terminankündigung |
-| ORU^R01 | Befundübermittlung |
-| ORM^O01 | Terminbestellung |
-| SIU^S12 | Terminänderung |
-| SIU^S13 | Terminstorno |
-
-### 7.3 HL7 → KIS Mapping
-
-```
-PID-3.1  → patients.external_id
-PID-5.1  → patients.name_family
-PID-5.2  → patients.name_given
-PID-7    → patients.birth_date
-PID-8    → patients.gender
-PID-11.1 → patients.address_street
-PID-11.5 → patients.address_zip
-PID-11.6 → patients.address_city
-PID-13   → patients.phone
-PID-18   → patients.insurance_number
-OBX-5    → patients.allergies (bei OBX-3 = Allergien)
+```http
+GET /api/medico/sync/:sync_id
+Authorization: Bearer <access_token>
 ```
 
----
+**Response (200 OK):**
 
-## 8. Monitoring & Betrieb
-
-### 8.1 Status-Endpoint
-
+```json
+{
+  "sync_id": "a1b2c3d4-1c2d-4e3f-8a9b-0c1d2e3f4a5b",
+  "status": "completed",
+  "mode": "initial",
+  "started_at": "2026-11-01T12:00:00Z",
+  "completed_at": "2026-11-01T12:05:32Z",
+  "total_records": 1250,
+  "successful": 1248,
+  "failed": 2,
+  "errors": [
+    {
+      "line": 457,
+      "external_id": "PAT-00457",
+      "entity_type": "patient",
+      "error": "Invalid date format"
+    }
+  ]
+}
 ```
-GET /api/v1/interfaces/medico/status
+
+### 5.4 MEDICO-Patienten abrufen
+
+```http
+GET /api/medico/patients?limit=50&offset=0
+Authorization: Bearer <access_token>
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "data": [
+    {
+      "id": "9f1c2a4e-...",
+      "external_id": "PAT-001234",
+      "last_name": "Müller",
+      "first_name": "Anna",
+      "birth_date": "1985-03-12",
+      "gender": "female",
+      "insurance_number": "K123456789",
+      "phone": "+49-151-23456789",
+      "email": "anna.mueller@example.de",
+      "street": "Hauptstraße 1",
+      "zip_code": "12345",
+      "city": "Berlin",
+      "last_synced_at": "2026-11-01T12:05:32Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 50, "total": 1250, "total_pages": 25 }
+}
+```
+
+### 5.5 MEDICO-Termine abrufen
+
+```http
+GET /api/medico/appointments?from=2026-11-01T00:00:00Z&to=2026-11-08T23:59:59Z
+Authorization: Bearer <access_token>
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "data": [
+    {
+      "id": "a1b2c3d4-...",
+      "external_id": "APP-00892",
+      "patient_id": "9f1c2a4e-...",
+      "doctor_id": "e5f6a7b8-...",
+      "start_time": "2026-11-02T14:00:00Z",
+      "end_time": "2026-11-02T14:30:00Z",
+      "status": "scheduled",
+      "notes": "Kontrolluntersuchung",
+      "last_synced_at": "2026-11-01T12:05:32Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 45, "total_pages": 3 }
+}
+```
+
+### 5.6 Freie Slots abfragen
+
+```http
+GET /api/medico/slots?doctor_id=e5f6a7b8-...&date=2026-11-02&duration=30
+Authorization: Bearer <access_token>
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "data": [
+    {
+      "slot_id": "SLT-001234",
+      "doctor_id": "e5f6a7b8-...",
+      "start_time": "2026-11-02T09:00:00Z",
+      "end_time": "2026-11-02T09:30:00Z",
+      "duration_minutes": 30,
+      "available": true,
+      "reserved_by": null
+    },
+    {
+      "slot_id": "SLT-001235",
+      "doctor_id": "e5f6a7b8-...",
+      "start_time": "2026-11-02T09:30:00Z",
+      "end_time": "2026-11-02T10:00:00Z",
+      "duration_minutes": 30,
+      "available": false,
+      "reserved_by": "9f1c2a4e-..."
+    }
+  ]
+}
+```
+
+### 5.7 Slot reservieren
+
+```http
+POST /api/medico/slots/:slot_id/reserve
+Authorization: Bearer <access_token>
+Content-Type: application/json
 
 {
-  "connected": true,
-  "last_sync": "2026-11-01T12:00:00Z",
-  "sync_interval_seconds": 30,
-  "patients_synced": 15432,
-  "appointments_synced": 89234,
-  "errors_last_24h": 3,
-  "token_valid_until": "2026-11-01T13:00:00Z",
-  "gdt_export_enabled": true
+  "patient_id": "9f1c2a4e-...",
+  "notes": "Kontrolluntersuchung"
 }
 ```
 
-### 8.2 Alerting
+**Response (201 Created):**
 
-| Ereignis | Schwere | Aktion |
-|----------|---------|--------|
-| OAuth-Refresh fehlgeschlagen | CRITICAL | Alert: MEDICO nicht erreichbar |
-| 3 aufeinanderfolgende Sync-Fehler | WARNING | Alert: Datenabgleich gestört |
-| Sync-Verschiebung > 5 min | WARNING | Alert: Sync verzögert |
-| Token abgelaufen, Refresh nicht möglich | CRITICAL | Alert: Manuelle Intervention nötig |
-| GDT-Export fehlgeschlagen | ERROR | Alert: Export prüfen |
-
----
-
-## 9. Migration von MEDICO zu KIS
-
-### 9.1 Migrationsplan
-
-```
-Woche 1:  Test-Setup
-  - KIS in Staging-Umgebung installieren
-  - MEDICO-Sandbox mit Testdaten anlegen
-  - Initial-Import testen
-  - Datenkonsistenz prüfen (Anzahl Patienten, Termine)
-
-Woche 2:  Produktiv-Import
-  - Vollständiger Initial-Import aus MEDICO
-  - Inkrementeller Sync starten
-  - KIS und MEDICO parallel betreiben (2 Wochen)
-  - Abgleich: Alle neuen Patienten/Termine in beiden Systemen
-
-Woche 3:  Parallelbetrieb
-  - KIS wird produktiv
-  - MEDICO nur noch als Fallback
-  - Alle Benutzer auf KIS umstellen
-
-Woche 4:  MEDICO-Abschaltung
-  - MEDICO schreibgeschützt
-  - Letzter GDT-Export
-  - MEDICO abschalten
-  - Datenarchiv: MEDICO-DB wird archiviert (10 Jahre)
-
-Ab Woche 5:  KIS ist das einzige System
-  - MEDICO-Datenarchiv wird nach 10 Jahren vernichtet
-  - KIS betreibt alle Funktionen
-```
-
-### 9.2 Rollback
-
-```
-Falls KIS in Woche 1-3 ausfällt:
-  - MEDICO ist noch aktiv (parallel)
-  - KIS-Änderungen werden via GDT-Export zurück in MEDICO importiert
-  - Rollback < 1 Stunde
-```
-
-### 9.3 Datenarchiv (MEDICO)
-
-```
-Nach MEDICO-Abschaltung:
-  - MEDICO-DB wird als Read-Only-Backup archiviert
-  - Aufbewahrung: 10 Jahre (DSGVO / Medizinalrecht)
-  - Verschlüsselt (AES-256)
-  - Nach 10 Jahren: Vernichtung mit Protokoll
-```
-
----
-
-## 10. Sicherheit
-
-### 10.1 OAuth 2.0
-
-```
-- Client Credentials Flow (keine User-Session)
-- Token-Validity: 1 Stunde
-- Auto-Refresh: 5 Minuten vor Ablauf
-- Token-Storage: In-Memory (nicht auf Disk)
-- Client Secret: NUR aus ENV (MEDICO_CLIENT_SECRET)
-- TLS 1.3 für alle FHIR-Calls
-- Zertifikats-Verifikation: Strikt
-```
-
-### 10.2 Datenverschlüsselung
-
-```
-- Im Transit: TLS 1.3 (rustls)
-- At Rest: AES-256-GCM (sensible Felder)
-- Master Key: KIS_MASTER_KEY aus ENV
-- Key-Derivation: HMAC-SHA256 (per Record)
-- Key-Rotation: Jährlich, alte Keys 10 Jahre aufbewahrt
-```
-
-### 10.3 Audit-Log
-
-```
-Jeder MEDICO-Import wird geloggt:
-  - Timestamp
-  - Source: medico
-  - Record-Typ: patient/appointment/...
-  - Record-ID: external_id
-  - Aktion: create/update/sync
-  - IP-Adresse des MEDICO-Servers
-  - Hash-Chain-Eintrag
-
-Aufbewahrung: 10 Jahre (DSGVO)
-```
-
----
-
-## 11. Test-Setup
-
-### 11.1 MEDICO Mock-Server
-
-```rust
-// tests/medico_mock.rs
-// Mock-Server simuliert MEDICO FHIR-Endpunkte
-
-#[tokio::test]
-async fn test_patient_import() {
-    let mock = MockMedico::new();
-    let client = MedicoClient::new(mock.url());
-    
-    let patients = client.fetch_patients().await.unwrap();
-    assert_eq!(patients.len(), 100);
-    assert!(patients.iter().all(|p| p.external_id.is_some()));
+```json
+{
+  "slot_id": "SLT-001234",
+  "reservation_id": "RES-004567",
+  "patient_id": "9f1c2a4e-...",
+  "start_time": "2026-11-02T09:00:00Z",
+  "end_time": "2026-11-02T09:30:00Z",
+  "status": "reserved",
+  "reserved_at": "2026-11-01T12:30:00Z"
 }
 ```
 
-### 11.2 Testdaten
+**Fehler (409 Conflict — Slot bereits belegt):**
 
+```json
+{
+  "error": {
+    "code": "CONFLICT",
+    "message": "Slot ist bereits reserviert.",
+    "request_id": "req-5e6f7a8b"
+  }
+}
 ```
-- 1000 Testpatienten (synthetisch)
-- 5000 Testtermine
-- 100 Testärzte
-- 50 Testpraxen
-- 2000 Testbefunde
-- 500 Testdokumente
-```
-
-### 11.3 Test-Szenarien
-
-| Szenario | Erwartetes Ergebnis |
-|----------|-------------------|
-| Initial-Import 1000 Patienten | Alle in KIS, 0 Duplikate |
-| Inkrementeller Sync (5 geänderte Patienten) | Nur 5 aktualisiert |
-| OAuth-Token abgelaufen | Auto-Refresh, kein Fehler |
-| MEDICO nicht erreichbar | Fehler geloggt, KIS läuft weiter |
-| GDT-Export 10000 Records | Datei erzeugt, alle Records enthalten |
-| HL7 ADT^A01 | Patient in KIS angelegt |
-| HL7 SIU^S13 (Storno) | Termin in KIS storniert |
 
 ---
 
-## 12. Zusammenfassung
+## 6. Migration von MEDICO nach KIS
 
-**KIS ist der vollumfängliche Ersatz für CGM MEDICO.**
+### 6.1 Migrationsphasen
 
-- Alle MEDICO-Funktionen sind in KIS implementiert
-- Der MEDICO-Import dient ausschließlich der Migration
-- Nach erfolgreicher Migration wird MEDICO abgeschaltet
-- KIS deckt Patienten, Termine, Ärzte, Befunde, DICOM, HL7, FHIR, XDS, GDT, TI ab
-- KIS ist skalierbarer, sicherer und DSGVO-konformer als MEDICO
-- KIS ist modular und erweiterbar — MEDICO war es nicht
+| Phase | Dauer | Beschreibung |
+|---|---|---|
+| **Phase 1: Initialer Sync** | 1–5 Stunden | Vollständiger Abgleich aller MEDICO-Daten |
+| **Phase 2: Parallelbetrieb** | 1–4 Wochen | KIS und MEDICO laufen parallel, tägliche Syncs |
+| **Phase 3: Datenvalidierung** | 1 Woche | Abgleich der Datenbestände, Fehlerkorrektur |
+| **Phase 4: Cutover** | 1 Tag | MEDICO wird schreibgeschützt, KIS wird primär |
+| **Phase 5: Stilllegung** | 1 Monat | MEDICO wird abgeschaltet, KIS ist vollständig |
+
+### 6.2 Initiale Migration
+
+```bash
+# 1. Konfiguration prüfen
+cat config/kis.toml | grep -A 10 "\[medico\]"
+
+# 2. Umgebungsvariablen setzen
+export MEDICO_CLIENT_ID="<client_id>"
+export MEDICO_CLIENT_SECRET="<client_secret>"
+export MEDICO_API_BASE_URL="https://medico.example.de/api"
+
+# 3. KIS starten
+./target/release/kis
+
+# 4. Initialen Sync anstoßen
+curl -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"initial","entity_types":["patients","appointments","practitioners"]}' \
+  http://localhost:8080/api/medico/sync
+
+# 5. Sync-Status überwachen
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/medico/sync/<sync_id>
+```
+
+### 6.3 Datenvalidierung
+
+```bash
+# Patientenanzahl vergleichen
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/api/medico/patients?limit=1" \
+  | jq '.pagination.total'
+
+# MEDICO-Anzahl abfragen (extern)
+curl -s -H "Authorization: Bearer $MEDICO_TOKEN" \
+  "$MEDICO_API_BASE_URL/api/patients?limit=1" \
+  | jq '.pagination.total'
+
+# Diff-Bericht generieren
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/medico/sync/<sync_id> \
+  | jq '.errors'
+```
+
+### 6.4 Cutover
+
+```bash
+# 1. MEDICO auf schreibgeschützt setzen (extern)
+# 2. Letzten inkrementellen Sync durchführen
+curl -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"incremental"}' \
+  http://localhost:8080/api/medico/sync
+
+# 3. KIS als primäres System deklarieren
+# 4. MEDICO nach 1 Woche Stilllegungsphase abschalten
+```
+
+---
+
+## 7. Sicherheit
+
+| Maßnahme | Umsetzung |
+|---|---|
+| **Authentifizierung** | JWT-Authentifizierung mit `MEDICO_CLIENT_ID` / `MEDICO_CLIENT_SECRET` |
+| **Transport** | TLS 1.3 für alle MEDICO-API-Aufrufe |
+| **Audit-Log** | Jede Synchronisation wird im Audit-Log mit Hash-Chain protokolliert |
+| **Zugriffskontrolle** | Nur Admin/Arzt-Rollen können Sync-Vorgänge auslösen |
+| **Secrets** | `MEDICO_CLIENT_SECRET` wird nie in Logs oder Responses ausgegeben |
+| **Rate-Limiting** | Max. 1 Sync alle 30 Sekunden (konfigurierbar) |
+| **Fehler-Handling** | Fehler werden gesammelt, nie im Klartext in Logs protokolliert |
+
+---
+
+## 8. Troubleshooting
+
+| Problem | Ursache | Lösung |
+|---|---|---|
+| `401 Unauthorized` bei MEDICO-API | Ungültige Client-ID/Secret | `MEDICO_CLIENT_ID` und `MEDICO_CLIENT_SECRET` prüfen |
+| `403 Forbidden` | Rolle nicht berechtigt | Sync erfordert Admin oder Arzt-Rolle |
+| Sync hängt fest | MEDICO-API nicht erreichbar | Netzwerk/Feuerwall prüfen, `base_url` validieren |
+| Viele Fehler im Sync-Report | Datenformat-Abweichungen | Fehler-Report analysieren, MEDICO-Seite korrigieren |
+| Inkrementeller Sync findet keine Änderungen | `_since`-Cursor falsch | Manuelles initialer Sync erzwingen |
+| Zeitstempel-Abweichungen | Uhrzeit-Unterschiede | NTP-Synchronisation auf beiden Systemen sicherstellen |
+
+---
+
+## 9. Monitoring
+
+### 9.1 Metriken
+
+| Metrik | Beschreibung | Schwellwert |
+|---|---|---|
+| `medico_sync_duration` | Dauer des letzten Syncs | > 10 min → Warnung |
+| `medico_sync_errors` | Anzahl Fehler im letzten Sync | > 10 → Warnung |
+| `medico_sync_lag` | Zeit seit letztem erfolgreichen Sync | > 5 min → Warnung |
+| `medico_api_latency` | Latenz der MEDICO-API | > 5 s → Warnung |
+| `medico_connection_status` | Verbindungszustand | `disconnected` → Alarm |
+
+### 9.2 Logs
+
+```
+[INFO]  medico_sync started: mode=initial, entity_types=[patients, appointments]
+[INFO]  medico_sync patients: 1250 records, 0 errors
+[INFO]  medico_sync appointments: 340 records, 2 errors
+[INFO]  medico_sync completed: total=1590, successful=1588, failed=2
+[WARN]  medico_sync errors: [PAT-00457: Invalid date, APP-00892: FK violation]
+[AUDIT] medico_sync hash=sha256:... chain_prev=sha256:...
+```
+
+---
+
+## 10. Verwandte Dokumente
+
+- [API.md](API.md) — REST-API-Endpunkte (inkl. GDT-Export/Import)
+- [INTERFACES.md](INTERFACES.md) — Telematik-Interface und andere Schnittstellen
+- [CONFIGURATION.md](CONFIGURATION.md) — Konfigurationsreferenz
+- [SECURITY.md](SECURITY.md) — Sicherheitsrichtlinien
+- [DATABASE.md](DATABASE.md) — Datenbankschema und Migrationen

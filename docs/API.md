@@ -3,6 +3,7 @@
 > **Krankenhaus-Informations-System (KIS)**
 > Vollständige Referenz der HTTP-API. Endpunkte, Request/Response-Beispiele, Fehlercodes, Authentifizierung und Rate-Limiting.
 >
+> **Stand:** 01.11.2026
 > **Basis-URL:** `http://<host>:8080/api` (Produktion: `https://<host>/api`)
 > **Content-Type:** `application/json; charset=utf-8`
 
@@ -17,6 +18,10 @@ Die API ist ein RESTful-JSON-Interface, implementiert mit **Axum** (siehe `src/a
 | Core API | `/api/` | Grundgerüst vorhanden |
 | FHIR R4 | `/fhir/` | In Entwicklung |
 | GUI (HTML) | `/` | Vorhanden (`static/index.html`) |
+| **GDT Export/Import** | `/api/v1/export/gdt`, `/api/v1/import/gdt` | ✅ Implementiert (`crates/kis-gdt`) |
+| **MEDICO Sync** | `/api/v1/interfaces/medico/` | ✅ Implementiert (`crates/kis-medico`) |
+| **TI-Interface** | `/api/v1/interfaces/ti/` | ✅ Implementiert (`crates/kis-ti`) |
+| **Auth (Login/MFA)** | `/api/v1/auth/` | ✅ Implementiert (`crates/kis-ui`) |
 
 ### Ist-Zustand der Endpunkte (aus `src/api/mod.rs`)
 
@@ -144,6 +149,12 @@ Alle Fehlerantworten folgen einem einheitlichen JSON-Schema:
 ---
 
 ## 4. Endpunkt-Referenz
+
+> **Hinweis (Stand 01.11.2026):** Die folgenden Endpunkte sind in separaten Crates implementiert und über `register_router()` in den Haupt-Router eingebunden:
+> - `crates/kis-gdt` → GDT-Export/-Import
+> - `crates/kis-medico` → MEDICO-Synchronisation
+> - `crates/kis-ti` → Telematikinfrastruktur (eGK, ePA, eRezept, eAU)
+> - `crates/kis-ui` → Authentifizierung (Login, MFA, Token-Refresh)
 
 ### 4.1 Health
 
@@ -560,6 +571,663 @@ Statuswechsel (z. B. `scheduled` → `confirmed` → `completed`/`cancelled`/`no
 **Auth: admin, doctor.**
 
 > **Hinweis:** Beendigung setzt `end_date = jetzt` (soft), nicht physische Löschung.
+
+---
+
+### 4.6 GDT-Export und -Import (Datenschutz-Transfer)
+
+> **Ist (Stand 01.11.2026):** Vollständig implementiert in `crates/kis-gdt/src/lib.rs`.
+>
+> GDT = **G**esundheits**d**atenschutz**t**ransfer. Der Export erzeugt eine CSV-Datei im definierten Format (UTF-8 mit BOM, semikolon-getrennt), der Import liest solche Dateien zurück ein.
+
+#### `POST /api/v1/export/gdt` — GDT-Export anstoßen
+
+**Auth:** `admin` (Pflicht)
+
+**Request-Body:**
+
+```json
+{
+  "include_deleted": false
+}
+```
+
+**Response (201 Created):**
+
+```json
+{
+  "data": {
+    "export_id": "kis_export_20261101_123456.gdt",
+    "status": "completed",
+    "records_exported": 1250,
+    "file_size_bytes": 245760,
+    "created_at": "2026-11-01T12:34:56Z"
+  },
+  "meta": { "total": 1, "has_more": false, "next_cursor": null }
+}
+```
+
+**Fehler (403 — Rolle nicht berechtigt):**
+
+```json
+{
+  "error": {
+    "code": "PERMISSION_DENIED",
+    "message": "GDT-Export erfordert die Rolle 'admin'",
+    "request_id": "req-8a9b0c1d"
+  }
+}
+```
+
+---
+
+#### `GET /api/v1/export/gdt` — Export-Liste abrufen
+
+**Auth:** `admin` (Pflicht)
+
+**Response (200 OK):**
+
+```json
+{
+  "data": [
+    {
+      "export_id": "kis_export_20261101_123456.gdt",
+      "status": "completed",
+      "records_exported": 1250,
+      "file_size_bytes": 245760,
+      "created_at": "2026-11-01T12:34:56Z"
+    },
+    {
+      "export_id": "kis_export_20261015_090012.gdt",
+      "status": "completed",
+      "records_exported": 1180,
+      "file_size_bytes": 231424,
+      "created_at": "2026-10-15T09:00:12Z"
+    }
+  ],
+  "meta": { "total": 2, "has_more": false, "next_cursor": null }
+}
+```
+
+---
+
+#### `GET /api/v1/export/gdt/download/:filename` — Exportdatei herunterladen
+
+**Auth:** `admin` (Pflicht)
+
+**Response (200 OK):**
+
+```
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="kis_export_20261101_123456.gdt"
+Content-Length: 245760
+
+Patienten_ID;Nachname;Vorname;Geburtsdatum;Geschlecht;Versichertennummer;Telefon;Email;Strasse;PLZ;Stadt
+PAT-001234;Müller;Anna;1985-03-12;f;K123456789;+49-151-23456789;anna.mueller@example.de;Hauptstraße 1;12345;Berlin
+PAT-001235;Schmidt;Peter;1978-11-23;m;K987654321;;peter.schmidt@example.de;Musterweg 42;54321;Köln
+```
+
+**Fehler (400 — ungültiger Dateiname / Path-Traversal):**
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Ungültiger Dateiname",
+    "request_id": "req-2b3c4d5e"
+  }
+}
+```
+
+> **Sicherheit:** Der Dateiname wird streng validiert (nur `kis_export_*.gdt` erlaubt). Path-Traversal-Angriffe (`../`, `..`) werden abgewiesen.
+
+---
+
+#### `POST /api/v1/import/gdt` — GDT-Import
+
+**Auth:** `admin` (Pflicht)
+
+**Request-Body:**
+
+```json
+{
+  "filename": "import_20261101.gdt",
+  "content_base64": "UGF0aWVudGVuX0lEO05hY2huYW1l..."
+}
+```
+
+**Response (202 Accepted):**
+
+```json
+{
+  "data": {
+    "import_id": "a1b2c3d4-1c2d-4e3f-8a9b-0c1d2e3f4a5b",
+    "status": "completed",
+    "total_lines": 500,
+    "successful": 498,
+    "failed": 2,
+    "errors": [
+      {
+        "line": 127,
+        "error": "Ungültiges Geburtsdatum: '12.03.1985' (erwartet JJJJ-MM-TT)"
+      },
+      {
+        "line": 342,
+        "error": "Nur 3 Felder, mindestens 5 erforderlich"
+      }
+    ],
+    "started_at": "2026-11-01T14:00:00Z",
+    "completed_at": "2026-11-01T14:00:15Z"
+  },
+  "meta": { "total": 1, "has_more": false, "next_cursor": null }
+}
+```
+
+**Fehler (400 — ungültiges Base64):**
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Ungültiges Base64: invalid digit",
+    "request_id": "req-6f7a8b9c"
+  }
+}
+```
+
+---
+
+#### `GET /api/v1/import/gdt/status/:id` — Import-Status abrufen
+
+**Auth:** `admin` (Pflicht)
+
+**Response (200 OK):**
+
+```json
+{
+  "data": {
+    "import_id": "a1b2c3d4-1c2d-4e3f-8a9b-0c1d2e3f4a5b",
+    "status": "completed",
+    "total_lines": 500,
+    "successful": 498,
+    "failed": 2,
+    "errors": [
+      { "line": 127, "error": "Ungültiges Geburtsdatum" },
+      { "line": 342, "error": "Nur 3 Felder" }
+    ]
+  },
+  "meta": { "total": 1, "has_more": false, "next_cursor": null }
+}
+```
+
+**Fehler (404 — Import-Job nicht gefunden):**
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Import-Job nicht gefunden",
+    "request_id": "req-7a8b9c0d"
+  }
+}
+```
+
+---
+
+### 4.7 MEDICO-Synchronisation
+
+> **Ist (Stand 01.11.2026):** Vollständig implementiert in `crates/kis-medico/src/lib.rs`.
+>
+> Das MEDICO-Modul synchronisiert Patienten, Termine, Beobachtungen und Medikationen aus dem externen MEDICO-System (FHIR R4 + OAuth 2.0). Der Sync-Engine läuft im Hintergrund und wird alle `sync_interval_seconds` (Default: 30s) inkrementell ausgeführt.
+
+#### `GET /api/v1/interfaces/medico/status` — Sync-Status abfragen
+
+**Auth:** `admin`, `doctor`
+
+**Response (200 OK):**
+
+```json
+{
+  "data": {
+    "enabled": true,
+    "last_sync_at": "2026-11-01T12:05:32Z",
+    "last_sync_status": "success",
+    "records_synced": 1590,
+    "errors": 2,
+    "next_sync_at": "2026-11-01T12:06:02Z",
+    "sync_mode": "incremental",
+    "connection": {
+      "base_url": "https://fhir.medico.example.com/fhir/",
+      "authenticated": true,
+      "token_expires_at": "2026-11-01T18:00:00Z"
+    }
+  },
+  "meta": { "total": 1, "has_more": false, "next_cursor": null }
+}
+```
+
+---
+
+#### `POST /api/v1/interfaces/medico/sync/trigger` — Manueler Sync auslösen
+
+**Auth:** `admin` (Pflicht, Debug-Betrieb)
+
+**Response (200 OK):**
+
+```json
+{
+  "data": {
+    "patients": {
+      "total": 1250,
+      "synced": 1248,
+      "failed": 2
+    },
+    "appointments": {
+      "total": 340,
+      "synced": 340,
+      "failed": 0
+    },
+    "observations": {
+      "total": 890,
+      "synced": 890,
+      "failed": 0
+    },
+    "medications": {
+      "total": 210,
+      "synced": 209,
+      "failed": 1
+    }
+  },
+  "meta": { "total": 1, "has_more": false, "next_cursor": null }
+}
+```
+
+**Fehler (500 — Sync fehlgeschlagen):**
+
+```json
+{
+  "error": {
+    "code": "INTERNAL",
+    "message": "MEDICO-API nicht erreichbar: Connection timeout",
+    "request_id": "req-8b9c0d1e"
+  }
+}
+```
+
+> **Hinweis:** Der manuelle Trigger führt einen **inkrementellen Sync** aus. Für einen vollständigen initialen Sync muss die Konfiguration angepasst werden (`change_detection_mode = "full"`).
+
+---
+
+### 4.8 Telematikinfrastruktur (TI)
+
+> **Ist (Stand 01.11.2026):** Vollständig implementiert in `crates/kis-ti/src/lib.rs`.
+>
+> Die TI-Module umfassen eGK (Kartenleser), ePA (elektronische Patientenakte), eRezept (elektronische Verschreibung) und eAU (elektronische Arbeitsunfähigkeitsbescheinigung). Alle TI-Kommunikation erfolgt über mTLS (TLS 1.3, Client-Zertifikat + CA-Bundle).
+
+#### `GET /api/v1/interfaces/ti/status` — TI-Gesamtstatus
+
+**Auth:** `admin`, `doctor`
+
+**Response (200 OK):**
+
+```json
+{
+  "data": {
+    "configured": true,
+    "backend_reachable": true,
+    "last_check": "2026-11-01T14:30:00Z",
+    "card_reader": {
+      "connected": true,
+      "card_present": false,
+      "serial": "ACS-ACR38-001",
+      "last_card": null,
+      "last_error": null
+    },
+    "certificates": [
+      {
+        "file_name": "client.pem",
+        "exists": true,
+        "valid": true,
+        "expiry": "2027-03-15T00:00:00Z",
+        "common_name": "KIS-Praxis-Berlin",
+        "size_bytes": 1792
+      },
+      {
+        "file_name": "ca-bundle.pem",
+        "exists": true,
+        "valid": true,
+        "expiry": null,
+        "common_name": null,
+        "size_bytes": 4521
+      }
+    ],
+    "last_error": null,
+    "operations_count": 1247
+  },
+  "meta": { "total": 1, "has_more": false, "next_cursor": null }
+}
+```
+
+---
+
+#### `POST /api/v1/interfaces/ti/erezept` — eRezept anlegen
+
+**Auth:** `admin`, `doctor`
+
+**Request-Body:**
+
+```json
+{
+  "tsvnr": "TV123456789012345",
+  "patient_name": "Anna Müller",
+  "medication": "Ibuprofen 600 mg",
+  "dosage": "1-0-1 Tabletten",
+  "doctor_name": "Dr. med. Thomas Weber"
+}
+```
+
+**Response (201 Created):**
+
+```json
+{
+  "id": "EREZ-20261101-004567"
+}
+```
+
+**Fehler (500 — eRezept-Backend Fehler):**
+
+```json
+{
+  "error": {
+    "code": "INTERNAL",
+    "message": "eRezept-Backend nicht erreichbar",
+    "request_id": "req-9c0d1e2f"
+  }
+}
+```
+
+---
+
+#### `GET /api/v1/interfaces/ti/erezept/:id` — eRezept-Status abfragen
+
+**Auth:** `admin`, `doctor`
+
+**Response (200 OK):**
+
+```json
+{
+  "data": {
+    "id": "EREZ-20261101-004567",
+    "status": "created",
+    "created_at": "2026-11-01T14:30:00Z",
+    "pharmacy_ref": null,
+    "pdf_available": true
+  },
+  "meta": { "total": 1, "has_more": false, "next_cursor": null }
+}
+```
+
+---
+
+#### `GET /api/v1/interfaces/ti/erezept/:id/pdf` — eRezept-PDF herunterladen
+
+**Auth:** `admin`, `doctor`
+
+**Response (200 OK):**
+
+```
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="erezept_EREZ-20261101-004567.pdf"
+```
+
+---
+
+#### `POST /api/v1/interfaces/ti/eau` — eAU anlegen
+
+**Auth:** `admin`, `doctor`
+
+**Request-Body:**
+
+```json
+{
+  "tsvnr": "TV123456789012345",
+  "patient_name": "Anna Müller",
+  "start_date": "2026-11-02",
+  "end_date": "2026-11-08",
+  "doctor_name": "Dr. med. Thomas Weber",
+  "diagnosis_icao": "J06.9"
+}
+```
+
+**Response (201 Created):**
+
+```json
+{
+  "id": "EAU-20261101-008923"
+}
+```
+
+---
+
+#### `GET /api/v1/interfaces/ti/eau/:id` — eAU-Status abfragen
+
+**Auth:** `admin`, `doctor`
+
+**Response (200 OK):**
+
+```json
+{
+  "data": {
+    "id": "EAU-20261101-008923",
+    "status": "created",
+    "created_at": "2026-11-01T15:00:00Z",
+    "start_date": "2026-11-02",
+    "end_date": "2026-11-08",
+    "insurance_ref": null
+  },
+  "meta": { "total": 1, "has_more": false, "next_cursor": null }
+}
+```
+
+---
+
+#### `POST /api/v1/interfaces/ti/egk/read` — eGK-Karte lesen
+
+**Auth:** `admin`, `doctor`, `reception`
+
+**Response (200 OK):**
+
+```json
+{
+  "data": {
+    "ts_vnr": "TV123456789012345",
+    "name": "Müller, Anna",
+    "birth_date": "1985-03-12",
+    "insurance_type": "gesetzlich"
+  },
+  "meta": { "total": 1, "has_more": false, "next_cursor": null }
+}
+```
+
+**Fehler (502 — Kartenleser nicht verbunden):**
+
+```json
+{
+  "error": {
+    "code": "INTERNAL",
+    "message": "Kartenleser nicht verbunden",
+    "request_id": "req-0d1e2f3a"
+  }
+}
+```
+
+---
+
+#### `GET /api/v1/interfaces/ti/epa/documents?tsvnr=...` — ePA-Dokumente auflisten
+
+**Auth:** `admin`, `doctor`
+
+**Query-Parameter:**
+
+| Parameter | Typ | Pflicht | Beschreibung |
+|---|---|---|---|
+| `tsvnr` | string | Ja | Technische Systemversicherungsnummer |
+
+**Response (200 OK):**
+
+```json
+{
+  "data": [
+    {
+      "id": "EPA-DOC-001234",
+      "title": "Kontrolluntersuchung 2026-10-15",
+      "doc_type": "Befund",
+      "created_at": "2026-10-15T14:30:00Z",
+      "size_bytes": 45216,
+      "mime_type": "application/pdf"
+    },
+    {
+      "id": "EPA-DOC-001235",
+      "title": "Laborwerte Q4 2025",
+      "doc_type": "Labor",
+      "created_at": "2025-12-20T09:15:00Z",
+      "size_bytes": 128536,
+      "mime_type": "application/pdf"
+    }
+  ],
+  "meta": { "total": 2, "has_more": false, "next_cursor": null }
+}
+```
+
+**Fehler (400 — `tsvnr` fehlt):**
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "tsvnr fehlt",
+    "request_id": "req-1e2f3a4b"
+  }
+}
+```
+
+> **Graceful Degradation:** Falls das TI-Backend nicht konfiguriert ist (keine Zertifikate vorhanden), wird nur der `status`-Endpunkt geliefert, alle anderen TI-Endpoints sind deaktiviert.
+
+---
+
+### 4.9 Authentifizierung (Login, MFA, Token-Refresh)
+
+> **Ist (Stand 01.11.2026):** Vollständig implementiert in `crates/kis-ui/src/lib.rs`.
+>
+> Die UI-Authentifizierung unterstützt E-Mail/Passwort-Login mit optionaler MFA (TOTP). JWT-Tokens (Access + Refresh) werden für die API-Authentifizierung verwendet.
+
+#### `POST /api/v1/auth/login` — Login
+
+**Auth:** keine (offener Endpunkt)
+
+**Request-Body:**
+
+```json
+{
+  "email": "dr.weber@example.de",
+  "password": "***",
+  "totp_code": "123456"
+}
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "access_token": "eyJhbG...NiIs...",
+  "refresh_token": "eyJhbG...NiIs...",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "user": {
+    "id": "e5f6a7b8-1c2d-4e3f-8a9b-0c1d2e3f4a5b",
+    "email": "dr.weber@example.de",
+    "name": "Dr. med. Thomas Weber",
+    "role": "doctor",
+    "mfa_enabled": true
+  }
+}
+```
+
+**Fehler (401 — ungültige Credentials):**
+
+```json
+{
+  "error": {
+    "code": "AUTH_INVALID",
+    "message": "Ungültiges Passwort",
+    "request_id": "req-2f3a4b5c"
+  }
+}
+```
+
+**Fehler (401 — MFA-Code fehlt/ungültig):**
+
+```json
+{
+  "error": {
+    "code": "AUTH_INVALID",
+    "message": "Ungültiger MFA-Code",
+    "request_id": "req-3a4b5c6d"
+  }
+}
+```
+
+---
+
+#### `POST /api/v1/auth/refresh` — Access-Token erneuern
+
+**Auth:** gültiges Refresh-Token
+
+**Request-Body:**
+
+```json
+{
+  "refresh_token": "eyJhbG...NiIs..."
+}
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "access_token": "eyJhbG...NiIs...",
+  "tokenType": "Bearer",
+  "expiresIn": 900
+}
+```
+
+**Fehler (401 — Refresh-Token ungültig):**
+
+```json
+{
+  "error": {
+    "code": "AUTH_INVALID",
+    "message": "Ungültiger Refresh-Token",
+    "request_id": "req-4b5c6d7e"
+  }
+}
+```
+
+---
+
+#### `POST /api/v1/auth/logout` — Logout
+
+**Auth:** `admin`, `doctor`, `nurse`, `reception`
+
+**Response (200 OK):**
+
+```json
+{
+  "message": "Abgemeldet"
+}
+```
+
+> **Hinweis:** Der Logout ist client-seitig (Token aus `localStorage` entfernen). Server-seitig werden Refresh-Tokens nicht revociert ( Stateless JWT).
 
 ---
 

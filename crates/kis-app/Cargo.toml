@@ -1,0 +1,39 @@
+[package]
+name = "kis-app"
+version = "0.1.0"
+edition = "2021"
+description = "KIS Binary: API-Server + alle aktivierten Module"
+license = "MIT"
+
+[[bin]]
+name = "kis"
+path = "src/main.rs"
+
+[dependencies]
+# Fundament
+kis-core = { path = "../kis-core" }
+
+# Phase 1: Kernmodule
+kis-patients = { path = "../kis-patients" }
+kis-doctors = { path = "../kis-doctors" }
+kis-appointments = { path = "../kis-appointments" }
+kis-medications = { path = "../kis-medications" }
+
+# Phase 2-3: Schnittstellen & Integrationen (noch Stubs)
+kis-hl7 = { path = "../kis-hl7" }
+kis-fhir = { path = "../kis-fhir" }
+kis-dicom = { path = "../kis-dicom" }
+kis-xds = { path = "../kis-xds" }
+kis-gdt = { path = "../kis-gdt" }
+kis-medico = { path = "../kis-medico" }
+kis-ti = { path = "../kis-ti" }
+kis-ui = { path = "../kis-ui" }
+
+# Externe Abhängigkeiten (für main.rs)
+tokio = { workspace = true }
+axum = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }

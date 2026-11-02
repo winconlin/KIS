@@ -1,14 +1,26 @@
-//! KIS Core: Config, DB, Security, API-Router
+//! KIS Core: Konfiguration, PostgreSQL-Zugang, Sicherheit, gemeinsame Modelle.
 //!
-//! Dies ist das Fundament-Modul. Alle anderen Module bauen darauf auf.
+//! Dies ist das Fundament-Modul. Alle anderen Crates bauen darauf auf.
+//!
+//! ## Architektur
+//! - [`config`]   — TOML + ENV-Konfiguration (figment)
+//! - [`db`]       — PostgreSQL Connection-Pool (Write/Read-Replica), Migrations
+//! - [`security`] — JWT, AES-256-GCM, Audit-Log (Hash-Chain), RBAC, Argon2id
+//! - [`models`]   — Gemeinsame Basis-Typen: EntityId, Pagination, ApiResponse, ApiError
+//!
+//! ## Module
+//! Die Crates `kis-patients`, `kis-doctors`, `kis-appointments`,
+//! `kis-medications` (Phase 1) sowie `kis-hl7`, `kis-fhir`, `kis-dicom`,
+//! `kis-xds`, `kis-gdt`, `kis-medico`, `kis-ti`, `kis-ui` (Phase 2–3)
+//! sind separate Crates im Workspace. Der Binary-Crate `kis-app`
+//! merge-t deren Router.
 
 pub mod config;
 pub mod db;
-pub mod api;
-pub mod security;
 pub mod models;
+pub mod security;
 
-/// Version des KIS
+/// Version des KIS (aus Cargo.toml)
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// KIS-Baustein-Status
@@ -20,6 +32,7 @@ pub struct KisStatus {
     pub uptime_seconds: u64,
 }
 
+/// Status eines einzelnen Moduls
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ModuleStatus {
     pub name: String,

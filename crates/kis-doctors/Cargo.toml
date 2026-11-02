@@ -1,5 +1,27 @@
+# ============================================================
+# KIS Doctors — Arzt-Service (Phase 1)
+# CRUD + Optimistic Locking + Soft-Delete + Kalender/Zeitplan
+# ============================================================
+
 [package]
+name = "kis-doctors"
+version = "0.1.0"
+edition = "2021"
+description = "KIS Arzt-Service: CRUD, Zeitplan, Optimistic Locking"
+license = "MIT"
+
 [lib]
+name = "kis_doctors"
+path = "src/lib.rs"
 
 [dependencies]
-name = "kis_doctors"
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
