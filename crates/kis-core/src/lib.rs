@@ -19,6 +19,7 @@ pub mod cache;
 pub mod config;
 pub mod db;
 pub mod models;
+pub mod query_optimizer;
 pub mod rate_limit;
 pub mod security;
 pub mod validation;

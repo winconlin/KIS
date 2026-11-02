@@ -21,7 +21,14 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub workers: usize,
+    /// Graceful-Shutdown-Timeout in Sekunden (Task 5.12).
+    /// Nach SIGTERM: laufende Requests werden bis zu dieser Dauer abgewartet.
+    /// Danach wird der Prozess erzwungen beendet.
+    #[serde(default = "default_shutdown_timeout")]
+    pub shutdown_timeout_seconds: u64,
 }
+
+fn default_shutdown_timeout() -> u64 { 30 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
@@ -29,6 +36,7 @@ impl Default for ServerConfig {
             host: "0.0.0.0".into(),
             port: 8080,
             workers: 4,
+            shutdown_timeout_seconds: default_shutdown_timeout(),
         }
     }
 }
@@ -50,6 +58,11 @@ pub struct DatabaseConfig {
     /// Idle-Timeout für Connections in Sekunden
     #[serde(default = "default_idle_timeout")]
     pub idle_timeout_seconds: u64,
+    /// Maximale Connections für den Read-Pool (Task 5.3, optional).
+    /// `None` = gleiche Größe wie der Write-Pool (`pool_size`).
+    /// Hat nur einen Effekt, wenn `read_url` gesetzt ist.
+    #[serde(default)]
+    pub read_max_connections: Option<u32>,
 }
 
 fn default_write_url() -> String {
@@ -67,6 +80,7 @@ impl Default for DatabaseConfig {
             pool_size: default_pool_size(),
             acquire_timeout_seconds: default_acquire_timeout(),
             idle_timeout_seconds: default_idle_timeout(),
+            read_max_connections: None,
         }
     }
 }

@@ -95,6 +95,9 @@ pub fn build_router(state: AppState) -> Router {
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/api/v1/status", get(status))
+        .route("/api/v1/health/db", get(db_health))
+        .route("/api/v1/health/replica", get(replica_health))
+        .route("/api/v1/health/cache", get(cache_health))
         .route(
             "/api/v1/audit/{entity_type}/{entity_id}",
             get(audit_trail_handler),
@@ -149,6 +152,67 @@ pub fn build_router(state: AppState) -> Router {
 /// Health-Check: Liefert "ok", wenn der Server läuft.
 async fn health_check() -> &'static str {
     "ok"
+}
+
+/// DB-Health-Check: Connection-Pool-Statistiken (Task 5.1).
+///
+/// `GET /api/v1/health/db`
+///
+/// Liefert die Pool-Metriken (active, idle, total, max, waiters) für
+/// beide Pools. Funktioniert auch ohne aktive DB-Verbindung — die Werte
+/// sind die sqlx-internen Zähler des Pools.
+async fn db_health(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> Json<serde_json::Value> {
+    let (write, read) = state.db.pool_metrics();
+    Json(serde_json::json!({
+        "success": true,
+        "write_pool": write,
+        "read_pool": read,
+    }))
+}
+
+/// Replica-Health-Check: Read-Replica-Status (Task 5.3).
+///
+/// `GET /api/v1/health/replica`
+///
+/// Liefert, ob der Read-Pool auf einem separaten Server läuft und ob
+/// dieser Read-Only ist (`transaction_read_only = on`). `readonly` ist
+/// `null`, wenn keine Verbindung zum Read-Pool besteht.
+async fn replica_health(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> Json<serde_json::Value> {
+    let status = state.db.replica_status().await;
+    Json(serde_json::json!({
+        "success": true,
+        "separate_pool": status.separate_pool,
+        "readonly": status.readonly,
+        "write_max_connections": status.write_max_connections,
+        "read_max_connections": status.read_max_connections,
+    }))
+}
+
+/// Cache-Health-Check: Cache-Statistiken (Task 5.2).
+///
+/// `GET /api/v1/health/cache`
+///
+/// Liefert die Read-Through-Cache-Statistiken: hit_count, miss_count,
+/// hit_rate und evictions. Funktioniert ohne DB-Verbindung — die Werte
+/// sind die internen Zähler des in-memory Caches (moka).
+async fn cache_health(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> Json<serde_json::Value> {
+    let stats = state.cache.stats();
+    let entry_count = state.cache.entry_count();
+    Json(serde_json::json!({
+        "success": true,
+        "hit_count": stats.hit_count,
+        "miss_count": stats.miss_count,
+        "hit_rate": stats.hit_rate,
+        "evictions": stats.evictions,
+        "entry_count": entry_count,
+        "max_entries": state.cache.total_capacity(),
+    }))
 }
 
 /// Audit-Trail-Handler: Liefert die Audit-Logs für eine Entität (Task 1.12).
