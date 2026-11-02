@@ -476,8 +476,10 @@ fn fhir_insurance_no(resource: &Value) -> Option<String> {
                     .to_lowercase();
                 system.contains("vkn")
                     || system.contains("versicherungsnummer")
+                    || system.contains("versichertennummer")
                     || system.contains("vsn")
                     || type_text.contains("versicherungsnummer")
+                    || type_text.contains("versichertennummer")
                     || type_text.contains("vkn")
             })
         })

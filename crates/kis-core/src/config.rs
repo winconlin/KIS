@@ -12,6 +12,8 @@ pub struct AppConfig {
     pub llm: LlmConfig,
     pub security: SecurityConfig,
     pub logging: LoggingConfig,
+    /// In-Memory-Cache (Task 1.17)
+    pub cache: CacheConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -288,12 +290,6 @@ pub struct AuditConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct RateLimitConfig {
-    pub requests_per_minute: u32,
-    pub auth_requests_per_minute: u32,
-}
-
-#[derive(Debug, Deserialize, Clone)]
 pub struct EncryptionConfig {
     /// Umgebungsvariable, aus der der AES-256-Masterkey (Base64, 32 Bytes) gelesen wird
     pub master_key_env: String,
@@ -319,15 +315,6 @@ impl Default for AuditConfig {
         Self {
             retention_days: 3650,
             log_file: "logs/audit.log".into(),
-        }
-    }
-}
-
-impl Default for RateLimitConfig {
-    fn default() -> Self {
-        Self {
-            requests_per_minute: 100,
-            auth_requests_per_minute: 10,
         }
     }
 }
@@ -359,6 +346,50 @@ pub struct LoggingConfig {
     pub level: String,
     /// Ausgabe-Format: "json" (Production) oder "pretty" (Entwicklung)
     pub format: String,
+}
+
+/// Rate-Limiting-Konfiguration (Task 1.11)
+///
+/// Sliding-Window-Prinzip pro User:
+/// - `normal_per_min`: allgemeine /api/v1/*-Endpunkte
+/// - `auth_per_min`:   /auth/*-Endpunkte (Login, Logout, Token-Erneuerung)
+///
+/// Bei Überschreitung antwortet die Middleware mit HTTP 429 +
+/// `Retry-After`-Header.
+#[derive(Debug, Deserialize, Clone)]
+pub struct RateLimitConfig {
+    /// Max. Requests pro Minute pro User (normale Endpunkte)
+    pub normal_per_min: u32,
+    /// Max. Requests pro Minute pro User (Auth-Endpunkte, Login-Schutz)
+    pub auth_per_min: u32,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self { normal_per_min: 100, auth_per_min: 10 }
+    }
+}
+
+/// In-Memory-Cache-Konfiguration (Task 1.17)
+///
+/// moka-basierter LRU-Cache für wiederholte READ-Queries:
+/// - `ttl_seconds`:  Lebensdauer eines Eintrags (Default: 300s = 5 min)
+/// - `max_entries`:  maximale Anzahl an Einträgen (Default: 10.000)
+///
+/// Bei WRITE-Queries wird der betroffene Eintrag aktiv invalidiert,
+/// damit Clients niemals veraltete Daten sehen.
+#[derive(Debug, Deserialize, Clone)]
+pub struct CacheConfig {
+    /// TTL in Sekunden
+    pub ttl_seconds: u64,
+    /// Maximale Anzahl an Cache-Einträgen
+    pub max_entries: u64,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self { ttl_seconds: 300, max_entries: 10_000 }
+    }
 }
 
 impl Default for LoggingConfig {
@@ -395,6 +426,7 @@ impl Default for AppConfig {
             llm: LlmConfig::default(),
             security: SecurityConfig::default(),
             logging: LoggingConfig::default(),
+            cache: CacheConfig::default(),
         }
     }
 }

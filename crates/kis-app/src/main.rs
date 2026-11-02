@@ -71,8 +71,27 @@ async fn main() -> anyhow::Result<()> {
     // Phase 2–3: Schnittstellen & Integrationen (noch Stubs)
     // HL7, FHIR, DICOM, XDS, GDT, MEDICO, Telematik, GUI
 
+    // --- 5a. Rate-Limiter initialisieren (Task 1.11) ---
+    let rate_limiter = Arc::new(
+        kis_core::rate_limit::SlidingWindowRateLimiter::new(&config.security.rate_limit),
+    );
+    info!(
+        normal_per_min = config.security.rate_limit.normal_per_min,
+        auth_per_min = config.security.rate_limit.auth_per_min,
+        "Rate-Limiter initialisiert"
+    );
+
+    // --- 5b. In-Memory-Cache initialisieren (Task 1.17) ---
+    let cache = Arc::new(kis_core::cache::EntityCache::new(&config.cache));
+    info!(
+        ttl_seconds = config.cache.ttl_seconds,
+        max_entries = config.cache.max_entries,
+        "In-Memory-Cache initialisiert (moka)"
+    );
+
     // --- 6. API-Router bauen (merged alle Module) ---
-    let app = api::build_router(config.clone(), db, security);
+    let state = api::AppState::new(config.clone(), db, security, rate_limiter, cache);
+    let app = api::build_router(state);
 
     // --- 7. Server starten ---
     let addr = format!("{}:{}", config.server.host, config.server.port);

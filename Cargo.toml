@@ -76,6 +76,9 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
 
+# In-Memory-Cache (Task 1.17: TTL + Max-Size)
+moka = { version = "0.12", features = ["future", "sync"] }
+
 # Interne KIS-Crates (Pfad-Abhängigkeiten)
 kis-core = { path = "crates/kis-core" }
 kis-patients = { path = "crates/kis-patients" }

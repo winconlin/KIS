@@ -27,7 +27,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use serde::Serialize;
 use tracing::{debug, error, info, warn};
 
@@ -150,13 +150,14 @@ impl Hl7Message {
     }
 
     /// PID-03 (Patienten-ID) — primäre Identifikation.
+    /// In `fields` (nach PID-Typ): Index 2
     pub fn patient_id(&self) -> Option<String> {
         self.segment("PID")
-            .and_then(|p| p.get(3))
+            .and_then(|p| p.get(2))
             .map(|s| s.to_string())
     }
 
-    /// PID-05 (Name, family) — Index 4 (nach dem PID-Typ).
+    /// PID-05 (Name, family) — Index 4 in `fields` (nach dem PID-Typ).
     pub fn patient_name(&self) -> Option<String> {
         self.segment("PID")
             .and_then(|p| p.get(4))
@@ -283,6 +284,11 @@ impl Hl7Server {
     /// Validiert MSH, segmentiert per `\r` (Fallback: `\n`) und extrahiert
     /// MSH-9 (msg_type), MSH-10 (msg_id), MSH-7 (timestamp).
     pub fn parse_message(raw: &str) -> Result<Hl7Message, Hl7Error> {
+        // Leere Eingabe → EmptyMessage
+        if raw.trim().is_empty() {
+            return Err(Hl7Error::EmptyMessage);
+        }
+
         let first_line = raw
             .split(|c| c == '\r' || c == '\n')
             .next()
@@ -307,11 +313,14 @@ impl Hl7Server {
             return Err(Hl7Error::EmptyMessage);
         }
 
-        // MSH-Felder (Feld 0 = "MSH", daher ab Index 1)
+        // MSH-Felder (Feld 0 = "MSH" ist segment_type, daher ab Index 0 in fields)
+        // MSH-7 (timestamp) = Index 6 in der Original-Meldung = Index 5 in fields
+        // MSH-9 (msg_type) = Index 8 in der Original-Meldung = Index 7 in fields
+        // MSH-10 (msg_id) = Index 9 in der Original-Meldung = Index 8 in fields
         let msh = &segments[0];
-        let msg_type = msh.get_or_empty(8); // MSH-9
-        let msg_id = msh.get_or_empty(9); // MSH-10
-        let msh_timestamp = msh.get_or_empty(6); // MSH-7
+        let msg_type = msh.get_or_empty(7); // MSH-9
+        let msg_id = msh.get_or_empty(8); // MSH-10
+        let msh_timestamp = msh.get_or_empty(5); // MSH-7
 
         if msg_type.is_empty() {
             return Err(Hl7Error::MissingMsgType);
@@ -715,7 +724,7 @@ mod tests {
         );
         assert!(msg.segment("NK1").is_some());
         assert_eq!(msg.segments_of("OBX").len(), 1);
-        assert!(msg.timestamp.year() == 2026);
+        assert!(msg.timestamp.year() == 2026, "timestamp: {:?}", msg.timestamp);
     }
 
     #[test]
@@ -750,7 +759,9 @@ mod tests {
     fn test_segment_parsing() {
         let seg = Hl7Segment::new("PID|1||123456789^^^MRN^MR||MUSTER^MAX^^^^");
         assert_eq!(seg.segment_type, "PID");
-        assert_eq!(seg.get(3), Some("123456789^^^MRN^MR"));
+        // In `fields` (nach PID-Typ):
+        // [0] = "1", [1] = "", [2] = "123456789^^^MRN^MR", [3] = "", [4] = "MUSTER^MAX^^^^"
+        assert_eq!(seg.get(2), Some("123456789^^^MRN^MR"));
         assert_eq!(seg.get(4), Some("MUSTER^MAX^^^^"));
     }
 

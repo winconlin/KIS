@@ -568,8 +568,10 @@ fn slug(s: &str) -> String {
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '-' })
         .collect::<String>()
-        .trim_matches('-')
-        .to_string()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 // ============================================================
@@ -1449,7 +1451,7 @@ mod tests {
         assert_eq!(p.gender, "male");
         assert_eq!(p.birth_date, "1980-01-15");
         assert_eq!(p.name[0].family, "Mustermann");
-        assert_eq!(p.name[0].given, vec!["Max".into(), "Maria".into()]);
+        assert_eq!(p.name[0].given, vec!["Max".to_string(), "Maria".to_string()]);
         assert!(p.identifier.is_some());
         assert!(p.address.is_some());
         assert_eq!(p.telecom.as_ref().unwrap().len(), 2);

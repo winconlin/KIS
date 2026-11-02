@@ -218,7 +218,7 @@ impl CertManager {
 
 /// Kartenleser-Typ
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum CardReaderType {
     /// USB-Seriell (z. B. ACS ACR38)
     UsbSerial,
@@ -1288,10 +1288,9 @@ mod tests {
     fn test_cert_status_no_files() {
         let config = TiInterfaceConfig {
             base_url: "https://ti.example.com".into(),
-            cert_path: "/tmp/nonexistent_cert.pem".into(),
-            key_path: "/tmp/nonexistent_key.pem".into(),
-            ca_path: "/tmp/nonexistent_ca.pem".into(),
-            card_reader: "usb".into(),
+            tls_cert_path: "/tmp/nonexistent_cert.pem".into(),
+            tls_key_path: "/tmp/nonexistent_key.pem".into(),
+            tls_ca_path: "/tmp/nonexistent_ca.pem".into(),
             ..Default::default()
         };
         let manager = CertManager::new(config);

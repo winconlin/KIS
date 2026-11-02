@@ -246,18 +246,20 @@ Historische Schätzung: **~23 Wochen**. Kein verbindlicher Termin; Aufwand und A
 | 1.5 | Medikament-Service: CRUD + Verordnungs-Workflow | Vollständig | ✅ |
 | 1.6 | REST-API: alle Endpunkte mit JSON, pagination, cursor-based | `docs/API.md` vollständig | ✅ |
 | 1.7 | JWT-Auth: Login, Access/Refresh Tokens, Logout, MFA | 15 min Access, 24 h Refresh, TOTP | ✅ |
-| 1.8 | RBAC: Rollen (Admin, Arzt, Pflege, Rezeption, Viewer) + Berechtigungen | Jede Rolle kann nur ihre Endpunkte | 🔲 |
+| 1.8 | RBAC: Rollen (Admin, Arzt, Pflege, Rezeption, Viewer) + Berechtigungen | Jede Rolle kann nur ihre Endpunkte | ✅ |
 | 1.9 | Passwort-Hashing: Argon2id | OWASP-konform | ✅ |
 | 1.10 | MFA: TOTP-Setup + Verifikation | Optional pro Benutzer | ✅ |
-| 1.11 | Rate-Limiting: Sliding Window (100/min, Auth: 10/min) | 429 + Retry-After | 🔲 |
-| 1.12 | Audit-Log: Hash-Chain, jede Patienten-Operation geloggt | 10 Jahre Aufbewahrung, Partitionierung | 🔲 |
-| 1.13 | Input-Validierung: alle Felder (Name, Datum, E-Mail, Tel.) | OWASP-Validierung | 🔲 |
+| 1.11 | Rate-Limiting: Sliding Window (100/min, Auth: 10/min) | 429 + Retry-After | ✅ |
+| 1.12 | Audit-Log: Hash-Chain, jede Patienten-Operation geloggt | 10 Jahre Aufbewahrung, Partitionierung | ✅ |
+| 1.13 | Input-Validierung: alle Felder (Name, Datum, E-Mail, Tel.) | OWASP-Validierung | ✅ |
 | 1.14 | Daten-Verschlüsselung: AES-256-GCM für sensible Felder | Krankenkassen-Nr., Notizen, Telefon | ✅ |
 | 1.15 | **Optimistic Locking**: `version`-Spalte, Concurrency-Tests | 2 User editieren gleichzeitig → 409 Conflict | ✅ |
 | 1.16 | **Read-Replica-Support**: Lese-Queries auf Read-Pool | Suche < 50 ms bei 1000 parallelen Reads | ✅ |
-| 1.17 | **Caching**: In-memory Cache für häufige Reads (Rust: moka) | Cache-Hit < 5 ms | 🔲 |
+| 1.17 | **Caching**: In-memory Cache für häufige Reads (Rust: moka) | Cache-Hit < 5 ms | ✅ |
 
 **Agent-Regel Phase 1:** Jeder Service bekommt Unit-Tests. API-Endpunkte werden mit `reqwest` in Integrationstests abgedeckt. Kein Code ohne Tests. **Jeder Service ist eine eigene Crate.**
+
+**Phase 1: ✅ 17/17 Tasks abgeschlossen (Stand: 02.11.2026)**
 
 ---
 
@@ -495,5 +497,5 @@ Ein Task ist **fertig** wenn:
 
 ---
 
-*Version: 2.1.0 | Stand: 2026-11-02 | Autor: Hermes Agent*
-*Änderungen: v2.1.0 — Phase 0 abgeschlossen (12/12), Phase 1 teilweise (12/17), Phase 2–3 teilweise (kis-hl7, kis-fhir, kis-dicom, kis-xds, kis-gdt, kis-medico, kis-ti, kis-ui implementiert)*
+*Version: 2.2.0 | Stand: 2026-11-02 | Autor: Hermes Agent*
+*Änderungen: v2.2.0 — Phase 0 (12/12) + Phase 1 (17/17) abgeschlossen. Phase 3 teilweise (kis-hl7, kis-fhir, kis-dicom, kis-xds, kis-gdt, kis-medico, kis-ti implementiert, alle Tests grün).*
