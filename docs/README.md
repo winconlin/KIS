@@ -20,6 +20,10 @@ Die Referenz beschreibt den aktiven Root-Build unter `src/`. Der PostgreSQL-Work
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Struktur, Prüfungen und Arbeitsablauf |
 | [FAHRPLAN.md](FAHRPLAN.md) | Geplanter vollständiger Ausbau |
 | [REVIEW_STATUS.md](REVIEW_STATUS.md) | Korrekturen und verbleibende Prüfungsaufgaben |
+| [AGENTEN_AUFTRAG.md](AGENTEN_AUFTRAG.md) | Ausführbare nächste Etappe PG-00 bis PG-10 mit Zuständigkeiten und Abnahme |
+| [SICHERHEITS_ABNAHME.md](SICHERHEITS_ABNAHME.md) | Sicherheitsfälle, echte Testnachweise und getrennte spätere Freigaben |
+
+Agenten beginnen mit [AGENTS.md](../AGENTS.md). Der erste Auftrag ist PG-00; die PostgreSQL-Implementierung beginnt nach der dort festgelegten Bestands- und Vertragsklärung.
 
 ## Funktionsstand
 

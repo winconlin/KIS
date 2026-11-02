@@ -1,8 +1,8 @@
 # KIS — Fahrplan für die Entwicklung
 
-> **Dieses Dokument ist die verbindliche Roadmap für alle Agenten, die am KIS arbeiten.**
-> Jeder Agent liest dieses Dokument ZUERST, wählt seine Phase, arbeitet die Tasks ab und meldet sich mit Status.
-> Abweichungen von diesem Fahrplan erfordern eine explizite Freigabe durch den Projektverantwortlichen.
+> **Dieses Dokument beschreibt die langfristige Roadmap.**
+> Agenten lesen zunächst [Root-AGENTS.md](../AGENTS.md), den [operativen Auftrag](AGENTEN_AUFTRAG.md) und die [Sicherheits-Abnahme](SICHERHEITS_ABNAHME.md).
+> Zugewiesene Arbeitspakete werden anhand tatsächlicher Nachweise abgeschlossen. Übliche technische Entscheidungen erfolgen selbstständig innerhalb dieses Auftrags; neue Produkt-/Datenfreigaben werden nicht aus der Roadmap abgeleitet.
 
 ---
 
@@ -27,6 +27,8 @@ Die nächste Etappe arbeitet in dieser Reihenfolge:
 5. **Mit echter PostgreSQL-Instanz prüfen:** Frische Migrationen, Constraints, konkurrierende Änderungen, Identifier-Eindeutigkeit und die bisherigen Auth-/Audit-Regressionen in CI ausführen. Dokumentation und Status erst nach grünen Checks auf PostgreSQL als Ist-Stand umstellen.
 
 Die Tasks 0.1 und 0.4 sowie die zugehörigen Datenmodell-/Concurrency-Tasks bleiben bis zu dieser Abnahme offen. Patienten-CRUD/GUI und MEDICO-Migration sind nachgelagerte Ausbauetappen. MEDICO-Version, ISiK-Profile und Testumgebung werden vor der späteren Gegenstellenprüfung benötigt, blockieren aber die Vorbereitung des PostgreSQL-Workspaces nicht.
+
+Für die Umsetzung gelten die Arbeitspakete **PG-00 bis PG-10** im [Agentenauftrag](AGENTEN_AUFTRAG.md). Dort stehen Abhängigkeiten, Dateizuständigkeiten, Abnahmekriterien und Übergabeformat. Die [Sicherheitsmatrix](SICHERHEITS_ABNAHME.md) trennt Pflichtnachweise dieser Basisetappe von späteren CRUD-/GUI-/MEDICO- und Betriebsfreigaben.
 
 ## 1. Projektziele
 
@@ -363,7 +365,7 @@ Historische Schätzung: **~23 Wochen**. Kein verbindlicher Termin; Aufwand und A
 | 5.15 | Signed Releases: GPG-Signatur, Checksums | `docs/SECURITY.md` § Updates | 🔲 |
 | 5.16 | Secret-Management: Alle Secrets aus ENV, nie im Code | `docs/SECURITY.md` § Secrets | 🔲 |
 
-**Agent-Regel Phase 5:** Sicherheits-Code wird VON ZWEI MODELLen reviewed (siehe Phase 6). Keine Änderung ohne Security-Review.
+**Agent-Regel Phase 5:** Sicherheits-Code benötigt vor Integrationsfreigabe ein unabhängiges zweites Security-Review mit konkreter SHA und Testnachweisen. Implementierung und gemeinsame Tests im isolierten Feature-/Prüfbranch dürfen davor stattfinden; eine Selbstfreigabe des Autors ist ausgeschlossen. Ein bloßer Modellkonsens ersetzt keinen Nachweis.
 
 ---
 

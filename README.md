@@ -11,6 +11,7 @@ KIS ist ein Rust-Prototyp für ein Krankenhaus-Informations-System. Ziel ist ein
 - [Aktuelle Architektur und Ausbauziel](docs/ARCHITECTURE.md)
 - [Fahrplan](docs/FAHRPLAN.md)
 - [Bearbeitung der Prüfungsbefunde](docs/REVIEW_STATUS.md)
+- [Agentenregeln](AGENTS.md) und [nächste Arbeitspakete mit Sicherheits-Abnahme](docs/AGENTEN_AUFTRAG.md)
 
 Für Entwicklung werden die in [rust-toolchain.toml](rust-toolchain.toml) gepinnte Rust-Version und ein C-Compiler benötigt. Installation, Schlüsselgenerierung und Administrator-Bootstrap stehen in der Installationsanleitung.
 

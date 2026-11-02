@@ -2,6 +2,8 @@
 
 Stand: 02.11.2026
 
+Für Agenten gelten [AGENTS.md](../AGENTS.md), der [operative PostgreSQL-Auftrag](AGENTEN_AUFTRAG.md) und die [Sicherheits-Abnahme](SICHERHEITS_ABNAHME.md). Die nachfolgenden Kommandos beschreiben den aktuellen Root-Build; der operative Auftrag definiert zusätzlich die Workspace-/PostgreSQL-Prüfungen für die nächste Etappe.
+
 ## Aktive Struktur
 
 | Pfad | Rolle |

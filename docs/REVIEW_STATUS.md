@@ -37,7 +37,7 @@ Die ursprüngliche Prüfung fand 26 Themen. Dieser Korrektursatz richtet den akt
 
 ## Prüfungen
 
-Lokal bestehen 37 Rust-Tests und sechs Python-Backup-Tests. Formatierung, Clippy mit Warnungen als Fehler, Binär-Build und Dokumentationsprüfung bestehen ebenfalls. Der Dokumentationscheck umfasst 14 Markdown-Dateien, 37 lokale Links sowie JSON-/TOML-/Shell-Codeblöcke. Die Befehle stehen in [DEVELOPMENT.md](DEVELOPMENT.md).
+Für den bisherigen Code wurden 37 Rust-Tests und sechs Python-Backup-Tests bestanden. Formatierung, Clippy mit Warnungen als Fehler, Binär-Build und Dokumentationsprüfung wurden ebenfalls ausgeführt. Mit den ergänzten Agentenanweisungen umfasst der Dokumentationscheck nun 17 Markdown-Dateien einschließlich Root-AGENTS.md, 66 lokale Links sowie JSON-/TOML-/Shell-Codeblöcke. Die Befehle stehen in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 Ein zusätzlicher Prozess-Smoke-Test prüft den echten Admin-CLI-/Serverstart mit abweichender TOML-Datei und ENV-Overrides, Login, Refresh, Logout und erneuten Serverstart. Alle vier SQLx-Migrationen, WAL-Modus, DB-Integrität und Audit-Einträge wurden dabei bestätigt. Compose-Konfiguration und CI-YAML sind syntaktisch geprüft; das gepinnte Docker-Basisimage ist verfügbar.
 
@@ -52,3 +52,7 @@ Offen bleiben der reale systemd-Betrieb, eine echte MEDICO-Integration, klinisch
 - **Bestandsdaten, bestätigt am 02.11.2026:** Nur frische Entwicklung/Testinstallation. Ein gesonderter Datenerhalt-/Checksum-Upgrade-Pfad für Altbestände ist deshalb aktuell kein Projektblocker. Das ist keine allgemeine Freigabe für das Überschreiben fremder oder künftiger Bestandsdatenbanken.
 - **Nächste Ausbauetappe, bestätigt am 02.11.2026:** PostgreSQL-Workspace und Datenmodell zuerst. Die Reihenfolge und Abnahmekriterien stehen im Fahrplan. Fachliche CRUD-/GUI- und MEDICO-Ausbauschritte folgen auf dieser Basis; sie werden hier noch nicht als umgesetzt markiert.
 - **MEDICO-Gegenstelle:** Version, vereinbarte ISiK-Profile und eine Sandbox/Testumgebung sind noch zu benennen. Bis dahin bleiben fachliche Schreib-/Migrationsabläufe ungeprüft.
+
+## Arbeitsauftrag für die Umsetzung
+
+[AGENTS.md](../AGENTS.md) definiert die automatisch zu lesenden Repo-Regeln. Der [operative Agentenauftrag](AGENTEN_AUFTRAG.md) zerlegt die nächste PostgreSQL-Etappe in PG-00 bis PG-10 einschließlich Rollen, Abhängigkeiten, Architektur-/Datenverträgen, Abnahmekriterien und Übergabeformat. Die [Sicherheits-Abnahme](SICHERHEITS_ABNAHME.md) legt echte Negativ-, Rechte-, Race-, Ausfall- und Restore-Nachweise fest. Diese Dokumente definieren zukünftige Arbeit; sie melden keine PostgreSQL-Implementierung oder unabhängige Sicherheitsfreigabe als bereits erfolgt.

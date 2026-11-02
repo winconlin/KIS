@@ -14,7 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     errors = []
     counts = {"documents": 0, "local_links": 0, "json": 0, "toml": 0, "shell": 0}
-    for path in sorted([ROOT / "README.md", *ROOT.joinpath("docs").rglob("*.md")]):
+    roots = [ROOT / "README.md", ROOT / "AGENTS.md"]
+    documents = [path for path in roots if path.is_file()]
+    documents.extend(ROOT.joinpath("docs").rglob("*.md"))
+    for path in sorted(documents):
         counts["documents"] += 1
         active = None
         body = []
