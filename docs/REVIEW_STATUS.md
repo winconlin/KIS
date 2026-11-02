@@ -8,9 +8,9 @@ Die ursprüngliche Prüfung fand 26 Themen. Dieser Korrektursatz richtet den akt
 
 | Nr. | Thema | Bearbeitung / verbleibende Aufgabe |
 |---|---|---|
-| 01 | SQLite-Syntax und Fehlerbehandlung | Migration korrigiert; Start bricht bei Fehlern ab. Manuell reparierte Altbestände brauchen Checksum-Abgleich. |
+| 01 | SQLite-Syntax und Fehlerbehandlung | Migration korrigiert; Start bricht bei Fehlern ab. Projektverantwortlicher bestätigt nur frische Testinstallationen; aktuell kein Bestandsdaten-Upgrade erforderlich. |
 | 02 | Spaltennamen | Auth/Audit an vorhandenes Schema angepasst; Login und Audit werden getestet. |
-| 03 | Build/Workspace/Docker | Root-Toolchain gepinnt; Docker ohne erfundene Features, Compose passend zu SQLite. Docker-Build in GitHub-CI bestanden; Container-Smoke-Test ergänzt. PostgreSQL-Workspace bleibt offen. |
+| 03 | Build/Workspace/Docker | Root-Toolchain gepinnt; Docker ohne erfundene Features, Compose passend zu SQLite. Docker-Build und Container-Smoke-Test in GitHub-CI bestanden. PostgreSQL-Workspace/Datenmodell sind die bestätigte nächste Priorität. |
 | 04 | Doppeltes API-Präfix | Einmaliges Präfix, HTTP-Regressionstest. |
 | 05 | Refresh als Access / Widerruf | Zweckprüfung und persistente gemeinsame Sitzung; atomare Rotation und Neustart-Widerruf getestet. |
 | 06 | RBAC | Serverseitige Routenregeln, keine Rechtewahl per Query. Objektberechtigungen für zukünftiges CRUD bleiben offen. |
@@ -43,12 +43,12 @@ Ein zusätzlicher Prozess-Smoke-Test prüft den echten Admin-CLI-/Serverstart mi
 
 Die Backup-Tests verwenden echte age-Schlüssel und -Verschlüsselung mit temporären synthetischen Daten. Der Client-Test umfasst 151 Ressourcen über zwei Seiten. Security-Tests prüfen auch fehlende Rechte, Refresh an Datenrouten, Logout, parallele Rotation, Kontosperre und manipulierten Audit-Inhalt.
 
-Der [erste GitHub-CI-Lauf für PR #1](https://github.com/winconlin/KIS/actions/runs/41380361231) bestätigt Rust, Dokumentation/Backups und Docker-Build. Zusätzlich prüft der Container-Job über scripts/check_container.py den Betrieb ohne root, Bootstrap, HTTP und Widerruf nach Neustart. Die Ergebnisse des jeweiligen Commits sind im PR einsehbar.
+Der [GitHub-CI-Lauf für Commit f19a79f](https://github.com/winconlin/KIS/actions/runs/41380825389) bestätigt Rust, Dokumentation/Backups, Docker-Build und den erfolgreichen Container-Smoke-Test. Dieser prüft Betrieb ohne root, Bootstrap, HTTP und Widerruf nach Neustart. Die Ergebnisse des jeweiligen Commits sind im PR einsehbar.
 
 Offen bleiben der reale systemd-Betrieb, eine echte MEDICO-Integration, klinische Workflows, der vollständige PostgreSQL-Workspace und eine Zertifizierung. Ein unabhängiges zweites Security-Review gemäß Fahrplan bleibt vor einer Freigabe erforderlich.
 
-## Abgefragte Projektangaben
+## Bestätigte Projektangaben und verbleibende Rückfrage
 
-- **Bestandsdaten:** Noch nicht geklärt ist, ob nur frische Testinstallationen oder erhaltenswerte bestehende Datenbanken existieren. Ohne diese Angabe gibt es keine pauschale Freigabe für einen Checksum-/Schemaumbau bestehender Migration-002-Bestände.
-- **Nächste Ausbauetappe:** Die Priorität zwischen PostgreSQL-Workspace/Datenmodell, Patienten-CRUD/GUI und MEDICO-Migration wurde abgefragt. Das PostgreSQL-Ziel des Fahrplans bleibt bestehen; ein vollständiger Ausbau wird durch diesen Korrektursatz nicht vorweggenommen.
+- **Bestandsdaten, bestätigt am 02.11.2026:** Nur frische Entwicklung/Testinstallation. Ein gesonderter Datenerhalt-/Checksum-Upgrade-Pfad für Altbestände ist deshalb aktuell kein Projektblocker. Das ist keine allgemeine Freigabe für das Überschreiben fremder oder künftiger Bestandsdatenbanken.
+- **Nächste Ausbauetappe, bestätigt am 02.11.2026:** PostgreSQL-Workspace und Datenmodell zuerst. Die Reihenfolge und Abnahmekriterien stehen im Fahrplan. Fachliche CRUD-/GUI- und MEDICO-Ausbauschritte folgen auf dieser Basis; sie werden hier noch nicht als umgesetzt markiert.
 - **MEDICO-Gegenstelle:** Version, vereinbarte ISiK-Profile und eine Sandbox/Testumgebung sind noch zu benennen. Bis dahin bleiben fachliche Schreib-/Migrationsabläufe ungeprüft.

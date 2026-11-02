@@ -14,6 +14,20 @@ Die Befundkorrekturen stellen Start, API-Präfix, Konfigurations-Overrides und S
 
 Ein Häkchen ist nur bei geprüftem Akzeptanzkriterium zulässig. Reine Entwurfsdateien oder Modellantworten belegen keine erfolgreiche Umsetzung. Das unabhängige zweite Security-Review bleibt ein Freigabeschritt.
 
+## Bestätigte nächste Ausbauetappe — PostgreSQL-Workspace und Datenmodell
+
+Der Projektverantwortliche hat am 02.11.2026 **nur frische Entwicklung/Testinstallationen** und **PostgreSQL-Workspace/Datenmodell als nächste Priorität** bestätigt. Eine Migration bestehender Produktivdaten gehört damit aktuell nicht zum Auftrag. Die bestehende SQLite-Referenz bleibt bis zur geprüften PostgreSQL-Integration der ausführbare Zwischenstand.
+
+Die nächste Etappe arbeitet in dieser Reihenfolge:
+
+1. **Workspace herstellen:** Gültige Paket-Manifeste, klare Workspace-Mitglieder und reproduzierbarer Root-Build. Gemeinsame Verträge liegen in kis-core; die Anwendung setzt die Fachmodule zusammen. kis-core darf nicht gleichzeitig von einem Fachmodul abhängen, das seinerseits kis-core benötigt.
+2. **Verbindliches Datenmodell festlegen:** Benutzer/Sitzungen, Patienten, Ärzte, Termine, Medikationen, Audit und Einwilligungen mit konsistenten Namen, UUIDs, UTC-Zeitstempeln, Fremdschlüsseln und Constraints. Externe Identifier erhalten Quellsystem/Ressourcentyp und eindeutige Zuordnung. Objektberechtigungen, Löschung und Optimistic Locking sind dabei ausdrücklich zu modellieren.
+3. **PostgreSQL-Speicher integrieren:** Eigene PostgreSQL-Migrationen und passende SQLx-Typen. Die SQLite-DDL-Dateien mit AUTOINCREMENT und SQLite-spezifischen Ausdrücken werden nicht unverändert gegen PostgreSQL ausgeführt. Connection-Pooling wird tatsächlich konfigurierbar und unter Last geprüft.
+4. **Sicherheitsverhalten erhalten:** Persistenter Widerruf, atomare Refresh-Rotation, serverseitige Rollen und überprüfbare Audit-Inhalte müssen auch mit dem neuen Backend bestehen. Read-Replicas dürfen keine verzögerten Autorisierungs-/Widerrufsprüfungen verursachen.
+5. **Mit echter PostgreSQL-Instanz prüfen:** Frische Migrationen, Constraints, konkurrierende Änderungen, Identifier-Eindeutigkeit und die bisherigen Auth-/Audit-Regressionen in CI ausführen. Dokumentation und Status erst nach grünen Checks auf PostgreSQL als Ist-Stand umstellen.
+
+Die Tasks 0.1 und 0.4 sowie die zugehörigen Datenmodell-/Concurrency-Tasks bleiben bis zu dieser Abnahme offen. Patienten-CRUD/GUI und MEDICO-Migration sind nachgelagerte Ausbauetappen. MEDICO-Version, ISiK-Profile und Testumgebung werden vor der späteren Gegenstellenprüfung benötigt, blockieren aber die Vorbereitung des PostgreSQL-Workspaces nicht.
+
 ## 1. Projektziele
 
 | Ziel | Metrik |

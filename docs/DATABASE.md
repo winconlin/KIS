@@ -189,6 +189,8 @@ SQLx verwaltet Versionsnummern und Prüfsummen in _sqlx_migrations. Keine eigene
 
 **Hinweis zur bisherigen 002:** Die ursprüngliche ADD COLUMN IF NOT EXISTS-Syntax war unter SQLite nicht ausführbar. Dieser Fehler wird korrigiert. Wer die Datei zuvor selbst repariert und angewandt hat, muss seine Prüfsumme und sein reales Schema mit der neuen Fassung abgleichen; ein solcher Bestand kann bewusst am SQLx-Checksum-Check scheitern. Nicht durch Löschen von Daten oder pauschales Überspringen der Prüfung umgehen. Zuerst sichern und einen geprüften Upgrade-/Restore-Pfad festlegen.
 
+Für dieses Projekt hat der Verantwortliche am 02.11.2026 ausschließlich frische Entwicklung/Testinstallationen bestätigt. Ein gesonderter Upgrade-Pfad für zuvor reparierte 002-Altbestände ist daher aktuell nicht erforderlich. Die nächste bestätigte Ausbauetappe ist PostgreSQL-Workspace und Datenmodell; diese Zielarchitektur ist noch nicht implementiert und benötigt eigene PostgreSQL-Migrationen.
+
 Ein DB-Rollback erfolgt mit einem passenden geprüften Snapshot und Release. Ein improvisiertes DROP audit_log würde Daten verlieren und SQLx-Metadaten nicht zurücksetzen.
 
 ## WAL, Durabilität und Backup
