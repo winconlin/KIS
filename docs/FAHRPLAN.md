@@ -202,8 +202,8 @@ Historische Schätzung: **~23 Wochen**. Kein verbindlicher Termin; Aufwand und A
 | 0.4 | PostgreSQL-Setup (SQLX, Connection-Pooling, Migrations) | `cargo run` erstellt PostgreSQL-DB + Tabellen | 🔲 |
 | 0.5 | Logging (tracing, JSON + Human) | Logs in `logs/kis.log` | 🔲 |
 | 0.6 | Fehlerhandling (anyhow + thiserror, JSON Error API) | Consistent Error-Format | 🔲 |
-| 0.7 | CI/CD (GitHub Actions: build, test, lint) | `.github/workflows/ci.yml` vorhanden; erster Remote-Lauf offen | 🔄 |
-| 0.8 | Testrahmen (unit + integration, `cargo test`) | Mindestens 10 Tests; Rust-/Backup-Regressionen vorhanden | 🔄 |
+| 0.7 | CI/CD (GitHub Actions: build, test, lint) | Build/Test/Lint in GitHub grün; Release-/Deploy-Automatisierung offen | 🔄 |
+| 0.8 | Testrahmen (unit + integration, `cargo test`) | 37 Rust-Tests und 6 Backup-Tests; API-Regressionen über echte HTTP-Listener | ✅ |
 | 0.9 | Dockerfile (multi-stage, minimal image) + docker-compose (KIS + PostgreSQL) | `docker compose up` < 150 MB | 🔲 |
 | 0.10 | systemd-Unit (Production-Deployment) | `kis.service` läuft als Daemon | 🔲 |
 | 0.11 | **PostgreSQL Read-Replica-Setup** (dokumentiert + Test-Script) | `docs/INSTALLATION.md` § Read-Replica | 🔲 |

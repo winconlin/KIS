@@ -37,6 +37,8 @@ python3 -m unittest discover -s tests -p 'test_*.py' -v
 
 Die Backup-Tests benötigen age und age-keygen. Ohne diese Werkzeuge werden sie lokal übersprungen; ein solcher Skip ist kein bestandener Backup-Nachweis. In CI müssen die Werkzeuge installiert sein.
 
+Der Container-Job baut das Image und führt anschließend `python3 scripts/check_container.py --image kis-check` aus. Der Test verwendet ein eigenes temporäres Volume und prüft Admin-Bootstrap, Betrieb ohne root, Health, Token-Zwecke und Widerruf nach einem Neustart. Container und Volume werden danach entfernt.
+
 Die Security-Regressionstests starten echte lokale HTTP-Listener und prüfen unter anderem Login/Lockout, einheitliche Pfade, Rollen, Refresh-Verwendung, dauerhaften Widerruf, atomare Rotation und Audit-Manipulation. Die Datenhandler bleiben auch im Test absichtlich HTTP 501.
 
 ## Konventionen

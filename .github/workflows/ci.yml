@@ -33,3 +33,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t kis-check .
+      - run: python3 scripts/check_container.py --image kis-check

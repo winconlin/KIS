@@ -10,7 +10,7 @@ Die ursprüngliche Prüfung fand 26 Themen. Dieser Korrektursatz richtet den akt
 |---|---|---|
 | 01 | SQLite-Syntax und Fehlerbehandlung | Migration korrigiert; Start bricht bei Fehlern ab. Manuell reparierte Altbestände brauchen Checksum-Abgleich. |
 | 02 | Spaltennamen | Auth/Audit an vorhandenes Schema angepasst; Login und Audit werden getestet. |
-| 03 | Build/Workspace/Docker | Root-Toolchain gepinnt; Docker ohne erfundene Features, Compose passend zu SQLite. PostgreSQL-Workspace bleibt offen. |
+| 03 | Build/Workspace/Docker | Root-Toolchain gepinnt; Docker ohne erfundene Features, Compose passend zu SQLite. Docker-Build in GitHub-CI bestanden; Container-Smoke-Test ergänzt. PostgreSQL-Workspace bleibt offen. |
 | 04 | Doppeltes API-Präfix | Einmaliges Präfix, HTTP-Regressionstest. |
 | 05 | Refresh als Access / Widerruf | Zweckprüfung und persistente gemeinsame Sitzung; atomare Rotation und Neustart-Widerruf getestet. |
 | 06 | RBAC | Serverseitige Routenregeln, keine Rechtewahl per Query. Objektberechtigungen für zukünftiges CRUD bleiben offen. |
@@ -30,7 +30,7 @@ Die ursprüngliche Prüfung fand 26 Themen. Dieser Korrektursatz richtet den akt
 | 20 | XDS/DICOM | Proprietäre REST-Idee von Standards getrennt; Begriffe und DCMTK-Beispiel berichtigt. Konformitätsnachweise offen. |
 | 21 | MEDICO-Mapping | Spaltenreferenz und Konflikthinweis korrigiert; CamelCase-Felder und Client-Konfiguration angepasst. Fachlicher Upsert-/ID-Speicher offen. |
 | 22 | Migration/WAL | SQLx-Versionierung, Backup-Konsistenz und Durabilitätsgrenzen richtiggestellt. |
-| 23 | CI/Release/Monitoring | Echte Prüf-Workflow-Datei ergänzt; erster Remote-Lauf, signierte Releases und Monitoring-Infrastruktur noch offen. |
+| 23 | CI/Release/Monitoring | GitHub-CI für Rust, Dokumentation/Backups und Docker-Build bestanden. Signierte Releases und Monitoring-Infrastruktur bleiben offen. |
 | 24 | Rust-Testfehler | Ungültige base64-Engine entfernt, Base32 und laufende Test-Runtime verwendet. |
 | 25 | Recht/Normen | Pauschale Konformitäts-/Fristzusagen entfernt; betriebliches/fachliches Konzept und Normprüfung bleiben offen. |
 | 26 | Markdown-Pflege | Index, Status, Formulierungen und Codeblock-Kennzeichnung bereinigt; automatischer Datei-/Codeblock-Check ergänzt. |
@@ -43,4 +43,12 @@ Ein zusätzlicher Prozess-Smoke-Test prüft den echten Admin-CLI-/Serverstart mi
 
 Die Backup-Tests verwenden echte age-Schlüssel und -Verschlüsselung mit temporären synthetischen Daten. Der Client-Test umfasst 151 Ressourcen über zwei Seiten. Security-Tests prüfen auch fehlende Rechte, Refresh an Datenrouten, Logout, parallele Rotation, Kontosperre und manipulierten Audit-Inhalt.
 
-Nicht nachgewiesen sind ein Docker-/systemd-Lauf in dieser lokalen Umgebung, eine echte MEDICO-Integration, ein klinischer Workflow, ein vollständiger PostgreSQL-Workspace oder eine Zertifizierung. Ein unabhängiges zweites Security-Review gemäß Fahrplan bleibt vor einer Freigabe erforderlich. Geschriebene CI-Konfiguration allein ist noch kein grüner Remote-Lauf.
+Der [erste GitHub-CI-Lauf für PR #1](https://github.com/winconlin/KIS/actions/runs/41380361231) bestätigt Rust, Dokumentation/Backups und Docker-Build. Zusätzlich prüft der Container-Job über scripts/check_container.py den Betrieb ohne root, Bootstrap, HTTP und Widerruf nach Neustart. Die Ergebnisse des jeweiligen Commits sind im PR einsehbar.
+
+Offen bleiben der reale systemd-Betrieb, eine echte MEDICO-Integration, klinische Workflows, der vollständige PostgreSQL-Workspace und eine Zertifizierung. Ein unabhängiges zweites Security-Review gemäß Fahrplan bleibt vor einer Freigabe erforderlich.
+
+## Abgefragte Projektangaben
+
+- **Bestandsdaten:** Noch nicht geklärt ist, ob nur frische Testinstallationen oder erhaltenswerte bestehende Datenbanken existieren. Ohne diese Angabe gibt es keine pauschale Freigabe für einen Checksum-/Schemaumbau bestehender Migration-002-Bestände.
+- **Nächste Ausbauetappe:** Die Priorität zwischen PostgreSQL-Workspace/Datenmodell, Patienten-CRUD/GUI und MEDICO-Migration wurde abgefragt. Das PostgreSQL-Ziel des Fahrplans bleibt bestehen; ein vollständiger Ausbau wird durch diesen Korrektursatz nicht vorweggenommen.
+- **MEDICO-Gegenstelle:** Version, vereinbarte ISiK-Profile und eine Sandbox/Testumgebung sind noch zu benennen. Bis dahin bleiben fachliche Schreib-/Migrationsabläufe ungeprüft.
