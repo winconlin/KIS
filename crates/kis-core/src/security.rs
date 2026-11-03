@@ -491,16 +491,22 @@ pub enum Role {
     Rezeption,
     /// Viewer: Patienten und Termine nur lesen.
     Viewer,
+    /// Auditor: Nur Audit-Log lesen (DSGVO-konforme Prüfungen).
+    Auditor,
+    /// LLM-Agent: Read-only Zugang für KI-Assistenzfunktionen.
+    LlmAgent,
 }
 
 impl Role {
     /// Alle definierten Rollen.
-    pub const ALL: [Role; 5] = [
+    pub const ALL: [Role; 7] = [
         Role::Admin,
         Role::Arzt,
         Role::Pflege,
         Role::Rezeption,
         Role::Viewer,
+        Role::Auditor,
+        Role::LlmAgent,
     ];
 
     /// DB-Wert der Rolle (users.role)
@@ -511,30 +517,39 @@ impl Role {
             Role::Pflege => "pflege",
             Role::Rezeption => "rezeption",
             Role::Viewer => "viewer",
+            Role::Auditor => "auditor",
+            Role::LlmAgent => "llm_agent",
         }
     }
 
     /// Prüft, ob eine Rolle eine bestimmte Berechtigung hat.
     ///
-    /// Berechtigungs-Matrix (Task 1.8):
+    /// Berechtigungs-Matrix (Task 1.8 / 5.4):
+    /// Vollständige Matrix siehe `docs/SECURITY.md` § RBAC.
+    ///
+    /// Kurzform:
     /// ```text
-    ///                     patient.read patient.write doctor.read appt.read appt.write med.read med.write admin
-    /// Admin                ✔            ✔             ✔           ✔         ✔          ✔        ✔       ✔
-    /// Arzt                 ✔            ✔             ✔           ✔         ✔          ✔        ✔       ✘
-    /// Pflege               ✔            ✘             ✘           ✔         ✘          ✔        ✘       ✘
-    /// Rezeption            ✔            ✘ (nur create)✘          ✔         ✔ (nur create/cancel) ✘      ✘
-    /// Viewer               ✔            ✘             ✘           ✔         ✘          ✘        ✘       ✘
+    ///                          patient.read patient.write patient.create patient.delete doctor.read doctor.write appt.read appt.write appt.book appt.cancel med.read med.write doc.read doc.write export import audit.read config.read admin
+    /// Admin                     ✔           ✔             ✔              ✔            ✔           ✔          ✔         ✔         ✔         ✔         ✔        ✔       ✔        ✔       ✔      ✔      ✔        ✔         ✔
+    /// Arzt (Physician)          ✔           ✔             ✔              ✘            ✔           ✘          ✔         ✔         ✔         ✔         ✔        ✔       ✔        ✘       ✘      ✘      ✘        ✘         ✘
+    /// Pflege (Nurse)            ✔           ✘             ✘              ✘            ✘           ✘          ✔         ✘         ✘         ✘         ✔        ✘       ✘        ✘       ✘      ✘      ✘        ✘         ✘
+    /// Rezeption (Admin)         ✔           ✘             ✔              ✘            ✘           ✘          ✔         ✘         ✔         ✔         ✘        ✘       ✘        ✘       ✘      ✘      ✘        ✘         ✘
+    /// Viewer                    ✔           ✘             ✘              ✘            ✘           ✘          ✔         ✘         ✘         ✘         ✘        ✘       ✘        ✘       ✘      ✘      ✘        ✘         ✘
+    /// Auditor                   ✘           ✘             ✘              ✘            ✘           ✘          ✘         ✘         ✘         ✘         ✘        ✘       ✘        ✘       ✘      ✘      ✔        ✘         ✘
+    /// LLM-Agent                 ✔           ✘             ✘              ✘            ✘           ✘          ✔         ✘         ✘         ✘         ✔        ✘       ✔        ✘       ✘      ✘      ✘        ✘         ✘
     /// ```
     pub fn has_permission(&self, permission: &Permission) -> bool {
         match (self, permission) {
             // Admin: alles
             (Role::Admin, _) => true,
 
-            // Arzt: patients (read/write), doctors (read),
-            //       appointments (read/write/book/cancel), medications (read/write)
+            // Arzt: patients (read/write/create/delete), doctors (read),
+            //       appointments (read/write/book/cancel), medications (read/write),
+            //       documents (read)
             (Role::Arzt, Permission::PatientRead) => true,
             (Role::Arzt, Permission::PatientWrite) => true,
             (Role::Arzt, Permission::PatientCreate) => true,
+            (Role::Arzt, Permission::PatientDelete) => true,
             (Role::Arzt, Permission::DoctorRead) => true,
             (Role::Arzt, Permission::AppointmentRead) => true,
             (Role::Arzt, Permission::AppointmentWrite) => true,
@@ -542,13 +557,14 @@ impl Role {
             (Role::Arzt, Permission::AppointmentCancel) => true,
             (Role::Arzt, Permission::MedicationRead) => true,
             (Role::Arzt, Permission::MedicationWrite) => true,
+            (Role::Arzt, Permission::DocumentRead) => true,
 
             // Pflege: patients (read), appointments (read), medications (read)
             (Role::Pflege, Permission::PatientRead) => true,
             (Role::Pflege, Permission::AppointmentRead) => true,
             (Role::Pflege, Permission::MedicationRead) => true,
 
-            // Rezeption: patients (read/create), appointments (create/cancel)
+            // Rezeption: patients (read/create), appointments (book/cancel)
             (Role::Rezeption, Permission::PatientRead) => true,
             (Role::Rezeption, Permission::PatientCreate) => true,
             (Role::Rezeption, Permission::AppointmentBook) => true,
@@ -557,6 +573,16 @@ impl Role {
             // Viewer: patients (read), appointments (read)
             (Role::Viewer, Permission::PatientRead) => true,
             (Role::Viewer, Permission::AppointmentRead) => true,
+
+            // Auditor: nur Audit-Log lesen
+            (Role::Auditor, Permission::AuditRead) => true,
+
+            // LLM-Agent: read-only Zugang zu Patienten, Terminen, Medikamenten, Dokumenten
+            // (für Assistenzfunktionen, keine Schreibrechte)
+            (Role::LlmAgent, Permission::PatientRead) => true,
+            (Role::LlmAgent, Permission::AppointmentRead) => true,
+            (Role::LlmAgent, Permission::MedicationRead) => true,
+            (Role::LlmAgent, Permission::DocumentRead) => true,
 
             _ => false,
         }
@@ -611,10 +637,22 @@ pub enum Permission {
     MedicationRead,
     /// Medikamente schreiben (anlegen + aktualisieren)
     MedicationWrite,
-    /// Administrations-Endpunkte (User-Verwaltung, Audit-Log)
-    Admin,
+    /// Dokument lesen (Patienten-Dokumente)
+    DocumentRead,
+    /// Dokument schreiben (Patienten-Dokumente)
+    DocumentWrite,
+    /// Export: Datenexport für Patienten (DSGVO Art. 20)
+    Export,
+    /// Import: Datenimport
+    Import,
+    /// Konfiguration lesen
+    ConfigRead,
+    /// Konfiguration schreiben (nur Admin)
+    ConfigWrite,
     /// Audit-Log lesen
     AuditRead,
+    /// Administrations-Endpunkte (User-Verwaltung)
+    Admin,
 }
 
 impl std::fmt::Display for Permission {
@@ -624,6 +662,8 @@ impl std::fmt::Display for Permission {
             Permission::PatientWrite => "patient.write",
             Permission::PatientCreate => "patient.create",
             Permission::PatientDelete => "patient.delete",
+            Permission::DocumentRead => "document.read",
+            Permission::DocumentWrite => "document.write",
             Permission::DoctorRead => "doctor.read",
             Permission::DoctorWrite => "doctor.write",
             Permission::AppointmentRead => "appointment.read",
@@ -632,8 +672,12 @@ impl std::fmt::Display for Permission {
             Permission::AppointmentCancel => "appointment.cancel",
             Permission::MedicationRead => "medication.read",
             Permission::MedicationWrite => "medication.write",
-            Permission::Admin => "admin",
+            Permission::Export => "data.export",
+            Permission::Import => "data.import",
+            Permission::ConfigRead => "config.read",
+            Permission::ConfigWrite => "config.write",
             Permission::AuditRead => "audit.read",
+            Permission::Admin => "admin",
         };
         f.write_str(s)
     }

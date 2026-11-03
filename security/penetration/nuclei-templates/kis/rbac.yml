@@ -1,0 +1,101 @@
+id: kis-rbac
+info:
+  name: KIS RBAC Violation
+  severity: high
+  tags: rbac,authorization,kis
+  description: Testet RBAC-Verletzungen (Rollen-Eskalation, Berechtigungen)
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/admin/config"
+      - "{{BaseURL}}/api/v1/admin/users"
+      - "{{BaseURL}}/api/v1/admin/audit"
+    
+    headers:
+      Authorization: "Bearer {{VIEWER_TOKEN}}"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "config"
+          - "users"
+          - "audit"
+        condition: and
+
+  - method: POST
+    path:
+      - "{{BaseURL}}/api/v1/patients"
+    
+    body: |
+      {"name":"test","address":"test"}
+    
+    headers:
+      Authorization: "Bearer {{VIEWER_TOKEN}}"
+      Content-Type: "application/json"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+          - 201
+      - type: word
+        words:
+          - "id"
+          - "created"
+        condition: and
+
+  - method: DELETE
+    path:
+      - "{{BaseURL}}/api/v1/patients/1"
+    
+    headers:
+      Authorization: "Bearer {{NURSE_TOKEN}}"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+          - 204
+      - type: word
+        words:
+          - "deleted"
+          - "success"
+        condition: and
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/audit"
+    
+    headers:
+      Authorization: "Bearer {{DOCTOR_TOKEN}}"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "audit"
+          - "logs"
+        condition: and
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/patients"
+    
+    headers:
+      Authorization: "Bearer {{NURSE_TOKEN}}"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "patients"
+          - "all"
+        condition: and

@@ -294,6 +294,46 @@ pub struct SecurityConfig {
     pub audit: AuditConfig,
     pub rate_limit: RateLimitConfig,
     pub encryption: EncryptionConfig,
+    /// TLS-Konfiguration (Task 5.1)
+    pub tls: TlsConfig,
+}
+
+/// TLS-Konfiguration (Task 5.1)
+///
+/// Zertifikat, Key und CA-Bundle aus ENV-Variablen:
+/// - `KIS_TLS_CERT`: Pfad zum Server-Zertifikat (PEM)
+/// - `KIS_TLS_KEY`:  Pfad zum Private Key (PEM)
+/// - `KIS_TLS_CA`:   Pfad zum CA-Bundle (PEM, optional — nur bei mTLS)
+///
+/// Wenn `KIS_TLS_CERT` und `KIS_TLS_KEY` gesetzt sind, startet der
+/// axum-Server mit TLS 1.3 (rustls). Andernfalls HTTP (nur für Entwicklung).
+#[derive(Debug, Deserialize, Clone)]
+pub struct TlsConfig {
+    /// ENV-Variable, aus der der Zertifikat-Pfad gelesen wird
+    pub cert_env: String,
+    /// ENV-Variable, aus der der Key-Pfad gelesen wird
+    pub key_env: String,
+    /// ENV-Variable, aus der der CA-Bundle-Pfad gelesen wird (optional)
+    pub ca_env: String,
+    /// HSTS-Header max-age in Sekunden (Standard: 1 Jahr = 31536000)
+    pub hsts_max_age: u64,
+    /// HSTS: includeSubDomains
+    pub hsts_include_subdomains: bool,
+    /// HSTS: preload
+    pub hsts_preload: bool,
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            cert_env: "KIS_TLS_CERT".into(),
+            key_env: "KIS_TLS_KEY".into(),
+            ca_env: "KIS_TLS_CA".into(),
+            hsts_max_age: 31536000,
+            hsts_include_subdomains: true,
+            hsts_preload: true,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -320,6 +360,7 @@ impl Default for SecurityConfig {
             audit: AuditConfig::default(),
             rate_limit: RateLimitConfig::default(),
             encryption: EncryptionConfig::default(),
+            tls: TlsConfig::default(),
         }
     }
 }

@@ -1,0 +1,64 @@
+id: kis-idor
+info:
+  name: KIS Insecure Direct Object Reference
+  severity: high
+  tags: idor,authorization,kis
+  description: Testet IDOR-Schwachstellen (Patienten, Termine, Dokumente)
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/patients/1"
+      - "{{BaseURL}}/api/v1/patients/2"
+      - "{{BaseURL}}/api/v1/patients/3"
+    
+    headers:
+      Authorization: "Bearer {{ACCESS_TOKEN}}"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "id"
+          - "name"
+        condition: and
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/appointments/1"
+      - "{{BaseURL}}/api/v1/appointments/2"
+      - "{{BaseURL}}/api/v1/appointments/3"
+    
+    headers:
+      Authorization: "Bearer {{ACCESS_TOKEN}}"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "id"
+          - "patient_id"
+        condition: and
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/documents/1"
+      - "{{BaseURL}}/api/v1/documents/2"
+      - "{{BaseURL}}/api/v1/documents/3"
+    
+    headers:
+      Authorization: "Bearer {{ACCESS_TOKEN}}"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "id"
+          - "content"
+        condition: and

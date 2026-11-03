@@ -1,0 +1,35 @@
+id: kis-tls
+info:
+  name: KIS TLS Configuration
+  severity: medium
+  tags: tls,ssl,kis
+  description: Testet TLS-Konfiguration (Protokolle, Zertifikate, HSTS)
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "Strict-Transport-Security"
+        condition: and
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "max-age=31536000"
+          - "includeSubDomains"
+          - "preload"
+        condition: and

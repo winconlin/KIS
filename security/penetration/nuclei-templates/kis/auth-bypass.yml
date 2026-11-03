@@ -1,0 +1,70 @@
+id: kis-auth-bypass
+info:
+  name: KIS Auth Bypass
+  severity: critical
+  tags: auth,bypass,kis
+  description: Testet Auth-Bypass-Möglichkeiten (JWT, Session, Header)
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/patients"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "patients"
+          - "data"
+        condition: and
+
+  - method: POST
+    path:
+      - "{{BaseURL}}/api/v1/auth/login"
+    
+    body: |
+      {"username":"test","password":"wrong"}
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "token"
+        condition: and
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/patients"
+    
+    headers:
+      Authorization: "Bearer invalid-token"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "patients"
+        condition: and
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/patients"
+    
+    headers:
+      X-Forwarded-User: "admin"
+      X-Role: "admin"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "patients"
+        condition: and

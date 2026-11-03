@@ -1,0 +1,83 @@
+id: kis-info-leak
+info:
+  name: KIS Information Leakage
+  severity: medium
+  tags: infoleak,version,kis
+  description: Testet Informationslecks (Version, Debug, Stack Traces)
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+      - "{{BaseURL}}/health"
+      - "{{BaseURL}}/metrics"
+      - "{{BaseURL}}/debug"
+      - "{{BaseURL}}/admin"
+      - "{{BaseURL}}/.env"
+      - "{{BaseURL}}/.git/config"
+      - "{{BaseURL}}/robots.txt"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "version"
+          - "kiss"
+          - "debug"
+          - "config"
+          - "secret"
+        condition: and
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "endpoints"
+          - "routes"
+          - "swagger"
+        condition: and
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/patients"
+    
+    headers:
+      Accept: "application/json"
+    
+    matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        words:
+          - "stack"
+          - "trace"
+          - "panic"
+          - "error"
+        condition: and
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/patients"
+    
+    headers:
+      X-Debug: "true"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "debug"
+          - "query"
+          - "sql"
+        condition: and

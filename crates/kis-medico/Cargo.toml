@@ -36,3 +36,12 @@ reqwest = { workspace = true }
 
 # KIS-Kern
 kis-core = { workspace = true }
+
+# KIS-Datenmodelle (Zielformate für den FHIR→KIS-Import)
+kis-patients = { workspace = true }
+kis-doctors = { workspace = true }
+kis-appointments = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+tokio = { workspace = true }

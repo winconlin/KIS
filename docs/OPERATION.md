@@ -1,6 +1,117 @@
 # KIS — Betrieb und Wiederherstellung
 
-Stand: 02.11.2026 · Technische Abläufe für Testinstanzen
+Stand: 03.11.2026 · Technische Abläufe für Testinstanzen
+
+## Backup: 3-2-1-Regel (Task 5.12)
+
+### 3-2-1-Regel
+
+| Regel | Umsetzung |
+|-------|-----------|
+| **3 Kopien** | 1. Produktion (PostgreSQL Primary), 2. Backup-Server (lokal), 3. Offsite (Cloud) |
+| **2 Medien** | 1. PostgreSQL `pg_dump` (logisch), 2. Disk-Image (physisch, optional) |
+| **1 Offsite** | Cloud (verschlüsselt, AES-256-GCM) |
+
+### Backup-Plan
+
+| Typ | Häufigkeit | Uhrzeit | Aufbewahrung |
+|-----|------------|---------|--------------|
+| **Voll-Backup** | Wöchentlich | Sonntag 02:00 | 12 Monate |
+| **Inkrementell** | Täglich | 02:00 | 30 Tage |
+| **Jährlich** | Jährlich | 01.01., 02:00 | 5 Jahre |
+
+### Verschlüsselung
+
+- **Algorithmus**: AES-256-GCM
+- **Key**: Aus ENV-Variable `KIS_BACKUP_KEY` (nicht im Code, nicht im Repo)
+- **Key-Management**: HashiCorp Vault / AWS Secrets Manager
+- **Key-Rotation**: Jährlich (mit Datenmigration)
+
+### Offsite-Backup (Cloud)
+
+| Parameter | Wert |
+|-----------|------|
+| **Provider** | [AWS S3 / Azure Blob / GCP Storage] |
+| **Region** | EU (eu-central-1 / eu-central-2) |
+| **Verschlüsselung** | AES-256-GCM (Client-seitig) + Server-seitig (Provider) |
+| **Retention** | 5 Jahre (jährlich), 12 Monate (wöchentlich), 30 Tage (täglich) |
+| **Lifecycle** | Automatische Löschung nach Retention-Ende |
+
+### Restore-Test
+
+**Monatlich** (dokumentiert):
+
+1. Voll-Backup vom letzten Sonntag auswählen
+2. Entschlüsseln und Integrität prüfen (SHA-256)
+3. Restore in Testinstanz
+4. Funktionstests: Login, Patientensuche, Audit-Log
+5. Ergebnis dokumentieren: `restore_test_$(date +%Y-%m).md`
+
+**Inhalt des Reports:**
+- Datum, Zeit
+- Backup-Datei (Name, Größe, Hash)
+- Restore-Dauer
+- Datenkonsistenz (Zeilenzahlen, Prüfsummen)
+- Funktionstests (bestanden/gescheitert)
+- Probleme und Maßnahmen
+
+### Backup-Skript
+
+```bash
+#!/bin/bash
+# KIS Backup — 3-2-1-Regel
+# Aufruf: cron 0 2 * * * /opt/kis/scripts/backup.sh
+
+set -euo pipefail
+
+BACKUP_DIR="/var/lib/kis-backup"
+DATE=$(date +%Y%m%d_%H%M)
+FULL_BACKUP="/tmp/kis_full_${DATE}.sql"
+INCR_BACKUP="/tmp/kis_incr_${DATE}.sql"
+
+# Voll-Backup (wöchentlich, Sonntag)
+if [ "$(date +%u)" -eq 7 ]; then
+    pg_dump -h localhost -U kis -F c -f "$FULL_BACKUP" kis_db
+    age --recipient "$BACKUP_RECIPIENT" -o "$BACKUP_DIR/kis_full_${DATE}.age" "$FULL_BACKUP"
+    sha256sum "$BACKUP_DIR/kis_full_${DATE}.age" > "$BACKUP_DIR/kis_full_${DATE}.age.sha256"
+    rm -f "$FULL_BACKUP"
+    
+    # Offsite (Cloud)
+    aws s3 cp "$BACKUP_DIR/kis_full_${DATE}.age" s3://kis-backup/full/
+    aws s3 cp "$BACKUP_DIR/kis_full_${DATE}.age.sha256" s3://kis-backup/full/
+fi
+
+# Inkrementell (täglich)
+pg_dump -h localhost -U kis -F c --data-only -f "$INCR_BACKUP" kis_db
+age --recipient "$BACKUP_RECIPIENT" -o "$BACKUP_DIR/kis_incr_${DATE}.age" "$INCR_BACKUP"
+sha256sum "$BACKUP_DIR/kis_incr_${DATE}.age" > "$BACKUP_DIR/kis_incr_${DATE}.age.sha256"
+rm -f "$INCR_BACKUP"
+
+# Offsite (Cloud)
+aws s3 cp "$BACKUP_DIR/kis_incr_${DATE}.age" s3://kis-backup/incremental/
+aws s3 cp "$BACKUP_DIR/kis_incr_${DATE}.age.sha256" s3://kis-backup/incremental/
+
+# Retention (30 Tage)
+find "$BACKUP_DIR" -name "kis_incr_*.age" -mtime +30 -delete
+find "$BACKUP_DIR" -name "kis_incr_*.age.sha256" -mtime +30 -delete
+```
+
+### Backup-Monitoring
+
+- **Alerting**: Backup-Fehler → Alert (E-Mail, Slack)
+- **Monitoring**: Backup-Größe, Dauer, letzter erfolgreicher Backup
+- **Reporting**: Wöchensicherungsreport (E-Mail an IT-Leitung)
+
+### Backup-Notfall
+
+**Bei Datenverlust:**
+
+1. Letztes gescheitertes Backup identifizieren
+2. Restore in Testinstanz
+3. Datenverlust quantifizieren (Zeitrahmen, betroffene Daten)
+4. Incident-Response-Plan starten (Level 3)
+5. Restore in Produktion (nach Freigabe)
+6. Datenverlust dokumentieren und melden (DSGVO Art. 33)
 
 ## Erreichbarkeit und Logs
 
