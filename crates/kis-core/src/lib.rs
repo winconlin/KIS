@@ -15,10 +15,14 @@
 //! sind separate Crates im Workspace. Der Binary-Crate `kis-app`
 //! merge-t deren Router.
 
+pub mod cache;
 pub mod config;
 pub mod db;
 pub mod models;
+pub mod query_optimizer;
+pub mod rate_limit;
 pub mod security;
+pub mod validation;
 
 /// Version des KIS (aus Cargo.toml)
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

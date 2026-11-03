@@ -26,6 +26,7 @@
 use std::sync::Arc;
 
 use axum::{extract::Path, routing::get, Json, Router};
+use base64::Engine;
 use sqlx::Row;
 
 use chrono::{DateTime, Utc};
@@ -262,7 +263,6 @@ impl XdsServer {
         req: &SubmissionRequest,
     ) -> Result<SubmissionResponse, XdsError> {
         // 1. Inhalt dekodieren
-        use base64::Engine;
         let engine = base64::engine::general_purpose::STANDARD;
         let content = engine
             .decode(&req.content_base64)

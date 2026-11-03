@@ -175,14 +175,18 @@ async fn login_handler(
         .create_refresh_token(&user_id.to_string())
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal(&e.to_string()))))?;
 
-    // 5. Audit-Log
+    // 5. Audit-Log (Hash-Chain)
     let _ = state
         .security
         .log_audit(
+            &state.db.read_pool,
             &user_id.to_string(),
             "auth",
             "login",
-            Some(serde_json::json!({ "email": req.email })),
+            None,
+            Some(&serde_json::json!({ "email": req.email })),
+            None,
+            None,
         )
         .await;
 
@@ -218,11 +222,11 @@ async fn refresh_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     // Refresh-Token verifizieren
     match state.security.verify_token(&req.refresh_token) {
-        Ok(claims) => {
+        Ok((user_id, role)) => {
             // Neues Access-Token erzeugen
             let access_token = state
                 .security
-                .create_access_token(&claims.sub, &claims.role)
+                .create_access_token(&user_id, &role.to_string())
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal(&e.to_string()))))?;
 
             Ok(Json(serde_json::json!({

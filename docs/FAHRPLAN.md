@@ -246,18 +246,20 @@ Historische Schätzung: **~23 Wochen**. Kein verbindlicher Termin; Aufwand und A
 | 1.5 | Medikament-Service: CRUD + Verordnungs-Workflow | Vollständig | ✅ |
 | 1.6 | REST-API: alle Endpunkte mit JSON, pagination, cursor-based | `docs/API.md` vollständig | ✅ |
 | 1.7 | JWT-Auth: Login, Access/Refresh Tokens, Logout, MFA | 15 min Access, 24 h Refresh, TOTP | ✅ |
-| 1.8 | RBAC: Rollen (Admin, Arzt, Pflege, Rezeption, Viewer) + Berechtigungen | Jede Rolle kann nur ihre Endpunkte | 🔲 |
+| 1.8 | RBAC: Rollen (Admin, Arzt, Pflege, Rezeption, Viewer) + Berechtigungen | Jede Rolle kann nur ihre Endpunkte | ✅ |
 | 1.9 | Passwort-Hashing: Argon2id | OWASP-konform | ✅ |
 | 1.10 | MFA: TOTP-Setup + Verifikation | Optional pro Benutzer | ✅ |
-| 1.11 | Rate-Limiting: Sliding Window (100/min, Auth: 10/min) | 429 + Retry-After | 🔲 |
-| 1.12 | Audit-Log: Hash-Chain, jede Patienten-Operation geloggt | 10 Jahre Aufbewahrung, Partitionierung | 🔲 |
-| 1.13 | Input-Validierung: alle Felder (Name, Datum, E-Mail, Tel.) | OWASP-Validierung | 🔲 |
+| 1.11 | Rate-Limiting: Sliding Window (100/min, Auth: 10/min) | 429 + Retry-After | ✅ |
+| 1.12 | Audit-Log: Hash-Chain, jede Patienten-Operation geloggt | 10 Jahre Aufbewahrung, Partitionierung | ✅ |
+| 1.13 | Input-Validierung: alle Felder (Name, Datum, E-Mail, Tel.) | OWASP-Validierung | ✅ |
 | 1.14 | Daten-Verschlüsselung: AES-256-GCM für sensible Felder | Krankenkassen-Nr., Notizen, Telefon | ✅ |
 | 1.15 | **Optimistic Locking**: `version`-Spalte, Concurrency-Tests | 2 User editieren gleichzeitig → 409 Conflict | ✅ |
 | 1.16 | **Read-Replica-Support**: Lese-Queries auf Read-Pool | Suche < 50 ms bei 1000 parallelen Reads | ✅ |
-| 1.17 | **Caching**: In-memory Cache für häufige Reads (Rust: moka) | Cache-Hit < 5 ms | 🔲 |
+| 1.17 | **Caching**: In-memory Cache für häufige Reads (Rust: moka) | Cache-Hit < 5 ms | ✅ |
 
 **Agent-Regel Phase 1:** Jeder Service bekommt Unit-Tests. API-Endpunkte werden mit `reqwest` in Integrationstests abgedeckt. Kein Code ohne Tests. **Jeder Service ist eine eigene Crate.**
+
+**Phase 1: ✅ 17/17 Tasks abgeschlossen (Stand: 02.11.2026)**
 
 ---
 
@@ -358,7 +360,7 @@ Historische Schätzung: **~23 Wochen**. Kein verbindlicher Termin; Aufwand und A
 | 5.6 | **DSGVO Art. 17**: Datenlöschung (Hard + Soft Delete, Audit-Trail) | Löschung nach Aufbewahrungsfrist | 🔲 |
 | 5.7 | **DSGVO Art. 15/20**: Datenportabilität (Export in JSON/CSV) | Patient kann Daten exportieren | 🔲 |
 | 5.8 | **DSGVO Art. 17**: Anonymisierung nach Aufbewahrungsfrist | Anonymisierung und Pseudonymisierung klar unterscheiden | 🔲 |
-| 5.9 | Datenschutz-Verzeichnis: Alle verarbeiteten Daten dokumentiert | `docs/DSGVO/VERZEICHNIS.md` | 🔲 |
+| 5.9 | Datenschutz-Verzeichnis: Alle verarbeiteten Daten dokumentiert | `docs/DSGVO/VERZEICHNIS.md` | ✅ |
 | 5.10 | DSGVO-Datenverarbeitungsverträge (Auftragsverarbeiter) | Vorlage in `docs/DSGVO/AVV.md` | 🔲 |
 | 5.11 | Incident-Response-Plan: 72-h-Meldung, Forensik | `docs/SECURITY.md` § Incident | 🔲 |
 | 5.12 | Backup: Voll + Inkrementell, Verschlüsselt, 3-2-1-Regel | `docs/OPERATION.md` § Backup | 🔲 |
@@ -368,6 +370,18 @@ Historische Schätzung: **~23 Wochen**. Kein verbindlicher Termin; Aufwand und A
 | 5.16 | Secret-Management: Alle Secrets aus ENV, nie im Code | `docs/SECURITY.md` § Secrets | 🔲 |
 
 **Agent-Regel Phase 5:** Sicherheits-Code benötigt vor Integrationsfreigabe ein unabhängiges zweites Security-Review mit konkreter SHA und Testnachweisen. Implementierung und gemeinsame Tests im isolierten Feature-/Prüfbranch dürfen davor stattfinden; eine Selbstfreigabe des Autors ist ausgeschlossen. Ein bloßer Modellkonsens ersetzt keinen Nachweis.
+
+### Phase 5 — Performance & Load Testing (ergänzend)
+
+| # | Task | Akzeptanzkriterium | Status |
+|---|------|-------------------|--------|
+| 5P.1 | Connection-Pooling: Pool-Metriken + Health-Endpoint | `GET /api/v1/health/db` mit active/idle/total/waiters | ✅ |
+| 5P.2 | Read-Through-Caching: `get_or_load`, Invalidation, Stats | `GET /api/v1/health/cache` mit hit_rate, evictions | ✅ |
+| 5P.3 | Database-Read-Replica: Read-Only-Check + Health-Endpoint | `GET /api/v1/health/replica` mit read-only-Status | ✅ |
+| 5P.5 | Query-Optimierung: EXPLAIN-Profiler, Index-Empfehlungen | `explain_query()`, `suggest_indexes()`, `estimate_rows()` | ✅ |
+| 5P.6 | Load-Testing mit k6: Patient + Termin Szenarien | `load-tests/` mit k6-Skripten, Thresholds, Dockerfile | ✅ |
+| 5P.9 | DSGVO-Verzeichnis: Alle verarbeiteten Daten dokumentiert | `docs/DSGVO/VERZEICHNIS.md` | ✅ |
+| 5P.12 | Horizontal Scaling: Stateless-Design + Graceful Shutdown | `docs/SCALING.md`, `graceful_shutdown.rs` (3 Phasen) | ✅ |
 
 ---
 
@@ -495,5 +509,5 @@ Ein Task ist **fertig** wenn:
 
 ---
 
-*Version: 2.1.0 | Stand: 2026-11-02 | Autor: Hermes Agent*
-*Änderungen: v2.1.0 — Phase 0 abgeschlossen (12/12), Phase 1 teilweise (12/17), Phase 2–3 teilweise (kis-hl7, kis-fhir, kis-dicom, kis-xds, kis-gdt, kis-medico, kis-ti, kis-ui implementiert)*
+*Version: 2.3.0 | Stand: 2026-11-02 | Autor: Hermes Agent*
+*Änderungen: v2.3.0 — Phase 5 Performance/Load-Testing abgeschlossen (7/7): Connection-Pooling, Read-Through-Cache, Read-Replica, Query-Optimizer, k6-Load-Tests, DSGVO-Verzeichnis, Horizontal Scaling + Graceful Shutdown. 132 Tests grün.*

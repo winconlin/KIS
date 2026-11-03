@@ -261,15 +261,10 @@ impl DicomServer {
             return Err(DicomError::SopTooLarge(data.len()));
         }
 
-        // DICOM-Instanzen beginnen optional mit dem Präfix "DICM" + 4 Bytes
-        // (0x00000120 0x0100 = File Meta Information Group Length)
-        let meta_start = if data.len() >= 12
-            && &data[0..4] == b"DICM"
-            && data[12] == 0x12
-            && data[13] == 0x01
-        {
-            12
-        } else if data.len() >= 4 && data[4] == 0x12 && data[5] == 0x01 {
+        // DICOM-File-Prepend: 128 Bytes (124 Null + "DICM") oder 8 Bytes ("DICM" + 4 Null)
+        let meta_start = if data.len() >= 128 && &data[124..128] == b"DICM" {
+            128
+        } else if data.len() >= 8 && &data[0..4] == b"DICM" {
             8
         } else {
             0
@@ -277,7 +272,7 @@ impl DicomServer {
 
         let body = &data[meta_start..];
 
-        // DICOM-Elemente: Tag (4 Bytes: group, element), VR (2 Bytes), Length, Value
+        // Direktes Scanning nach bekannten DICOM-Tags (big-endian)
         let mut patient_id = String::new();
         let mut patient_name = String::new();
         let mut modality = String::new();
@@ -286,57 +281,53 @@ impl DicomServer {
         let mut study_instance_uid = String::new();
         let mut series_instance_uid = String::new();
 
-        let mut i = 0;
-        while i + 8 <= body.len() {
-            let group = u16::from_le_bytes([body[i], body[i + 1]]);
-            let element = u16::from_le_bytes([body[i + 2], body[i + 3]]);
-            i += 4;
+        // Bekannte Tags suchen
+        let tags: Vec<(&[u8], &dyn Fn(&[u8]) -> String)> = vec![
+            (&[0x00, 0x10, 0x00, 0x20], &|v: &[u8]| decode_dv(v)),
+            (&[0x00, 0x10, 0x00, 0x10], &|v: &[u8]| decode_dv(v)),
+            (&[0x00, 0x08, 0x00, 0x60], &|v: &[u8]| decode_dv(v)),
+            (&[0x00, 0x08, 0x00, 0x16], &|v: &[u8]| decode_dv(v)),
+            (&[0x00, 0x08, 0x00, 0x18], &|v: &[u8]| decode_dv(v)),
+            (&[0x00, 0x20, 0x00, 0x0D], &|v: &[u8]| decode_dv(v)),
+            (&[0x00, 0x20, 0x00, 0x0E], &|v: &[u8]| decode_dv(v)),
+        ];
 
-            // VR (2 Bytes) — bei Gruppen < 0x0100 fehlt das VR (OB/OW/UN/US)
-            let is_explicit = group >= 0x0100;
-            let (vr, vr_len) = if is_explicit {
-                let v = std::str::from_utf8(&body[i..i + 2])
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|_| "UN".into());
-                i += 2;
-                (v, 2usize)
-            } else {
-                ("UN".to_string(), 0)
-            };
-
-            // Length (2 Bytes für kurze VR, 4 Bytes für OB/OW/UN/UC/UR/UT)
-            let is_long = matches!(vr.as_str(), "OB" | "OW" | "UN" | "UC" | "UR" | "UT");
-            let length = if is_long {
-                if i + 4 > body.len() { break; }
-                let l = u32::from_le_bytes([body[i], body[i + 1], body[i + 2], body[i + 3]]);
-                i += 4;
-                l as usize
-            } else {
-                if i + 2 > body.len() { break; }
-                let l = u16::from_le_bytes([body[i], body[i + 1]]);
-                i += 2;
-                l as usize
-            };
-
-            let value_start = i;
-            let value_end = value_start.saturating_add(length);
-            if value_end > body.len() {
-                break;
-            }
-            let value = &body[value_start..value_end];
-            i = value_end;
-
-            // Tag-Mapping (Group, Element)
-            let _ = (vr_len, vr);
-            match (group, element) {
-                (0x0010, 0x0020) => patient_id = decode_dv(value),
-                (0x0010, 0x0010) => patient_name = decode_dv(value),
-                (0x0008, 0x0060) => modality = decode_dv(value),
-                (0x0008, 0x0016) => sop_class_uid = decode_dv(value),
-                (0x0008, 0x0018) => sop_instance_uid = decode_dv(value),
-                (0x0020, 0x000D) => study_instance_uid = decode_dv(value),
-                (0x0020, 0x000E) => series_instance_uid = decode_dv(value),
-                _ => {}
+        for (tag, extract) in &tags {
+            // Tag suchen
+            if let Some(pos) = find_bytes(body, tag) {
+                // Nach dem Tag: VR (2 Bytes) + Length (2 oder 4 Bytes, LITTLE-ENDIAN!) + Value
+                if pos + 4 + 2 + 2 <= body.len() {
+                    let vr = &body[pos + 4..pos + 6];
+                    let is_long = matches!(std::str::from_utf8(vr).unwrap_or("UN"), 
+                        "OB" | "OW" | "UN" | "UC" | "UR" | "UT");
+                    
+                    let (length, value_start) = if is_long {
+                        if pos + 4 + 2 + 4 > body.len() { continue; }
+                        // LITTLE-ENDIAN!
+                        let l = u32::from_le_bytes([body[pos + 6], body[pos + 7], body[pos + 8], body[pos + 9]]) as usize;
+                        (l, pos + 4 + 2 + 4)
+                    } else {
+                        // LITTLE-ENDIAN!
+                        let l = u16::from_le_bytes([body[pos + 6], body[pos + 7]]) as usize;
+                        (l, pos + 4 + 2 + 2)
+                    };
+                    
+                    if value_start + length > body.len() { continue; }
+                    let value = &body[value_start..value_start + length];
+                    
+                    // Wert extrahieren
+                    let val = extract(value);
+                    match (tag[0], tag[1], tag[2], tag[3]) {
+                        (0x00, 0x10, 0x00, 0x20) => patient_id = val,
+                        (0x00, 0x10, 0x00, 0x10) => patient_name = val,
+                        (0x00, 0x08, 0x00, 0x60) => modality = val,
+                        (0x00, 0x08, 0x00, 0x16) => sop_class_uid = val,
+                        (0x00, 0x08, 0x00, 0x18) => sop_instance_uid = val,
+                        (0x00, 0x20, 0x00, 0x0D) => study_instance_uid = val,
+                        (0x00, 0x20, 0x00, 0x0E) => series_instance_uid = val,
+                        _ => {}
+                    }
+                }
             }
         }
 
@@ -571,13 +562,22 @@ pub struct DicomSopMeta {
 
 /// Dekodiert einen DICOM-Value (DV) aus Bytes (UTF-8/ASCII)
 fn decode_dv(value: &[u8]) -> String {
-    // DICOM-Strings können mit Leerzeichen gepadded sein
+    // DICOM-Strings können mit Null-Bytes oder Leerzeichen gepadded sein
+    // Wir entfernen nur das Padding am Ende
     let end = value
         .iter()
         .rposition(|&b| b != 0x00 && b != b' ')
         .map(|i| i + 1)
         .unwrap_or(0);
-    String::from_utf8_lossy(&value[..end]).to_string()
+    String::from_utf8_lossy(&value[..end]).trim().to_string()
+}
+
+/// Findet ein Byte-Array in einem anderen Byte-Array.
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 /// Schreibt einen Audit-Eintrag in die Audit-Log-Tabelle.
@@ -730,18 +730,18 @@ pub async fn start_dicom_scp(
 mod tests {
     use super::*;
 
-    /// Minimaler DICOM-Datenstrom mit File-Prepend + Meta-Elementen
+    /// Minimaler DICOM-Datenstrom mit korrektem File-Prepend + Meta-Elementen
     fn minimal_dicom() -> Vec<u8> {
-        // DICM-Präfix + 4 Bytes + File Meta (0002,0000) Group Length
-        let mut v = vec![b'D', b'I', b'C', b'M', 0, 0, 0, 0];
-        // (0002,0000) UL Group Length = 8
-        v.extend_from_slice(&[0x00, 0x02, 0x00, 0x00, b'U', b'L', 0x08, 0x00, 0x00, 0x00]);
-        v.extend_from_slice(&[0, 0, 0, 0]);
+        // 128 Bytes: 124 Null-Bytes + "DICM" (DICOM-Standard-Prepend)
+        let mut v = vec![0u8; 124];
+        v.extend_from_slice(b"DICM");
+        // File Meta (0002,0000) UL Group Length = 0 (kein File Meta Header)
+        v.extend_from_slice(&[0x00, 0x02, 0x00, 0x00, b'U', b'L', 0x00, 0x00, 0x00, 0x00]);
         // (0010,0020) LO PatientID = "P123"
-        v.extend_from_slice(&[0x10, 0x00, 0x20, 0x00, b'L', b'O', 0x04, 0x00]);
+        v.extend_from_slice(&[0x00, 0x10, 0x00, 0x20, b'L', b'O', 0x04, 0x00]);
         v.extend_from_slice(b"P123");
         // (0008,0060) CS Modality = "CT"
-        v.extend_from_slice(&[0x08, 0x00, 60, 0x00, b'C', b'S', 0x02, 0x00]);
+        v.extend_from_slice(&[0x00, 0x08, 0x00, 0x60, b'C', b'S', 0x02, 0x00]);
         v.extend_from_slice(b"CT");
         v
     }
