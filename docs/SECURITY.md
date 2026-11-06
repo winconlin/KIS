@@ -1,5 +1,8 @@
 # KIS — Sicherheit
 
+> **Hinweis (06.11.2026):** Teile dieses Dokuments beschreiben den entfernten SQLite-Prototyp oder ein Zielbild. Maßgeblich für den Ist-Zustand sind [INSTALLATION](INSTALLATION.md), [API](API.md), [DATABASE](DATABASE.md) und [REVIEW_STATUS](REVIEW_STATUS.md).
+
+
 Stand: 03.11.2026 · Entwicklungsprototyp
 
 Dieses Dokument beschreibt vorhandene Maßnahmen und offene Anforderungen. Es ist kein Nachweis einer DSGVO-, MDR-, ISO-27001- oder Schnittstellenzertifizierung.

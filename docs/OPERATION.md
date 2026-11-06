@@ -1,5 +1,8 @@
 # KIS — Betrieb und Wiederherstellung
 
+> **Hinweis (06.11.2026):** Teile dieses Dokuments beschreiben den entfernten SQLite-Prototyp oder ein Zielbild. Maßgeblich für den Ist-Zustand sind [INSTALLATION](INSTALLATION.md), [API](API.md), [DATABASE](DATABASE.md) und [REVIEW_STATUS](REVIEW_STATUS.md).
+
+
 Stand: 03.11.2026 · Technische Abläufe für Testinstanzen
 
 ## Backup: 3-2-1-Regel (Task 5.12)

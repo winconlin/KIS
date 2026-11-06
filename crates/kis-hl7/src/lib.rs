@@ -27,7 +27,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
-use chrono::{DateTime, Datelike, Utc};
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tracing::{debug, error, info, warn};
 
@@ -240,7 +240,7 @@ impl Hl7Server {
     /// Startet den MLLP-Listener und akzeptiert Verbindungen.
     ///
     /// Läuft bis der Shutdown-Signal-Channel einen Wert empfängt.
-    pub async fn start(mut self, mut shutdown_rx: mpsc::Receiver<()>) -> anyhow::Result<()> {
+    pub async fn start(self, mut shutdown_rx: mpsc::Receiver<()>) -> anyhow::Result<()> {
         let addr = format!("0.0.0.0:{}", self.port);
         let listener = TcpListener::bind(&addr).await?;
         info!(
@@ -290,7 +290,7 @@ impl Hl7Server {
         }
 
         let first_line = raw
-            .split(|c| c == '\r' || c == '\n')
+            .split(['\r', '\n'])
             .next()
             .ok_or(Hl7Error::EmptyMessage)?;
 
@@ -300,7 +300,7 @@ impl Hl7Server {
 
         // Segmente aufteilen
         let segment_lines: Vec<&str> = raw
-            .split(|c| c == '\r' || c == '\n')
+            .split(['\r', '\n'])
             .filter(|line| !line.trim().is_empty())
             .collect();
 
@@ -704,9 +704,11 @@ pub async fn start_mllp_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Datelike;
 
     /// Beispiel ADT^A01 Nachricht
-    const ADT_A01: &str = "MSH|^~\\&|CGM_MEDICO|MEDICO|KIS|KIS|20261101120000||ADT^A01|A0100001|P|2.5\n\
+    const ADT_A01: &str =
+        "MSH|^~\\&|CGM_MEDICO|MEDICO|KIS|KIS|20261101120000||ADT^A01|A0100001|P|2.5\n\
         EVN|A01|20261101120000\n\
         PID|1||123456789^^^MRN^MR||MUSTER^MAX^^^^||19800115|M\n\
         NK1|1|MUSTER^HANNA^^^^||MOTHER\n\
@@ -718,13 +720,14 @@ mod tests {
         assert_eq!(msg.msg_type, "ADT^A01"); // MSH-9
         assert_eq!(msg.msg_id, "A0100001"); // MSH-10
         assert!(msg.segment("PID").is_some());
-        assert_eq!(
-            msg.patient_id(),
-            Some("123456789^^^MRN^MR".to_string())
-        );
+        assert_eq!(msg.patient_id(), Some("123456789^^^MRN^MR".to_string()));
         assert!(msg.segment("NK1").is_some());
         assert_eq!(msg.segments_of("OBX").len(), 1);
-        assert!(msg.timestamp.year() == 2026, "timestamp: {:?}", msg.timestamp);
+        assert!(
+            msg.timestamp.year() == 2026,
+            "timestamp: {:?}",
+            msg.timestamp
+        );
     }
 
     #[test]

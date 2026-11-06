@@ -13,11 +13,12 @@
 [Unit]
 Description=KIS — Krankenhaus-Informations-System
 Documentation=file:///data/docs/INSTALLATION.md
-After=network.target postgresql.target
-Wants=postgresql.target
-# Startet erst wenn PostgreSQL erreichbar ist
-Requires=network-online.target
-After=network-online.target
+# Lokale Datenbank optional; bei entfernter DB genügt network-online.
+After=network-online.target postgresql.service
+Wants=network-online.target
+# Neustart-Begrenzung gehört in [Unit]
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -43,8 +44,6 @@ TimeoutStopSec=30
 # Neustart bei Crash (max 5x in 5 Minuten)
 Restart=on-failure
 RestartSec=5
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # --- Ressourcen-Limits (tausende User) ---
 # Open-Files: 200+ DB-Connections + HTTP-Sockets
@@ -53,7 +52,8 @@ LimitNPROC=4096
 
 # --- Security-Härtung (Hardening) ---
 # Read-only Dateisystem (nur /data, /data/logs, /data/exports beschreibbar)
-ReadWritePaths=/data/data /data/logs /data/exports
+# "-": fehlende Pfade verhindern den Start nicht
+ReadWritePaths=-/data/logs -/data/exports
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -66,11 +66,11 @@ ProtectControlGroups=true
 ProtectClock=true
 ProtectHostname=true
 ProtectProc=invisible
-ProtectKernelLogs=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 LockPersonality=true
-MemoryDenyWriteExecute=false  # Rust: kein JIT, kann true sein
+# Rust: kein JIT nötig (Inline-Kommentare sind in Units nicht erlaubt)
+MemoryDenyWriteExecute=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 SystemCallArchitectures=native

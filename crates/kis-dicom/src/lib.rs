@@ -28,6 +28,8 @@
 //! produktionsreife TCP-Schicht implementiert; die binäre PDU-Decodierung
 //! folgt dem DICOM-Part-8-Standard.
 
+#![allow(clippy::type_complexity)]
+
 use std::sync::Arc;
 
 use axum::Json;
@@ -217,7 +219,9 @@ impl DicomServer {
     pub async fn start(&self, mut shutdown_rx: mpsc::Receiver<()>) -> Result<(), DicomError> {
         let listener = TcpListener::bind(format!("0.0.0.0:{}", self.port))
             .await
-            .map_err(|e| DicomError::Storage(format!("Bind auf Port {} fehlgeschlagen: {}", self.port, e)))?;
+            .map_err(|e| {
+                DicomError::Storage(format!("Bind auf Port {} fehlgeschlagen: {}", self.port, e))
+            })?;
         info!(port = self.port, ae = %self.ae_title, "DICOM SCP gestartet");
 
         loop {
@@ -298,23 +302,34 @@ impl DicomServer {
                 // Nach dem Tag: VR (2 Bytes) + Length (2 oder 4 Bytes, LITTLE-ENDIAN!) + Value
                 if pos + 4 + 2 + 2 <= body.len() {
                     let vr = &body[pos + 4..pos + 6];
-                    let is_long = matches!(std::str::from_utf8(vr).unwrap_or("UN"), 
-                        "OB" | "OW" | "UN" | "UC" | "UR" | "UT");
-                    
+                    let is_long = matches!(
+                        std::str::from_utf8(vr).unwrap_or("UN"),
+                        "OB" | "OW" | "UN" | "UC" | "UR" | "UT"
+                    );
+
                     let (length, value_start) = if is_long {
-                        if pos + 4 + 2 + 4 > body.len() { continue; }
+                        if pos + 4 + 2 + 4 > body.len() {
+                            continue;
+                        }
                         // LITTLE-ENDIAN!
-                        let l = u32::from_le_bytes([body[pos + 6], body[pos + 7], body[pos + 8], body[pos + 9]]) as usize;
+                        let l = u32::from_le_bytes([
+                            body[pos + 6],
+                            body[pos + 7],
+                            body[pos + 8],
+                            body[pos + 9],
+                        ]) as usize;
                         (l, pos + 4 + 2 + 4)
                     } else {
                         // LITTLE-ENDIAN!
                         let l = u16::from_le_bytes([body[pos + 6], body[pos + 7]]) as usize;
                         (l, pos + 4 + 2 + 2)
                     };
-                    
-                    if value_start + length > body.len() { continue; }
+
+                    if value_start + length > body.len() {
+                        continue;
+                    }
                     let value = &body[value_start..value_start + length];
-                    
+
                     // Wert extrahieren
                     let val = extract(value);
                     match (tag[0], tag[1], tag[2], tag[3]) {
@@ -343,7 +358,11 @@ impl DicomServer {
     }
 
     /// Speichert eine DICOM-Instanz auf Disk + in der Datenbank.
-    pub async fn store_sop(&self, meta: &DicomSopMeta, data: &[u8]) -> Result<DicomSop, DicomError> {
+    pub async fn store_sop(
+        &self,
+        meta: &DicomSopMeta,
+        data: &[u8],
+    ) -> Result<DicomSop, DicomError> {
         // 1. Datei auf Disk schreiben
         let dir = format!(
             "{}/{}",
@@ -454,7 +473,7 @@ impl DicomServer {
             format!("WHERE {}", conditions.join(" AND "))
         };
 
-        let sql = format!(
+        let _sql = format!(
             r#"SELECT id, sop_class_uid, sop_instance_uid, patient_id, patient_name,
                       modality, study_instance_uid, series_instance_uid,
                       storage_path, size_bytes, created_at
@@ -596,7 +615,11 @@ async fn audit_entry(
            VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)"#,
     )
     .bind(actor)
-    .bind(data.get("action").and_then(|v| v.as_str()).unwrap_or("UNKNOWN"))
+    .bind(
+        data.get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("UNKNOWN"),
+    )
     .bind(data)
     .bind(&hash)
     .bind(&prev_hash)
@@ -646,12 +669,13 @@ async fn handle_connection(
             // A-ASSOC-RQ: Client möchte Assoziation — mit A-ASSOC-AC antworten
             0x01 => {
                 info!("DICOM A-ASSOC-RQ erhalten");
-                // A-ASSOC-AC (PDU-Typ 0x02) senden (vereinfacht: 4-Byte-Header + Typ)
-                let mut ac = vec![0u8; 4];
-                ac[4] = 0; // placeholder
-                // Vereinfachte A-ASSOC-AC-Antwort
-                let response = vec![0u8; 8];
-                stream.write_all(&response).await?;
+                // Die Assoziationsverhandlung ist NICHT implementiert. Statt
+                // einer ungültigen Pseudo-Antwort wird ein normgerechtes
+                // A-ABORT (PS3.8 9.3.8, PDU-Typ 0x07) gesendet und die
+                // Verbindung beendet.
+                let abort: [u8; 10] = [0x07, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00];
+                stream.write_all(&abort).await?;
+                return Ok(());
             }
             // DIMSE (C-STORE, C-FIND, C-MOVE): PDU-Typ 0x01 mit DIMSE-Command
             // Hier: C-STORE verarbeiten

@@ -1,5 +1,8 @@
 # KIS — Architektur
 
+> **Hinweis (06.11.2026):** Teile dieses Dokuments beschreiben den entfernten SQLite-Prototyp oder ein Zielbild. Maßgeblich für den Ist-Zustand sind [INSTALLATION](INSTALLATION.md), [API](API.md), [DATABASE](DATABASE.md) und [REVIEW_STATUS](REVIEW_STATUS.md).
+
+
 Stand: 02.11.2026. Dieses Dokument trennt den aktiven Prototyp vom geplanten Ausbau.
 
 ## Aktiver Root-Build

@@ -1,289 +1,147 @@
-//! KIS — Krankenhaus-Informations-System
+//! KIS — Krankenhaus-Informations-System: API-Server.
 //!
-//! Main Binary: Startet den API-Server und alle aktivierten Module.
-//!
-//! Modularer Aufbau:
-//! - Jedes Modul ist eine eigene Crate
-//! - `kis-app` merge-t die Router aller Module
-//! - Neues Modul = neue Crate + 1 Zeile in `api.rs`
-//!
-//! KIS ist der VOLLSTÄNDIGE ERSATZ für CGM MEDICO.
+//! Startreihenfolge: Konfiguration → Logging → Secrets prüfen →
+//! PostgreSQL verbinden und migrieren → Router → HTTP/TLS-Server.
+//! Jeder Fehler bricht den Start ab (kein stiller Fallback).
 
 use std::sync::Arc;
-use kis_core::db::Database;
-use tokio::signal;
-use tracing::{info, warn};
+use std::time::Duration;
 
-mod api;
-mod graceful_shutdown;
-mod tls;
+use kis_app::{api, graceful_shutdown::GracefulShutdown, tls};
+use tracing::{info, warn};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // --- 1. Konfiguration laden ---
     let config = kis_core::config::AppConfig::load()?;
-    info!(host = %config.server.host, port = config.server.port, "Config geladen");
 
-    // --- 2. Logging initialisieren (JSON Production / Pretty Dev) ---
-    // Log-Level aus Config, überschreibbar per RUST_LOG
-    let log_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| {
-            tracing_subscriber::EnvFilter::new(
-                format!("kis_core={},kis_patients={},kis_doctors={},kis_appointments={},kis_medications={},sqlx=warn",
-                    config.logging.level, config.logging.level, config.logging.level,
-                    config.logging.level, config.logging.level),
-            )
-        });
-
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new(format!("{},sqlx=warn", config.logging.level))
+    });
     if config.logging.format == "json" {
         tracing_subscriber::fmt()
-            .with_env_filter(log_filter)
+            .with_env_filter(filter)
             .json()
-            .with_target(true)
             .init();
     } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(log_filter)
-            .with_target(true)
-            .init();
+        tracing_subscriber::fmt().with_env_filter(filter).init();
     }
-
     info!(version = env!("CARGO_PKG_VERSION"), "KIS startet");
 
-    // --- 3. Datenbank verbinden (PostgreSQL, Connection-Pooling) ---
-    // Task 5.3: Getrennte Pool-Größen, wenn ein separater Read-Pool konfiguriert ist.
-    let db = kis_core::db::Database::connect_pools(
-        &config.database.write_url,
-        config.database.read_url.as_deref(),
-        config.database.pool_size,
-        config.database.read_max_connections,
-    )
-    .await?;
-    let db = Arc::new(db);
-    info!("PostgreSQL verbunden (Migrations ausgeführt)");
+    // Secrets zuerst prüfen: ohne gültige Schlüssel keine DB-Verbindung.
+    let security = Arc::new(kis_core::security::Security::new(&config.security)?);
 
-    // --- 4. Security initialisieren (JWT, AES-256-GCM, Audit-Log) ---
-    let security = kis_core::security::Security::new(&config.security)?;
-    let security = Arc::new(security);
-    info!("Security-Subsystem initialisiert");
-
-    // --- 5. Phase 1: Module initialisieren ---
-    info!("Patient-Service initialisiert");
-    info!("Arzt-Service initialisiert");
-    info!("Termin-Service initialisiert");
-    info!("Medikament-Service initialisiert");
-
-    // Phase 2–3: Schnittstellen & Integrationen (noch Stubs)
-    // HL7, FHIR, DICOM, XDS, GDT, MEDICO, Telematik, GUI
-
-    // --- 5a. Rate-Limiter initialisieren (Task 1.11) ---
-    let rate_limiter = Arc::new(
-        kis_core::rate_limit::SlidingWindowRateLimiter::new(&config.security.rate_limit),
+    let migrate_separately = match config.database.migration_url.as_deref() {
+        Some(url) => {
+            kis_core::db::Database::migrate(url).await?;
+            true
+        }
+        None => {
+            warn!("database.migration_url nicht gesetzt — Migrationen über die Laufzeitverbindung (nur Entwicklung)");
+            false
+        }
+    };
+    let db = Arc::new(
+        kis_core::db::Database::connect_pools_opts(
+            &config.database.write_url,
+            config.database.read_url.as_deref(),
+            config.database.pool_size,
+            config.database.read_max_connections,
+            !migrate_separately,
+        )
+        .await?,
     );
-    info!(
-        normal_per_min = config.security.rate_limit.normal_per_min,
-        auth_per_min = config.security.rate_limit.auth_per_min,
-        "Rate-Limiter initialisiert"
-    );
+    info!("PostgreSQL verbunden");
 
-    // --- 5b. In-Memory-Cache initialisieren (Task 1.17) ---
+    let rate_limiter = Arc::new(kis_core::rate_limit::SlidingWindowRateLimiter::new(
+        &config.security.rate_limit,
+    ));
     let cache = Arc::new(kis_core::cache::EntityCache::new(&config.cache));
-    info!(
-        ttl_seconds = config.cache.ttl_seconds,
-        max_entries = config.cache.max_entries,
-        "In-Memory-Cache initialisiert (moka)"
-    );
 
-    // --- 6. API-Router bauen (merged alle Module) ---
-    // Graceful Shutdown initialisieren (Task 5.12):
-    // - Phase 1: Shutdown-Flag → Middleware lehnt neue Requests mit 503 ab
-    // - Phase 2: axum serve() wird über watch-Channel beendet, in-flight
-    //            Requests werden bis shutdown_timeout_seconds abgewartet
-    // - Phase 3: DB-Pools werden geschlossen
-    // - Phase 4: Clean Exit
-    let shutdown = Arc::new(graceful_shutdown::GracefulShutdown::new(
+    let shutdown = Arc::new(GracefulShutdown::new(
         config.server.shutdown_timeout_seconds,
     ));
-    let state = api::AppState::new(config.clone(), db.clone(), security, rate_limiter, cache);
-    let app = api::build_router(state);
-    // Shutdown-Middleware auf den gesamten Router legen
-    let app = graceful_shutdown::router_with_shutdown(app, &shutdown);
+    let state = api::AppState::new(config.clone(), db.clone(), security, rate_limiter, cache)?;
+    let mut app = api::build_router(state);
+    app = kis_app::graceful_shutdown::router_with_shutdown(app, &shutdown);
 
-    // --- 7. TLS 1.3 vorbereiten (Task 5.1) ---
     let tls_config = tls::build_server_config(&config.security.tls)?;
-    let hsts_value = Arc::new(tls::hsts_header(&config.security.tls));
-
-    // --- 8. Server starten ---
-    let addr = format!("{}:{}", config.server.host, config.server.port);
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-
-    match &tls_config {
-        Some(_) => info!(%addr, hsts = %*hsts_value, "KIS listening (TLS 1.3, rustls)"),
-        None => info!(%addr, "KIS listening (HTTP — TLS nicht konfiguriert, nur für Entwicklung!)"),
+    if tls_config.is_some() {
+        let hsts = axum::http::HeaderValue::from_str(&tls::hsts_header(&config.security.tls))?;
+        app = app.layer(axum::middleware::from_fn(
+            move |req: axum::extract::Request, next: axum::middleware::Next| {
+                let hsts = hsts.clone();
+                async move {
+                    let mut res = next.run(req).await;
+                    res.headers_mut().insert("Strict-Transport-Security", hsts);
+                    res
+                }
+            },
+        ));
     }
 
-    // Server ausführen: TLS oder HTTP, beide mit Graceful Shutdown
-    if let Some(tls_server_config) = tls_config {
-        run_server_tls(listener, app, shutdown, db, tls_server_config, hsts_value).await?;
-    } else {
-        run_server_http(listener, app, shutdown, db).await?;
+    let addr: std::net::SocketAddr =
+        format!("{}:{}", config.server.host, config.server.port).parse()?;
+    let handle = axum_server::Handle::new();
+
+    // SIGINT/SIGTERM → 503 für neue Requests, dann geordnetes Beenden.
+    {
+        let handle = handle.clone();
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            wait_for_signal().await;
+            shutdown.trigger();
+            shutdown.notify_axum_shutdown();
+            handle.graceful_shutdown(Some(shutdown.timeout()));
+        });
     }
 
-    info!("KIS shut down cleanly");
-    Ok(())
-}
-
-/// HSTS-Middleware: Fügt `Strict-Transport-Security` Header hinzu (Task 5.1).
-fn add_hsts_header(app: axum::Router, hsts_value: Arc<String>) -> axum::Router {
-    use axum::{extract::Request, middleware::Next, response::Response};
-
-    async fn hsts_middleware(
-        hsts_value: Arc<String>,
-        mut req: Request,
-        next: Next,
-    ) -> Result<Response, axum::http::StatusCode> {
-        // HSTS-Header in den Request-Extensions für die Antwort
-        req.extensions_mut().insert(HstsValue(hsts_value.clone()));
-        let mut response = next.run(req).await;
-        response
-            .headers_mut()
-            .insert("Strict-Transport-Security", hsts_value.parse().unwrap());
-        Ok(response)
-    }
-
-    #[derive(Clone)]
-    struct HstsValue(Arc<String>);
-
-    app.layer(axum::middleware::from_fn_with_state(
-        hsts_value,
-        hsts_middleware,
-    ))
-}
-
-/// TLS-Server starten (Task 5.1) mit tokio-rustls und Graceful Shutdown.
-async fn run_server_tls(
-    listener: tokio::net::TcpListener,
-    app: axum::Router,
-    shutdown: Arc<graceful_shutdown::GracefulShutdown>,
-    db: Arc<Database>,
-    tls_server_config: Arc<rustls::ServerConfig>,
-    hsts_value: Arc<String>,
-) -> anyhow::Result<()> {
-    let timeout = shutdown.timeout();
-    let mut shutdown_rx = shutdown.shutdown_receiver();
-
-    // Signal-Task: SIGTERM/SIGINT → Graceful Shutdown
-    let signal_task = tokio::spawn({
-        let shutdown_clone = Arc::clone(&shutdown);
-        async move {
-            let mut term_signal = match signal::unix::signal(signal::unix::SignalKind::terminate()) {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!(error = %e, "Fehler beim Registrieren des SIGTERM-Handlers");
-                    return;
-                }
-            };
-            tokio::select! {
-                res = signal::ctrl_c() => {
-                    if let Err(e) = res {
-                        warn!(error = %e, "Fehler beim SIGINT-Empfang");
-                        return;
-                    }
-                    info!("SIGINT empfangen — Graceful Shutdown gestartet");
-                }
-                _ = term_signal.recv() => {
-                    info!("SIGTERM empfangen — Graceful Shutdown gestartet");
-                }
-            }
-            shutdown_clone.trigger();
-            shutdown_clone.notify_axum_shutdown();
+    let service = app.into_make_service_with_connect_info::<std::net::SocketAddr>();
+    match tls_config {
+        Some(cfg) => {
+            info!(%addr, "KIS lauscht (TLS 1.3)");
+            let rustls = axum_server::tls_rustls::RustlsConfig::from_config(cfg);
+            axum_server::bind_rustls(addr, rustls)
+                .handle(handle)
+                .serve(service)
+                .await?;
         }
-    });
-
-    // TLS-Listener: Akzeptiert TCP und führt TLS-Handshake durch
-    let acceptor = tokio_rustls::TlsAcceptor::from(tls_server_config);
-    let tls_listener = tokio_rustls::TlsServer::new(acceptor, listener);
-
-    // HSTS-Header-Middleware (Task 5.1)
-    let app = add_hsts_header(app, hsts_value);
-
-    let serve_future = axum::serve(tls_listener, app).with_graceful_shutdown(async move {
-        let _ = shutdown_rx
-            .wait_for(|v| *v)
-            .await
-            .inspect_err(|e| {
-                warn!(error = %e, "watch-Channel geschlossen vor Shutdown");
-            });
-    });
-
-    let serve_result = tokio::time::timeout(timeout, serve_future).await;
-    signal_task.abort();
-
-    match serve_result {
-        Ok(Ok(())) => info!("Graceful Shutdown: axum serve() abgeschlossen"),
-        Ok(Err(e)) => warn!(error = %e, "Graceful Shutdown: axum serve() mit Fehler beendet"),
-        Err(_) => warn!("Graceful Shutdown: Timeout erreicht — erzwinge Beendigung"),
+        None => {
+            warn!(%addr, "KIS lauscht ohne TLS — nur hinter TLS-Proxy oder lokal betreiben");
+            axum_server::bind(addr)
+                .handle(handle)
+                .serve(service)
+                .await?;
+        }
     }
 
-    shutdown.close_pools(&db).await;
+    let close = shutdown.close_pools(&db);
+    if tokio::time::timeout(Duration::from_secs(10), close)
+        .await
+        .is_err()
+    {
+        warn!("DB-Pools konnten nicht rechtzeitig geschlossen werden");
+    }
+    info!("KIS beendet");
     Ok(())
 }
 
-/// HTTP-Server starten (nur für Entwicklung) mit Graceful Shutdown.
-async fn run_server_http(
-    listener: tokio::net::TcpListener,
-    app: axum::Router,
-    shutdown: Arc<graceful_shutdown::GracefulShutdown>,
-    db: Arc<Database>,
-) -> anyhow::Result<()> {
-    let timeout = shutdown.timeout();
-    let mut shutdown_rx = shutdown.shutdown_receiver();
-
-    let signal_task = tokio::spawn({
-        let shutdown_clone = Arc::clone(&shutdown);
-        async move {
-            let mut term_signal = match signal::unix::signal(signal::unix::SignalKind::terminate()) {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!(error = %e, "Fehler beim Registrieren des SIGTERM-Handlers");
-                    return;
-                }
-            };
-            tokio::select! {
-                res = signal::ctrl_c() => {
-                    if let Err(e) = res {
-                        warn!(error = %e, "Fehler beim SIGINT-Empfang");
-                        return;
-                    }
-                    info!("SIGINT empfangen — Graceful Shutdown gestartet");
-                }
-                _ = term_signal.recv() => {
-                    info!("SIGTERM empfangen — Graceful Shutdown gestartet");
-                }
+async fn wait_for_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let term = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
             }
-            shutdown_clone.trigger();
-            shutdown_clone.notify_axum_shutdown();
+            Err(_) => std::future::pending::<()>().await,
         }
-    });
-
-    let serve_future = axum::serve(listener, app).with_graceful_shutdown(async move {
-        let _ = shutdown_rx
-            .wait_for(|v| *v)
-            .await
-            .inspect_err(|e| {
-                warn!(error = %e, "watch-Channel geschlossen vor Shutdown");
-            });
-    });
-
-    let serve_result = tokio::time::timeout(timeout, serve_future).await;
-    signal_task.abort();
-
-    match serve_result {
-        Ok(Ok(())) => info!("Graceful Shutdown: axum serve() abgeschlossen"),
-        Ok(Err(e)) => warn!(error = %e, "Graceful Shutdown: axum serve() mit Fehler beendet"),
-        Err(_) => warn!("Graceful Shutdown: Timeout erreicht — erzwinge Beendigung"),
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => info!("SIGINT empfangen"),
+        _ = term => info!("SIGTERM empfangen"),
     }
-
-    shutdown.close_pools(&db).await;
-    Ok(())
 }

@@ -23,7 +23,6 @@
 //!   [`Security::log_audit`] (hash-chained).
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use sqlx::Row;
@@ -31,7 +30,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::db::Database;
-use super::security::{AuthUser, Permission, Role, Security};
+use super::security::{AuthUser, Permission, Security};
 
 /// Standard-Aufbewahrungsfrist: 10 Jahre nach Behandlungsende.
 pub const DEFAULT_RETENTION_YEARS: i64 = 10;
@@ -130,7 +129,7 @@ impl DataDeletionService {
     /// Soft Delete eines Patienten (DSGVO Art. 17 — Löschung, technisch
     /// als Markierung realisiert). Setzt `deleted_at = NOW()`.
     ///
-    /// Berechtigt: [`Permission::UpdatePatient`] (Ärzte/Verwaltung),
+    /// Berechtigt: [`Permission::PatientDelete`] (Ärzte/Verwaltung),
     /// d. h. jeder User, der Patienten pflegen darf.
     pub async fn soft_delete_patient(
         &self,
@@ -141,7 +140,7 @@ impl DataDeletionService {
         // 1) Bestandsprüfung
         let row = sqlx::query("SELECT deleted_at FROM patients WHERE id = $1")
             .bind(patient_id)
-            .fetch_optional(self.db.read_pool())
+            .fetch_optional(self.db.write())
             .await?
             .ok_or(DeletionError::NotFound(patient_id))?;
 
@@ -151,21 +150,22 @@ impl DataDeletionService {
         }
 
         // 2) RBAC-Check
-        if !actor.role.has_permission(&Permission::UpdatePatient) {
+        if !actor.role.has_permission(&Permission::PatientDelete) {
             return Err(DeletionError::Permission(format!(
                 "Rolle {} darf Patienten nicht löschen",
                 actor.role
             )));
         }
 
-        // 3) Soft Delete ausführen
+        // 3) Soft Delete + Audit in einer Transaktion
+        let mut tx = self.db.write().begin().await?;
         let res = sqlx::query(
             "UPDATE patients
              SET deleted_at = NOW(), updated_at = NOW(), version = version + 1
              WHERE id = $1 AND deleted_at IS NULL",
         )
         .bind(patient_id)
-        .execute(self.db.write_pool())
+        .execute(&mut *tx)
         .await?;
 
         if res.rows_affected() == 0 {
@@ -174,8 +174,8 @@ impl DataDeletionService {
 
         // 4) Audit-Log: WAS, WER, WANN, WARUM (hash-chained)
         self.security
-            .log_audit(
-                self.db.read_pool(),
+            .log_audit_tx(
+                &mut tx,
                 &actor.user_id,
                 "patient.soft_delete",
                 "patient",
@@ -188,6 +188,7 @@ impl DataDeletionService {
                 None,
             )
             .await?;
+        tx.commit().await?;
 
         tracing::info!(%patient_id, user = %actor.user_id, reason = %reason,
             "Patient soft-deleted (DSGVO Art. 17)");
@@ -212,13 +213,11 @@ impl DataDeletionService {
         confirmation: &str,
     ) -> Result<(), DeletionError> {
         // 1) Existenz- und Bestätigungs-Check
-        let row = sqlx::query(
-            "SELECT name_family, deleted_at FROM patients WHERE id = $1",
-        )
-        .bind(patient_id)
-        .fetch_optional(self.db.read_pool())
-        .await?
-        .ok_or(DeletionError::NotFound(patient_id))?;
+        let row = sqlx::query("SELECT name_family, deleted_at FROM patients WHERE id = $1")
+            .bind(patient_id)
+            .fetch_optional(self.db.write())
+            .await?
+            .ok_or(DeletionError::NotFound(patient_id))?;
 
         let name_family: String = row.get("name_family");
         let deleted_at: Option<DateTime<Utc>> = row.get("deleted_at");
@@ -235,29 +234,8 @@ impl DataDeletionService {
             ));
         }
 
-        // 3) Cascade-Delete in korrekter Reihenfolge (eine Transaktion)
-        self.cascade_delete(patient_id).await?;
-
-        // 4) Audit-Log (NACH dem Delete — die audit_logs-Tabelle wird
-        //    selbst NICHT geleert, da sie nur über entity_id referenziert
-        //    wird und den Lösch-Nachweis dauerhaft aufbewahren soll)
-        self.security
-            .log_audit(
-                self.db.read_pool(),
-                &actor.user_id,
-                "patient.hard_delete",
-                "patient",
-                Some(&patient_id.to_string()),
-                Some(&serde_json::json!({
-                    "name_family": name_family,
-                    "was_soft_deleted": deleted_at.is_some(),
-                })),
-                Some(&serde_json::json!({
-                    "irreversible": true,
-                    "confirmation": confirmation,
-                })),
-                None,
-            )
+        // 3) Cascade-Delete + Audit-Nachweis in EINER Transaktion
+        self.delete_with_audit(patient_id, actor, deleted_at.is_some(), "manual")
             .await?;
 
         tracing::warn!(%patient_id, user = %actor.user_id,
@@ -275,25 +253,56 @@ impl DataDeletionService {
     /// 3. `medications`     (patient_id FK)
     /// 4. `patients`        (Haupttabelle)
     pub async fn cascade_delete(&self, patient_id: Uuid) -> Result<(), DeletionError> {
-        let pool = self.db.write_pool().clone();
-        let mut tx = pool.begin().await?;
+        let mut tx = self.db.write().begin().await?;
+        Self::cascade_delete_tx(&mut tx, patient_id).await?;
+        tx.commit().await?;
+        tracing::info!(%patient_id, "Cascade-Delete abgeschlossen (Kind-Tabellen + Patient)");
+        Ok(())
+    }
 
+    /// Löscht Patient und Kinddaten und schreibt den Lösch-Nachweis in
+    /// derselben Transaktion. Der Nachweis enthält bewusst keine
+    /// personenbezogenen Daten (kein Name, keine Bestätigungseingabe),
+    /// da er die Löschung überdauert.
+    async fn delete_with_audit(
+        &self,
+        patient_id: Uuid,
+        actor: &AuthUser,
+        was_soft_deleted: bool,
+        trigger: &str,
+    ) -> Result<(), DeletionError> {
+        let mut tx = self.db.write().begin().await?;
+        Self::cascade_delete_tx(&mut tx, patient_id).await?;
+        self.security
+            .log_audit_tx(
+                &mut tx,
+                &actor.user_id,
+                "patient.hard_delete",
+                "patient",
+                Some(&patient_id.to_string()),
+                Some(&serde_json::json!({ "was_soft_deleted": was_soft_deleted })),
+                Some(&serde_json::json!({ "irreversible": true, "trigger": trigger })),
+                None,
+            )
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn cascade_delete_tx(
+        tx: &mut sqlx::PgConnection,
+        patient_id: Uuid,
+    ) -> Result<(), DeletionError> {
         // Reihenfolge: Kind-Tabellen zuerst, dann Haupttabelle.
         let cascade_order = CASCADE_ORDER;
         for (table, fk) in cascade_order.iter() {
             let sql = format!("DELETE FROM {table} WHERE {fk} = $1");
-            let res = sqlx::query(&sql)
-                .bind(patient_id)
-                .execute(&mut *tx)
-                .await?;
+            let res = sqlx::query(&sql).bind(patient_id).execute(&mut *tx).await?;
             if res.rows_affected() > 0 {
                 tracing::debug!(%table, %patient_id, rows = res.rows_affected(),
                     "Zeilen im Cascade-Delete entfernt");
             }
         }
-
-        tx.commit().await?;
-        tracing::info!(%patient_id, "Cascade-Delete abgeschlossen (Kind-Tabellen + Patient)");
         Ok(())
     }
 
@@ -321,7 +330,7 @@ impl DataDeletionService {
              ORDER BY last_treatment_at ASC",
         )
         .bind(retention)
-        .fetch_all(self.db.read_pool())
+        .fetch_all(self.db.write())
         .await?;
 
         let mut out = Vec::with_capacity(rows.len());
@@ -348,8 +357,11 @@ impl DataDeletionService {
             });
         }
 
-        tracing::info!(eligible = out.len(), retention_years = self.retention_years,
-            "Retention-Check abgeschlossen");
+        tracing::info!(
+            eligible = out.len(),
+            retention_years = self.retention_years,
+            "Retention-Check abgeschlossen"
+        );
         Ok(out)
     }
 
@@ -360,7 +372,10 @@ impl DataDeletionService {
     ///   `skipped_active` zurückgemeldet (Anonymisierung: Task 5.8)
     ///
     /// Rückgabe: Ergebnis der Batch-Operation.
-    pub async fn execute_deletions(&self, actor: &AuthUser) -> Result<DeletionBatchResult, DeletionError> {
+    pub async fn execute_deletions(
+        &self,
+        actor: &AuthUser,
+    ) -> Result<DeletionBatchResult, DeletionError> {
         if !actor.role.has_permission(&Permission::Admin) {
             return Err(DeletionError::Permission(
                 "Retention-Löschungen erfordern die Rolle Admin".into(),
@@ -376,8 +391,12 @@ impl DataDeletionService {
                 result.skipped_active.push(c.patient_id);
                 continue;
             }
-            let confirm = format!("retention {} {}", c.patient_id, c.patient_id);
-            match self.hard_delete_patient(c.patient_id, actor, &confirm).await {
+            // Fristbasierte Löschung: keine Namensbestätigung möglich,
+            // Berechtigung (Admin) wurde oben geprüft.
+            match self
+                .delete_with_audit(c.patient_id, actor, true, "retention")
+                .await
+            {
                 Ok(()) => {
                     result.deleted += 1;
                     result.deleted_ids.push(c.patient_id);
@@ -390,8 +409,12 @@ impl DataDeletionService {
             }
         }
 
-        tracing::info!(deleted = result.deleted, skipped = result.skipped_active.len(),
-            failures = result.failures.len(), "Retention-Löschungen ausgeführt");
+        tracing::info!(
+            deleted = result.deleted,
+            skipped = result.skipped_active.len(),
+            failures = result.failures.len(),
+            "Retention-Löschungen ausgeführt"
+        );
         Ok(result)
     }
 
@@ -404,13 +427,11 @@ impl DataDeletionService {
         &self,
         patient_id: Uuid,
     ) -> Result<Option<DeletionStatus>, DeletionError> {
-        let row = sqlx::query(
-            "SELECT deleted_at, created_at FROM patients WHERE id = $1",
-        )
-        .bind(patient_id)
-        .fetch_optional(self.db.read_pool())
-        .await?
-        .ok_or(DeletionError::NotFound(patient_id))?;
+        let row = sqlx::query("SELECT deleted_at, created_at FROM patients WHERE id = $1")
+            .bind(patient_id)
+            .fetch_optional(self.db.write())
+            .await?
+            .ok_or(DeletionError::NotFound(patient_id))?;
 
         Ok(Some(DeletionStatus {
             patient_id,
@@ -463,14 +484,17 @@ pub const CASCADE_ORDER: &[(&str, &str)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::security::Role;
     use chrono::Duration as CDur;
 
     /// Hard Delete erfordert explizite Bestätigung mit dem Familiennamen.
     #[test]
     fn test_confirmation_requires_family_name() {
-        assert!(confirmation_matches("Musterfrau", "ich bestätige: Musters
-trfrau"));
-        assert!(confirmation_matches("Musterfrau", "mustersfrau")); // case-insensitive
+        assert!(confirmation_matches(
+            "Musterfrau",
+            "ich bestätige: Musterfrau"
+        ));
+        assert!(confirmation_matches("Musterfrau", "MUSTERFRAU")); // case-insensitive
         assert!(confirmation_matches("  Becker  ", "becker")); // getrimmt
         assert!(!confirmation_matches("Musterfrau", "Mustermann"));
         assert!(!confirmation_matches("Musterfrau", "")); // leer → abgelehnt
@@ -510,7 +534,10 @@ trfrau"));
         for years in [5i64, 10, 30] {
             let retention = CDur::days(years * 365);
             let last = Utc::now() - retention - CDur::days(1);
-            assert!(last + retention < Utc::now(), "Jahre={years} müsste fällig sein");
+            assert!(
+                last + retention < Utc::now(),
+                "Jahre={years} müsste fällig sein"
+            );
         }
     }
 
@@ -524,12 +551,15 @@ trfrau"));
 
         // Alle Kind-Tabellen referenzieren patient_id
         for (table, fk) in CASCADE_ORDER.iter().take(CASCADE_ORDER.len() - 1) {
-            assert_eq!(*fk, "patient_id", "Tabelle {table} muss patient_id-FK haben");
+            assert_eq!(
+                *fk, "patient_id",
+                "Tabelle {table} muss patient_id-FK haben"
+            );
         }
 
         // Keine Kind-Tabelle nach dem Patienten
         assert_eq!(
-            tables.iter().position(|t| t == "patients").unwrap(),
+            tables.iter().position(|t| *t == "patients").unwrap(),
             tables.len() - 1
         );
 
@@ -543,7 +573,9 @@ trfrau"));
     #[test]
     fn test_error_display() {
         let id = Uuid::new_v4();
-        assert!(DeletionError::NotFound(id).to_string().contains("not found"));
+        assert!(DeletionError::NotFound(id)
+            .to_string()
+            .contains("not found"));
         assert!(DeletionError::ConfirmationRequired
             .to_string()
             .contains("confirmation"));
@@ -579,7 +611,11 @@ trfrau"));
     #[test]
     fn test_recommended_action_mapping() {
         for (is_deleted, expected) in [(true, "hard_delete"), (false, "anonymize")] {
-            let action = if is_deleted { "hard_delete" } else { "anonymize" };
+            let action = if is_deleted {
+                "hard_delete"
+            } else {
+                "anonymize"
+            };
             assert_eq!(action, expected);
         }
     }
@@ -588,11 +624,11 @@ trfrau"));
     #[test]
     fn test_hard_delete_requires_admin_role() {
         assert!(Role::Admin.has_permission(&Permission::Admin));
-        assert!(!Role::Doctor.has_permission(&Permission::Admin));
-        assert!(!Role::Nurse.has_permission(&Permission::Admin));
-        // Soft Delete darf auch Doctor (UpdatePatient)
-        assert!(Role::Doctor.has_permission(&Permission::UpdatePatient));
-        assert!(Role::Admin.has_permission(&Permission::UpdatePatient));
+        assert!(!Role::Arzt.has_permission(&Permission::Admin));
+        assert!(!Role::Pflege.has_permission(&Permission::Admin));
+        // Löschen (auch Soft Delete) ist Admin vorbehalten
+        assert!(!Role::Arzt.has_permission(&Permission::PatientDelete));
+        assert!(Role::Admin.has_permission(&Permission::PatientDelete));
     }
 
     /// RetentionCandidate: Felder sind korrekt typisiert.

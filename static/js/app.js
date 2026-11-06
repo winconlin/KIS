@@ -1038,7 +1038,7 @@
                 const type = a.type || a.reason || 'Termin';
                 const practitioner = a.practitioner || a.doctor || '—';
                 const status = a.status || 'geplant';
-                const badge = status === 'storniert'
+                const badge = (status === 'storniert' || status === 'abgesagt')
                     ? '<span class="badge badge-danger">Storniert</span>'
                     : (status === 'abgeschlossen' ? '<span class="badge badge-success">Abgeschlossen</span>'
                     : '<span class="badge badge-info">Geplant</span>');
@@ -1113,7 +1113,7 @@
             '<div class="search-bar">' +
             '<div class="filter-group">' +
             '<button class="btn btn-secondary btn-sm" id="cal-prev">‹</button>' +
-            '<span class="filter-label" id="cal-title" style="min-width:180px;text-align:center;font-weight:600;">' +
+            '<span class="filter-label cal-title" id="cal-title">' +
             monthNames[month] + ' ' + year +
             '</span>' +
             '<button class="btn btn-secondary btn-sm" id="cal-next">›</button>' +
@@ -1233,12 +1233,12 @@
                 const type = a.type || a.reason || 'Termin';
                 const practitioner = a.practitioner || a.doctor || '—';
                 const status = a.status || 'geplant';
-                const badge = status === 'storniert'
+                const badge = (status === 'storniert' || status === 'abgesagt')
                     ? '<span class="badge badge-danger">Storniert</span>'
                     : (status === 'abgeschlossen' ? '<span class="badge badge-success">Abgeschlossen</span>'
                     : '<span class="badge badge-info">Geplant</span>');
                 return '' +
-                    '<div class="timeline-item" style="margin-top:' + (parseInt((new Date(start) || new Date()).getMinutes()) / 60 * 20) + 'px">' +
+                    '<div class="timeline-item">' +
                     '<div class="timeline-time">' + escapeHtml(formatTime(start)) + (end ? ' – ' + escapeHtml(formatTime(end)) : '') + '</div>' +
                     '<div class="timeline-item-title">' + escapeHtml(type) + ' ' + badge + '</div>' +
                     '<div class="timeline-item-meta">' + escapeHtml(practitioner) + '</div>' +

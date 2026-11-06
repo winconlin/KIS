@@ -55,7 +55,7 @@ impl Encode<'_, Postgres> for DynBind {
     fn encode_by_ref(
         &self,
         buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> sqlx::encode::IsNull {
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         match self {
             DynBind::Uuid(v) => v.encode_by_ref(buf),
         }
@@ -255,36 +255,36 @@ pub struct FhirCapabilityStatement {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct FhirSoftware {
+pub struct FhirSoftware {
     name: String,
     version: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct FhirImplementation {
+pub struct FhirImplementation {
     description: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct FhirRest {
+pub struct FhirRest {
     mode: String,
     security: FhirRestSecurity,
     resource: Vec<FhirRestResource>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct FhirRestSecurity {
+pub struct FhirRestSecurity {
     extension: Vec<FhirRestSecurityExt>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct FhirRestSecurityExt {
+pub struct FhirRestSecurityExt {
     url: String,
     value_code: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct FhirRestResource {
+pub struct FhirRestResource {
     type_: String,
     interaction: Vec<FhirInteraction>,
 }
@@ -340,6 +340,7 @@ struct PatientRow {
     address_street: Option<String>,
     address_zip: Option<String>,
     address_city: Option<String>,
+    #[allow(dead_code)]
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     deleted_at: Option<DateTime<Utc>>,
@@ -368,6 +369,7 @@ struct AppointmentRow {
     end_time: DateTime<Utc>,
     reason: Option<String>,
     updated_at: DateTime<Utc>,
+    #[allow(dead_code)]
     deleted_at: Option<DateTime<Utc>>,
 }
 
@@ -394,10 +396,12 @@ fn map_patient(row: &PatientRow) -> FhirPatient {
         })
         .unwrap_or_else(|| "unknown".to_string());
 
-    let identifier = row.external_id.as_ref().map(|eid| vec![FhirIdentifier {
-        system: Some(ISIK_NAMESPACE.to_string()),
-        value: eid.clone(),
-    }]);
+    let identifier = row.external_id.as_ref().map(|eid| {
+        vec![FhirIdentifier {
+            system: Some(ISIK_NAMESPACE.to_string()),
+            value: eid.clone(),
+        }]
+    });
 
     let address = match (&row.address_street, &row.address_zip, &row.address_city) {
         (Some(street), zip, city) => Some(vec![FhirAddress {
@@ -436,16 +440,22 @@ fn map_patient(row: &PatientRow) -> FhirPatient {
         gender,
         birth_date: row.birth_date.to_string(),
         address,
-        telecom: if telecom.is_empty() { None } else { Some(telecom) },
+        telecom: if telecom.is_empty() {
+            None
+        } else {
+            Some(telecom)
+        },
         active: Some(row.deleted_at.is_none()),
     }
 }
 
 fn map_doctor(row: &DoctorRow) -> FhirPractitioner {
-    let identifier = row.external_id.as_ref().map(|eid| vec![FhirIdentifier {
-        system: Some(ISIK_NAMESPACE.to_string()),
-        value: eid.clone(),
-    }]);
+    let identifier = row.external_id.as_ref().map(|eid| {
+        vec![FhirIdentifier {
+            system: Some(ISIK_NAMESPACE.to_string()),
+            value: eid.clone(),
+        }]
+    });
 
     // specialties JSONB (z. B. ["Kardiologie","Internistin"]) + specialty TEXT
     let mut quals = Vec::new();
@@ -508,11 +518,13 @@ fn map_appointment(row: &AppointmentRow) -> FhirAppointment {
             &slug(&row.category),
             Some(&row.category),
         )],
-        service_type: row.reason.as_ref().map(|r| vec![FhirCoding::new(
-            "https://fhir.kis.de/CodeSystem/appointment-reason",
-            &slug(r),
-            Some(r),
-        )]),
+        service_type: row.reason.as_ref().map(|r| {
+            vec![FhirCoding::new(
+                "https://fhir.kis.de/CodeSystem/appointment-reason",
+                &slug(r),
+                Some(r),
+            )]
+        }),
         description: row.reason.clone(),
         start: row.start_time.to_rfc3339(),
         end: row.end_time.to_rfc3339(),
@@ -646,9 +658,6 @@ pub struct FhirState {
     pub config: AppConfig,
 }
 
-/// Typalias für Handler-Fehler
-type HandlerResult<T> = Result<Json<ApiResponse<T>>, (StatusCode, Json<ApiError>)>;
-
 // ============================================================
 // Handler: Patient
 // ============================================================
@@ -666,20 +675,30 @@ async fn patient_search(
     };
     let rows: Vec<PatientRow> = match q.after {
         Some(cursor) => {
-            sqlx::query_as(sql).bind(cursor).bind(limit).fetch_all(state.db.read()).await
+            sqlx::query_as(sql)
+                .bind(cursor)
+                .bind(limit)
+                .fetch_all(state.db.read())
+                .await
         }
-        None => sqlx::query_as(sql).bind(limit).fetch_all(state.db.read()).await,
+        None => {
+            sqlx::query_as(sql)
+                .bind(limit)
+                .fetch_all(state.db.read())
+                .await
+        }
     }
     .map_err(|e| {
         warn!(error = %e, "FHIR Patient-Search fehlgeschlagen");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Suche fehlgeschlagen")))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::internal("Suche fehlgeschlagen")),
+        )
     })?;
 
     let last_id = rows.last().map(|r| r.id);
-    let entries = rows.iter().map(|r| {
-        FhirBundleEntry {
-            full_resource: Some(serde_json::to_value(map_patient(r)).unwrap_or_default()),
-        }
+    let entries = rows.iter().map(|r| FhirBundleEntry {
+        full_resource: Some(serde_json::to_value(map_patient(r)).unwrap_or_default()),
     });
     let bundle = FhirBundle {
         resource_type: "Bundle".into(),
@@ -705,7 +724,10 @@ async fn patient_read(
     .await
     .map_err(|e| {
         warn!(error = %e, "FHIR Patient-Read fehlgeschlagen");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Lese-Fehler")))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::internal("Lese-Fehler")),
+        )
     })?;
 
     match row {
@@ -730,11 +752,12 @@ async fn patient_create(
     let given = name.given.join(" ");
 
     let new_id = Uuid::new_v4();
-    let birth = NaiveDate::parse_from_str(&fhir.birth_date, "%Y-%m-%d")
-        .map_err(|_| (
+    let birth = NaiveDate::parse_from_str(&fhir.birth_date, "%Y-%m-%d").map_err(|_| {
+        (
             StatusCode::BAD_REQUEST,
             Json(ApiError::bad_request("birth_date muss YYYY-MM-DD sein")),
-        ))?;
+        )
+    })?;
 
     let external_id = fhir
         .identifier
@@ -806,13 +829,12 @@ async fn patient_update(
     let family = name.family.clone();
     let given = name.given.join(" ");
 
-    let birth = NaiveDate::parse_from_str(&fhir.birth_date, "%Y-%m-%d")
-        .map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiError::bad_request("birth_date muss YYYY-MM-DD sein")),
-            )
-        })?;
+    let birth = NaiveDate::parse_from_str(&fhir.birth_date, "%Y-%m-%d").map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError::bad_request("birth_date muss YYYY-MM-DD sein")),
+        )
+    })?;
 
     let updated = sqlx::query(
         "UPDATE patients SET name_family = $2, name_given = $3, birth_date = $4, gender = $5, \
@@ -827,7 +849,10 @@ async fn patient_update(
     .await
     .map_err(|e| {
         warn!(error = %e, "FHIR Patient-Update fehlgeschlagen");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Update fehlgeschlagen")))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::internal("Update fehlgeschlagen")),
+        )
     })?;
 
     if updated.rows_affected() == 0 {
@@ -843,7 +868,10 @@ async fn patient_update(
         .await
         .map_err(|e| {
             warn!(error = %e, "FHIR Patient nach Update nicht lesbar");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Lese-Fehler")))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::internal("Lese-Fehler")),
+            )
         })?;
     audit(
         &state.db,
@@ -863,16 +891,18 @@ async fn patient_delete(
     State(state): State<FhirState>,
     PathExtract(id): PathExtract<Uuid>,
 ) -> Result<Json<ApiResponse<()>>, (StatusCode, Json<ApiError>)> {
-    let updated = sqlx::query(
-        "UPDATE patients SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(id)
-    .execute(state.db.write())
-    .await
-    .map_err(|e| {
-        warn!(error = %e, "FHIR Patient-Delete fehlgeschlagen");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Delete fehlgeschlagen")))
-    })?;
+    let updated =
+        sqlx::query("UPDATE patients SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL")
+            .bind(id)
+            .execute(state.db.write())
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "FHIR Patient-Delete fehlgeschlagen");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiError::internal("Delete fehlgeschlagen")),
+                )
+            })?;
     if updated.rows_affected() == 0 {
         return Err((
             StatusCode::NOT_FOUND,
@@ -933,18 +963,20 @@ async fn appointment_search(
     for b in &binds {
         query = query.bind(b);
     }
-    let rows = query.bind(limit as i32).fetch_all(state.db.read()).await.map_err(|e| {
-        warn!(error = %e, "FHIR Appointment-Search fehlgeschlagen");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError::internal("Suche fehlgeschlagen")),
-        )
-    })?;
+    let rows = query
+        .bind(limit as i32)
+        .fetch_all(state.db.read())
+        .await
+        .map_err(|e| {
+            warn!(error = %e, "FHIR Appointment-Search fehlgeschlagen");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::internal("Suche fehlgeschlagen")),
+            )
+        })?;
 
-    let entries = rows.iter().map(|r| {
-        FhirBundleEntry {
-            full_resource: Some(serde_json::to_value(map_appointment(r)).unwrap_or_default()),
-        }
+    let entries = rows.iter().map(|r| FhirBundleEntry {
+        full_resource: Some(serde_json::to_value(map_appointment(r)).unwrap_or_default()),
     });
     Ok(Json(FhirBundle {
         resource_type: "Bundle".into(),
@@ -968,7 +1000,10 @@ async fn appointment_read(
     .await
     .map_err(|e| {
         warn!(error = %e, "FHIR Appointment-Read fehlgeschlagen");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Lese-Fehler")))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::internal("Lese-Fehler")),
+        )
     })?;
     match row {
         Some(r) => Ok(Json(map_appointment(&r))),
@@ -1092,7 +1127,10 @@ async fn appointment_book(
     .await
     .map_err(|e| {
         warn!(error = %e, "FHIR Appointment $book fehlgeschlagen");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Update fehlgeschlagen")))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::internal("Update fehlgeschlagen")),
+        )
     })?;
     if updated.rows_affected() == 0 {
         return Err((
@@ -1106,7 +1144,10 @@ async fn appointment_book(
         .await
         .map_err(|e| {
             warn!(error = %e, "FHIR Appointment nach $book nicht lesbar");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Lese-Fehler")))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::internal("Lese-Fehler")),
+            )
         })?;
     audit(
         &state.db,
@@ -1135,7 +1176,10 @@ async fn appointment_cancel(
     .await
     .map_err(|e| {
         warn!(error = %e, "FHIR Appointment $cancel fehlgeschlagen");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Update fehlgeschlagen")))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::internal("Update fehlgeschlagen")),
+        )
     })?;
     if updated.rows_affected() == 0 {
         return Err((
@@ -1149,7 +1193,10 @@ async fn appointment_cancel(
         .await
         .map_err(|e| {
             warn!(error = %e, "FHIR Appointment nach $cancel nicht lesbar");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Lese-Fehler")))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::internal("Lese-Fehler")),
+            )
         })?;
     audit(
         &state.db,
@@ -1181,18 +1228,28 @@ async fn practitioner_search(
     };
     let rows: Vec<DoctorRow> = match q.after {
         Some(cursor) => {
-            sqlx::query_as(sql).bind(cursor).bind(limit).fetch_all(state.db.read()).await
+            sqlx::query_as(sql)
+                .bind(cursor)
+                .bind(limit)
+                .fetch_all(state.db.read())
+                .await
         }
-        None => sqlx::query_as(sql).bind(limit).fetch_all(state.db.read()).await,
+        None => {
+            sqlx::query_as(sql)
+                .bind(limit)
+                .fetch_all(state.db.read())
+                .await
+        }
     }
     .map_err(|e| {
         warn!(error = %e, "FHIR Practitioner-Search fehlgeschlagen");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Suche fehlgeschlagen")))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::internal("Suche fehlgeschlagen")),
+        )
     })?;
-    let entries = rows.iter().map(|r| {
-        FhirBundleEntry {
-            full_resource: Some(serde_json::to_value(map_doctor(r)).unwrap_or_default()),
-        }
+    let entries = rows.iter().map(|r| FhirBundleEntry {
+        full_resource: Some(serde_json::to_value(map_doctor(r)).unwrap_or_default()),
     });
     Ok(Json(FhirBundle {
         resource_type: "Bundle".into(),
@@ -1216,7 +1273,10 @@ async fn practitioner_read(
     .await
     .map_err(|e| {
         warn!(error = %e, "FHIR Practitioner-Read fehlgeschlagen");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Lese-Fehler")))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::internal("Lese-Fehler")),
+        )
     })?;
     match row {
         Some(r) => Ok(Json(map_doctor(&r))),
@@ -1284,31 +1344,53 @@ async fn metadata(
                 FhirRestResource {
                     type_: "Patient".into(),
                     interaction: vec![
-                        FhirInteraction { code: "read".into() },
-                        FhirInteraction { code: "search-type".into() },
-                        FhirInteraction { code: "create".into() },
-                        FhirInteraction { code: "update".into() },
-                        FhirInteraction { code: "delete".into() },
+                        FhirInteraction {
+                            code: "read".into(),
+                        },
+                        FhirInteraction {
+                            code: "search-type".into(),
+                        },
+                        FhirInteraction {
+                            code: "create".into(),
+                        },
+                        FhirInteraction {
+                            code: "update".into(),
+                        },
+                        FhirInteraction {
+                            code: "delete".into(),
+                        },
                     ],
                 },
                 FhirRestResource {
                     type_: "Appointment".into(),
                     interaction: vec![
-                        FhirInteraction { code: "read".into() },
-                        FhirInteraction { code: "search-type".into() },
-                        FhirInteraction { code: "create".into() },
+                        FhirInteraction {
+                            code: "read".into(),
+                        },
+                        FhirInteraction {
+                            code: "search-type".into(),
+                        },
+                        FhirInteraction {
+                            code: "create".into(),
+                        },
                     ],
                 },
                 FhirRestResource {
                     type_: "Practitioner".into(),
                     interaction: vec![
-                        FhirInteraction { code: "read".into() },
-                        FhirInteraction { code: "search-type".into() },
+                        FhirInteraction {
+                            code: "read".into(),
+                        },
+                        FhirInteraction {
+                            code: "search-type".into(),
+                        },
                     ],
                 },
                 FhirRestResource {
                     type_: "Organization".into(),
-                    interaction: vec![FhirInteraction { code: "search-type".into() }],
+                    interaction: vec![FhirInteraction {
+                        code: "search-type".into(),
+                    }],
                 },
             ],
         },
@@ -1369,11 +1451,7 @@ pub struct AppointmentSearchQuery {
 /// - `GET            /fhir/Organization`
 /// - `GET            /fhir/metadata`
 /// - `GET            /fhir/health`
-pub fn register_router(
-    db: Arc<Database>,
-    security: Arc<Security>,
-    config: AppConfig,
-) -> Router {
+pub fn register_router(db: Arc<Database>, security: Arc<Security>, config: AppConfig) -> Router {
     let state = FhirState {
         db,
         security,
@@ -1451,7 +1529,10 @@ mod tests {
         assert_eq!(p.gender, "male");
         assert_eq!(p.birth_date, "1980-01-15");
         assert_eq!(p.name[0].family, "Mustermann");
-        assert_eq!(p.name[0].given, vec!["Max".to_string(), "Maria".to_string()]);
+        assert_eq!(
+            p.name[0].given,
+            vec!["Max".to_string(), "Maria".to_string()]
+        );
         assert!(p.identifier.is_some());
         assert!(p.address.is_some());
         assert_eq!(p.telecom.as_ref().unwrap().len(), 2);

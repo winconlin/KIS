@@ -1,5 +1,8 @@
 # KIS — Horizontal Scaling & Stateless Design (Task 5.12)
 
+> **Hinweis (06.11.2026):** Teile dieses Dokuments beschreiben den entfernten SQLite-Prototyp oder ein Zielbild. Maßgeblich für den Ist-Zustand sind [INSTALLATION](INSTALLATION.md), [API](API.md), [DATABASE](DATABASE.md) und [REVIEW_STATUS](REVIEW_STATUS.md).
+
+
 Dieses Dokument beschreibt, warum der KIS-Server **horizontalskalierbar** ist,
 wie man ihn hinter einem Load-Balancer betreibt und wie der Graceful Shutdown
 funktioniert.

@@ -1,9 +1,10 @@
+use figment::providers::Format;
 use serde::Deserialize;
 use std::path::PathBuf;
-use figment::providers::Format;
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
+#[derive(Default)]
 pub struct AppConfig {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
@@ -17,6 +18,7 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
@@ -28,7 +30,9 @@ pub struct ServerConfig {
     pub shutdown_timeout_seconds: u64,
 }
 
-fn default_shutdown_timeout() -> u64 { 30 }
+fn default_shutdown_timeout() -> u64 {
+    30
+}
 
 impl Default for ServerConfig {
     fn default() -> Self {
@@ -42,6 +46,7 @@ impl Default for ServerConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct DatabaseConfig {
     /// PostgreSQL Write-Connection-String (oder ENV `KIS_DB_WRITE_URL` / `DATABASE_URL`)
     #[serde(default = "default_write_url")]
@@ -63,14 +68,26 @@ pub struct DatabaseConfig {
     /// Hat nur einen Effekt, wenn `read_url` gesetzt ist.
     #[serde(default)]
     pub read_max_connections: Option<u32>,
+    /// Optionale Verbindung des Schema-Eigentümers nur für Migrationen.
+    /// Gesetzt: Migrationen laufen damit, die Laufzeit-Verbindung
+    /// (`write_url`) benötigt keine DDL-Rechte. Leer: Migrationen über
+    /// `write_url` (nur Entwicklung).
+    #[serde(default)]
+    pub migration_url: Option<String>,
 }
 
 fn default_write_url() -> String {
     "postgres://kis:kis@localhost:5432/kis".into()
 }
-fn default_pool_size() -> u32 { 200 }
-fn default_acquire_timeout() -> u64 { 10 }
-fn default_idle_timeout() -> u64 { 300 }
+fn default_pool_size() -> u32 {
+    200
+}
+fn default_acquire_timeout() -> u64 {
+    10
+}
+fn default_idle_timeout() -> u64 {
+    300
+}
 
 impl Default for DatabaseConfig {
     fn default() -> Self {
@@ -81,11 +98,13 @@ impl Default for DatabaseConfig {
             acquire_timeout_seconds: default_acquire_timeout(),
             idle_timeout_seconds: default_idle_timeout(),
             read_max_connections: None,
+            migration_url: None,
         }
     }
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct UiConfig {
     pub theme: String,
     pub language: String,
@@ -103,6 +122,8 @@ impl Default for UiConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+#[derive(Default)]
 pub struct InterfaceConfig {
     pub hl7: Hl7Config,
     pub fhir: FhirConfig,
@@ -113,6 +134,7 @@ pub struct InterfaceConfig {
 
 /// CGM MEDICO Integration (FHIR R4 + OAuth 2.0 + GDT)
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct MedicoInterfaceConfig {
     pub enabled: bool,
     pub base_url: String,
@@ -173,6 +195,7 @@ impl Default for MedicoInterfaceConfig {
 
 /// Telematikinfrastruktur (eGK, ePA, eRezept, eAU, mTLS)
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct TiInterfaceConfig {
     pub enabled: bool,
     pub base_url: String,
@@ -216,19 +239,8 @@ impl TiInterfaceConfig {
     }
 }
 
-impl Default for InterfaceConfig {
-    fn default() -> Self {
-        Self {
-            hl7: Hl7Config::default(),
-            fhir: FhirConfig::default(),
-            dicom: DicomConfig::default(),
-            medico: MedicoInterfaceConfig::default(),
-            ti: TiInterfaceConfig::default(),
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct Hl7Config {
     pub enabled: bool,
     pub port: u16,
@@ -246,6 +258,7 @@ impl Default for Hl7Config {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct FhirConfig {
     pub enabled: bool,
     pub base_url: String,
@@ -263,6 +276,7 @@ impl Default for FhirConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct DicomConfig {
     pub enabled: bool,
     pub port: u16,
@@ -280,6 +294,7 @@ impl Default for DicomConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct SecurityConfig {
     /// Umgebungsvariable, aus der der JWT-Signaturschlüssel gelesen wird
     pub jwt_secret_env: String,
@@ -308,6 +323,7 @@ pub struct SecurityConfig {
 /// Wenn `KIS_TLS_CERT` und `KIS_TLS_KEY` gesetzt sind, startet der
 /// axum-Server mit TLS 1.3 (rustls). Andernfalls HTTP (nur für Entwicklung).
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct TlsConfig {
     /// ENV-Variable, aus der der Zertifikat-Pfad gelesen wird
     pub cert_env: String,
@@ -337,6 +353,7 @@ impl Default for TlsConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct AuditConfig {
     /// Aufbewahrungsfrist in Tagen — DSGVO: mindestens 3650 (10 Jahre)
     pub retention_days: u64,
@@ -344,6 +361,7 @@ pub struct AuditConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct EncryptionConfig {
     /// Umgebungsvariable, aus der der AES-256-Masterkey (Base64, 32 Bytes) gelesen wird
     pub master_key_env: String,
@@ -383,6 +401,7 @@ impl Default for EncryptionConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct LlmConfig {
     /// LLM-Provider (z. B. "openrouter")
     pub provider: String,
@@ -396,6 +415,7 @@ pub struct LlmConfig {
 
 /// Logging-Konfiguration
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct LoggingConfig {
     /// Log-Level: trace, debug, info, warn, error
     pub level: String,
@@ -412,16 +432,22 @@ pub struct LoggingConfig {
 /// Bei Überschreitung antwortet die Middleware mit HTTP 429 +
 /// `Retry-After`-Header.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct RateLimitConfig {
     /// Max. Requests pro Minute pro User (normale Endpunkte)
+    #[serde(alias = "requests_per_minute")]
     pub normal_per_min: u32,
     /// Max. Requests pro Minute pro User (Auth-Endpunkte, Login-Schutz)
+    #[serde(alias = "auth_requests_per_minute")]
     pub auth_per_min: u32,
 }
 
 impl Default for RateLimitConfig {
     fn default() -> Self {
-        Self { normal_per_min: 100, auth_per_min: 10 }
+        Self {
+            normal_per_min: 100,
+            auth_per_min: 10,
+        }
     }
 }
 
@@ -434,6 +460,7 @@ impl Default for RateLimitConfig {
 /// Bei WRITE-Queries wird der betroffene Eintrag aktiv invalidiert,
 /// damit Clients niemals veraltete Daten sehen.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct CacheConfig {
     /// TTL in Sekunden
     pub ttl_seconds: u64,
@@ -443,7 +470,10 @@ pub struct CacheConfig {
 
 impl Default for CacheConfig {
     fn default() -> Self {
-        Self { ttl_seconds: 300, max_entries: 10_000 }
+        Self {
+            ttl_seconds: 300,
+            max_entries: 10_000,
+        }
     }
 }
 
@@ -471,33 +501,68 @@ impl Default for LlmConfig {
     }
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            database: DatabaseConfig::default(),
-            ui: UiConfig::default(),
-            interfaces: InterfaceConfig::default(),
-            llm: LlmConfig::default(),
-            security: SecurityConfig::default(),
-            logging: LoggingConfig::default(),
-            cache: CacheConfig::default(),
+impl AppConfig {
+    /// Lädt die Konfiguration.
+    ///
+    /// Reihenfolge (spätere Quellen überschreiben frühere):
+    /// 1. eingebaute Standardwerte,
+    /// 2. TOML-Datei (`KIS_CONFIG`, sonst `config/kis.toml`, falls vorhanden),
+    /// 3. Umgebungsvariablen `KIS_<ABSCHNITT>__<SCHLÜSSEL>`, z. B.
+    ///    `KIS_DATABASE__WRITE_URL` oder `KIS_SERVER__PORT`.
+    pub fn load() -> anyhow::Result<Self> {
+        let explicit = std::env::var("KIS_CONFIG").ok();
+        let toml_path = explicit
+            .clone()
+            .unwrap_or_else(|| "config/kis.toml".to_string());
+        if explicit.is_some() && !std::path::Path::new(&toml_path).exists() {
+            anyhow::bail!("KIS_CONFIG zeigt auf eine nicht vorhandene Datei: {toml_path}");
         }
+        Self::load_from(Some(&toml_path))
+    }
+
+    /// Lädt mit expliziter TOML-Datei (oder ohne) und ENV-Overrides.
+    pub fn load_from(toml_path: Option<&str>) -> anyhow::Result<Self> {
+        // Standardwerte über `#[serde(default)]` auf `AppConfig`.
+        let mut figment = figment::Figment::new();
+        if let Some(path) = toml_path {
+            if std::path::Path::new(path).exists() {
+                figment = figment.merge(figment::providers::Toml::file(path));
+            }
+        }
+        figment = figment.merge(figment::providers::Env::prefixed("KIS_").split("__"));
+        let mut config = figment.extract::<AppConfig>()?;
+        // Leere Read-URL bedeutet: kein separater Read-Pool.
+        if config.database.read_url.as_deref().map(str::trim) == Some("") {
+            config.database.read_url = None;
+        }
+        if config.database.migration_url.as_deref().map(str::trim) == Some("") {
+            config.database.migration_url = None;
+        }
+        Ok(config)
     }
 }
 
-impl AppConfig {
-    pub fn load() -> anyhow::Result<Self> {
-        // TOML-Datei optional: wird nur gemergt, wenn die Datei existiert.
-        // Env-Variablen (KIS_*) ergänzen.
-        let mut figment = figment::Figment::new().merge(
-            figment::providers::Env::prefixed("KIS_").global(),
+#[cfg(test)]
+mod load_tests {
+    use super::*;
+
+    /// Die mitgelieferte Beispielkonfiguration muss sich laden lassen.
+    #[test]
+    fn shipped_config_file_parses() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/kis.toml");
+        let cfg = AppConfig::load_from(Some(path)).expect("config/kis.toml lädt");
+        assert_eq!(cfg.server.port, 8080);
+        assert!(
+            cfg.database.read_url.is_none(),
+            "leere read_url wird zu None"
         );
-        let toml_path = "config/kis.toml";
-        if std::path::Path::new(toml_path).exists() {
-            figment = figment.merge(figment::providers::Toml::file(toml_path));
-        }
-        let config = figment.extract::<AppConfig>()?;
-        Ok(config)
+        assert_eq!(cfg.security.rate_limit.auth_per_min, 10);
+        assert_eq!(cfg.security.jwt_secret_env, "KIS_JWT_SECRET");
+    }
+
+    #[test]
+    fn defaults_without_file() {
+        let cfg = AppConfig::load_from(None).unwrap();
+        assert_eq!(cfg.security.token_expiry, 900);
     }
 }

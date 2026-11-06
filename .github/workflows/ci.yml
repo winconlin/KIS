@@ -1,7 +1,7 @@
-# KIS CI/CD — Build, Test, Lint
+# KIS CI — Format, Lint, Tests (inkl. echter PostgreSQL-Integration),
+# SQL-Schema-Abgleich, Dependency-Audit, Dokumentation, Container-Build.
 #
-# Trigger: Push auf main, PRs nach main
-# Jobs: cargo check, cargo test, clippy, fmt, audit
+# Keine Prüfung ist mit continue-on-error oder "|| echo" abgeschwächt.
 
 name: CI
 
@@ -11,131 +11,98 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
 
 jobs:
-  # ---------------------------------------------------------------
-  # 1. Formatierung prüfen
-  # ---------------------------------------------------------------
-  fmt:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
-          components: rustfmt
-      - name: cargo fmt --check
-        run: cargo fmt --all -- --check
-
-  # ---------------------------------------------------------------
-  # 2. Clippy (static analysis)
-  # ---------------------------------------------------------------
-  clippy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
-  # ---------------------------------------------------------------
-  # 3. Build (Release, alle Features)
-  # ---------------------------------------------------------------
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: cargo build --release
-        run: cargo build --release --workspace
-      - name: Binary-Size
-        run: |
-          echo "## Build-Artefakt"
-          ls -lh target/release/kis 2>/dev/null || echo "kis binary nicht gefunden"
-          du -sh target/release/
-
-  # ---------------------------------------------------------------
-  # 4. Tests (Unit + Integration)
-  # ---------------------------------------------------------------
   test:
     runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: kis
-          POSTGRES_USER: kis
-          POSTGRES_PASSWORD: ***
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U kis"
-          --health-interval 10s
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 20
+    env:
+      KIS_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres
+      # Fehlende Datenbank darf nicht als bestanden gelten
+      KIS_REQUIRE_PG_TESTS: "1"
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
       - uses: Swatinem/rust-cache@v2
-      - name: Set DB URL
-        run: echo "DATABASE_URL=postgres://kis:***@localhost:5432/kis" >> $GITHUB_ENV
-      - name: cargo test
-        run: cargo test --workspace -- --test-threads=1
-      - name: Test-Report
-        if: failure()
+      - name: cargo test (Unit + PostgreSQL-Integration)
+        run: cargo test --locked --workspace
+      - name: cargo build --bins
+        run: cargo build --locked --bins
+      - name: Backup-/Restore-Tests (pg_dump + age)
         run: |
-          echo "## Fehlgeschlagene Tests"
-          cargo test --workspace -- --list 2>&1 || true
+          sudo apt-get update -q && sudo apt-get install -y -q age postgresql-client
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Least-Privilege-Rollen, Migration und SQL-Schema-Abgleich
+        env:
+          PGPASSWORD: ci-only-password
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 \
+            -v owner_pw="'ci-owner'" -v app_pw="'ci-app'" -f config/postgres/roles.sql
+          export KIS_DATABASE__MIGRATION_URL=postgres://kis_owner:ci-owner@localhost:5432/kis
+          ./target/debug/kis-admin migrate
+          python3 scripts/check_sql.py \
+            --database-url postgres://kis_app:ci-app@localhost:5432/kis \
+            --crate kis-core --crate kis-app --crate kis-patients --crate kis-doctors \
+            --crate kis-appointments --crate kis-medications --crate kis-ui
 
-  # ---------------------------------------------------------------
-  # 5. Security-Audit (cargo audit)
-  # ---------------------------------------------------------------
   audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
       - uses: Swatinem/rust-cache@v2
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-      - name: cargo audit
-        run: cargo audit
-        continue-on-error: true
+      - run: cargo install cargo-audit --locked
+      # Begründete Ausnahmen stehen in .cargo/audit.toml
+      - run: cargo audit
 
-  # ---------------------------------------------------------------
-  # 6. Integrationstests (mit PostgreSQL)
-  # ---------------------------------------------------------------
-  integration:
+  docs:
     runs-on: ubuntu-latest
-    needs: [build]
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: kis_test
-          POSTGRES_USER: kis
-          POSTGRES_PASSWORD: ***
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U kis"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Set DB URL
-        run: echo "DATABASE_URL=postgres://kis:***@localhost:5432/kis_test" >> $GITHUB_ENV
-      - name: Migrations
-        run: cargo run -p kis-core --example run_migrations 2>/dev/null || echo "Migrations: kein Beispiel vorhanden"
-      - name: Integrationstests
-        run: cargo test --workspace --test '*' 2>/dev/null || echo "Integrationstests: noch keine vorhanden"
+      - name: Dokumentations-Check
+        run: python3 scripts/check_docs.py
 
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose-Konfiguration prüfen
+        env:
+          POSTGRES_PASSWORD: x
+          KIS_OWNER_PASSWORD: x
+          KIS_APP_PASSWORD: x
+          KIS_JWT_SECRET: x
+          KIS_MASTER_KEY: x
+        run: docker compose config -q
+      - name: Image bauen
+        run: docker build -t kis:ci .
+      - name: Container-Smoke-Test (mit PostgreSQL)
+        run: python3 scripts/check_container.py --image kis:ci

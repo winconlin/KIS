@@ -1,71 +1,59 @@
 # KIS — Entwicklung
 
-Stand: 02.11.2026
+Stand: 06.11.2026
 
-Für Agenten gelten [AGENTS.md](../AGENTS.md), der [operative PostgreSQL-Auftrag](AGENTEN_AUFTRAG.md) und die [Sicherheits-Abnahme](SICHERHEITS_ABNAHME.md). Die nachfolgenden Kommandos beschreiben den aktuellen Root-Build; der operative Auftrag definiert zusätzlich die Workspace-/PostgreSQL-Prüfungen für die nächste Etappe.
+Für Agenten gelten [AGENTS.md](../AGENTS.md), der [operative Auftrag](AGENTEN_AUFTRAG.md) und die [Sicherheits-Abnahme](SICHERHEITS_ABNAHME.md).
 
-## Aktive Struktur
+## Struktur
 
-| Pfad | Rolle |
-|---|---|
-| Cargo.toml, Cargo.lock, rust-toolchain.toml | Root-Paket und reproduzierbare Toolchain-/Dependency-Auswahl |
-| src/main.rs | HTTP-Server |
-| src/bin/kis-admin.rs | Lokale Benutzeranlage |
-| src/config/, src/db/ | Konfiguration und SQLite |
-| src/security/ | Auth, Rollen, Audit, Limits, Verschlüsselung und Regressionstests |
-| src/schnittstellen/fhir/medico.rs | Separater MEDICO-Client-Prototyp |
-| migrations/ | Eingebettete, versionierte SQLx-Migrationen |
-| scripts/backup.py | Verschlüsselter Snapshot und Überprüfung |
-| tests/test_backup.py | Backup-/Restore-Regressionsfälle mit echtem age |
-| crates/ | Nicht eingebundene Vorarbeiten für die Zielarchitektur |
-| docs/ | Ist-Referenz und ausdrücklich gekennzeichneter Fahrplan |
+| Pfad | Rolle | Status |
+|---|---|---|
+| `crates/kis-app` | Server `kis`, Werkzeug `kis-admin`, Router, Auth-Middleware, TLS, Shutdown | aktiv |
+| `crates/kis-core` | Konfiguration, DB-Pools/Migrationen, Security (Tokens, Audit, Krypto), Auth, Zugriffsregeln, DSGVO-Dienste | aktiv |
+| `crates/kis-patients`, `kis-doctors`, `kis-appointments`, `kis-medications` | Fachmodule (CRUD) | aktiv |
+| `crates/kis-ui` | Auslieferung von `static/` | aktiv |
+| `crates/kis-hl7`, `kis-fhir`, `kis-dicom`, `kis-xds`, `kis-gdt`, `kis-medico`, `kis-ti` | Schnittstellen-Entwürfe | **nicht eingebunden**, Schema unvollständig |
+| `migrations/` | Eingebettete PostgreSQL-Migrationen | aktiv |
+| `config/postgres/` | Rollen- und Init-Skripte | aktiv |
+| `scripts/` | Backup, SQL-Schema-Abgleich, Doku-Check, Container-Smoke-Test | aktiv |
+| `static/` | Web-GUI | aktiv |
 
-Die Unter-Crate-Manifeste sind noch kein gültiger Workspace. Sie dürfen nicht als erfolgreich gebaute Module im Status erscheinen. Der Root-Build bleibt bis zu einer expliziten Integration die ausführbare Referenz.
+Abhängigkeiten zeigen nur von Fachmodulen und `kis-app` auf `kis-core`, nie umgekehrt.
 
-## Lokale Einrichtung
+## Sicherheitsarchitektur in Kürze
 
-Die vollständigen Schritte einschließlich Secret-Generierung und erstem Benutzer stehen in [INSTALLATION.md](INSTALLATION.md). Ein OpenRouter-Key ist für den aktuellen Serverstart weder ausreichend noch erforderlich.
+- Jede Anfrage durchläuft `auth_middleware` in `kis-app/src/api.rs`. Sie fragt [`access_policy::required_access`](../crates/kis-core/src/access_policy.rs) und lehnt unbekannte API-Routen für Nicht-Admins ab.
+- Handler erhalten den geprüften Benutzer über den Extractor `RequireRole`. Dieser prüft kein Token selbst, sondern akzeptiert nur den von der Middleware hinterlegten `AuthUser`.
+- Neue Routen: Eintrag in `access_policy.rs` **und** Test in dessen Testmodul. Schreibende Handler protokollieren mit `kis_core::security::append_audit` in derselben Transaktion.
 
 ## Prüfungen
 
+PostgreSQL für Tests lokal starten, z. B. `docker run --rm -d -p 5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16-alpine`.
+
 ```bash
-cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+export KIS_TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres
+export KIS_REQUIRE_PG_TESTS=1     # fehlende DB = Fehler statt Überspringen
+cargo test --locked --workspace
 cargo build --locked --bins
+python3 -m unittest discover -s tests -p 'test_*.py' -v      # Backup/Restore (age, pg_dump)
 python3 scripts/check_docs.py
-python3 -m unittest discover -s tests -p 'test_*.py' -v
+cargo audit                                                   # Ausnahmen: .cargo/audit.toml
 ```
 
-Die Backup-Tests benötigen age und age-keygen. Ohne diese Werkzeuge werden sie lokal übersprungen; ein solcher Skip ist kein bestandener Backup-Nachweis. In CI müssen die Werkzeuge installiert sein.
+SQL-Schema-Abgleich (alle statischen SQL-Strings werden gegen eine frisch migrierte Datenbank vorbereitet):
 
-Der Container-Job baut das Image und führt anschließend `python3 scripts/check_container.py --image kis-check` aus. Der Test verwendet ein eigenes temporäres Volume und prüft Admin-Bootstrap, Betrieb ohne root, Health, Token-Zwecke und Widerruf nach einem Neustart. Container und Volume werden danach entfernt.
+```bash
+python3 scripts/check_sql.py --database-url postgres://…/kis \
+  --crate kis-core --crate kis-app --crate kis-patients --crate kis-doctors \
+  --crate kis-appointments --crate kis-medications --crate kis-ui
+```
 
-Die Security-Regressionstests starten echte lokale HTTP-Listener und prüfen unter anderem Login/Lockout, einheitliche Pfade, Rollen, Refresh-Verwendung, dauerhaften Widerruf, atomare Rotation und Audit-Manipulation. Die Datenhandler bleiben auch im Test absichtlich HTTP 501.
+Ohne `--crate` werden auch die nicht eingebundenen Schnittstellen-Crates geprüft; dort sind derzeit Fehler bekannt.
 
-## Konventionen
+Container: `docker build -t kis:ci . && python3 scripts/check_container.py --image kis:ci` (startet eine eigene PostgreSQL-Instanz und räumt danach auf).
 
-- Neue Optionen benötigen einen tatsächlichen Verbraucher, Defaults, Validierung und Dokumentation.
-- SQL-Abfragen und Migrationen müssen dieselben Spaltennamen verwenden. Fachliche Modelle können von DB-Spalten abweichen, benötigen dann aber ein ausdrückliches Mapping.
-- Datenbankfehler dürfen bei Start/Migration nicht als bloße Warnung übersprungen werden.
-- Unfertige Handler geben einen klaren Nicht-implementiert-Status zurück.
-- Asynchrone Audit-Aufrufe müssen abgewartet und Fehler behandelt werden.
-- Geheimnisse und Patientendaten nicht in Logs, Beispielen oder Tests verwenden.
-- Für mehrschrittige Änderungen Transaktionen sowie negative Berechtigungs-/Fehlertests vorsehen.
-- Reine Formatkorrekturen brauchen keine zusätzlichen Implementierungstests.
+## Integrationstests
 
-## Migrationen
-
-[DATABASE.md](DATABASE.md) beschreibt das aktuelle Schema und die Hinweise zu zuvor manuell reparierten 002-Migrationen. Bereits angewandte Dateien nicht blind umschreiben. Neue Migrationen brauchen eine eindeutige freie Version und Tests auf leerer sowie bestehender DB.
-
-## CI und Release
-
-Die eingecheckte CI führt Rust- und Dokumentations-/Backup-Prüfungen aus. Sie ist kein Nachweis eines vergangenen erfolgreichen Releases. Ein signierter Release-/Deploy-Prozess und ein gepflegter Changelog sind weiterhin auszubauen.
-
-Branches sollen prüfbare Änderungen enthalten. Vor einem Merge sind Tests und Review erforderlich; Sicherheitsänderungen benötigen gemäß [FAHRPLAN.md](FAHRPLAN.md) ein unabhängiges zweites Review.
-
-## LLM-Entwicklung: geplant
-
-OpenRouter-Modelle sind in der Konfiguration als Entwurf aufgeführt. Eine automatische Modellrotation, gegenseitige Reviews und klinische LLM-Funktionen laufen derzeit nicht.
-
-Für einen späteren Workflow müssen Geheimnisse, Datenübertragung, Modellantworten, Kostenlimits und menschliche Freigaben gesondert geklärt werden. Pseudonymisierung allein macht Gesundheitsdaten nicht anonym oder automatisch zur externen Übermittlung geeignet.
+[`crates/kis-app/tests/api_pg.rs`](../crates/kis-app/tests/api_pg.rs) legt je Test eine eigene Datenbank an, wendet die echten Migrationen an und prüft über den echten Router unter anderem: Token-Zwecke, Rotation inklusive paralleler Wiederverwendung, Logout-Widerruf, Kontosperre, sofortige Wirkung von Rollen-/Statusänderungen, Inaktivitäts-Logout, RBAC der Fachmodule, Optimistic Locking, Doppelbuchung bei parallelen Anfragen, Export/Hard-Delete/Anonymisierung/Pseudonymisierung, Audit-Serialisierung, Append-only und Manipulationserkennung.

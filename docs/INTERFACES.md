@@ -1,5 +1,8 @@
 # KIS — Medizinische Schnittstellen
 
+> **Hinweis (06.11.2026):** Teile dieses Dokuments beschreiben den entfernten SQLite-Prototyp oder ein Zielbild. Maßgeblich für den Ist-Zustand sind [INSTALLATION](INSTALLATION.md), [API](API.md), [DATABASE](DATABASE.md) und [REVIEW_STATUS](REVIEW_STATUS.md).
+
+
 > **Krankenhaus-Informations-System (KIS)**
 > Detaillierte Dokumentation der unterstützten Medizintechnik-Schnittstellen: HL7 v2.5 (MLLP), FHIR R4 (REST/JSON), DICOM (C-STORE SCP), XDS (Document Registry / Repository) und **Telematikinfrastruktur (TI)** (eGK, ePA, eRezept, eAU).
 >

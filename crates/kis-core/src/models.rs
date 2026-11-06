@@ -34,6 +34,12 @@ fn default_page_size() -> i64 {
     50
 }
 
+impl Default for PaginationParams {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PaginationParams {
     pub fn new() -> Self {
         Self {
@@ -50,7 +56,7 @@ impl PaginationParams {
     }
 
     pub fn with_limit(mut self, limit: i64) -> Self {
-        self.limit = limit.min(200).max(1);
+        self.limit = limit.clamp(1, 200);
         self
     }
 }
@@ -108,8 +114,12 @@ impl ApiError {
         Self::new(429, msg)
     }
 
-    pub fn internal(msg: &str) -> Self {
-        Self::new(500, msg)
+    /// Interner Fehler. Die Detailmeldung wird nur serverseitig
+    /// protokolliert; der Client erhält eine generische Meldung, damit
+    /// keine SQL-, Pfad- oder Secret-Details nach außen gelangen.
+    pub fn internal(detail: &str) -> Self {
+        tracing::error!(detail, "Interner Fehler");
+        Self::new(500, "Interner Serverfehler")
     }
 }
 

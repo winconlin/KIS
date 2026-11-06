@@ -16,6 +16,7 @@ name = "kis_appointments"
 path = "src/lib.rs"
 
 [dependencies]
+kis-core = { path = "../kis-core" }
 axum = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

@@ -127,11 +127,7 @@ async fn shutdown_middleware_fn(
     next: Next,
 ) -> Response {
     if flag.load(Ordering::SeqCst) {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Service shutting down",
-        )
-            .into_response()
+        (StatusCode::SERVICE_UNAVAILABLE, "Service shutting down").into_response()
     } else {
         next.run(request).await
     }
@@ -246,10 +242,7 @@ mod tests {
         let flag = gs.shutdown_flag();
         let app = Router::new()
             .route("/test", get(handler))
-            .layer(axum::middleware::from_fn_with_state(
-                Arc::clone(&flag),
-                mw,
-            ));
+            .layer(axum::middleware::from_fn_with_state(Arc::clone(&flag), mw));
 
         // Vor Trigger: 200
         let response = app
@@ -288,9 +281,7 @@ mod tests {
 
         // Simuliere axum serve(): wartet auf Shutdown-Signal
         let serve_handle = tokio::spawn(async move {
-            rx.wait_for(|v| *v)
-                .await
-                .expect("watch channel closed");
+            rx.wait_for(|v| *v).await.expect("watch channel closed");
             Duration::from_secs(0)
         });
 

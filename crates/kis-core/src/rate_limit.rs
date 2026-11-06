@@ -25,8 +25,6 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as B64;
 use tokio::sync::Mutex;
 use tracing::warn;
 
@@ -95,18 +93,16 @@ impl SlidingWindowRateLimiter {
     /// Prüft und bucht einen Request.
     ///
     /// `is_auth` = true für /auth/*-Endpunkte (strengeres Limit).
-    pub async fn check(
-        &self,
-        key: &RateLimitKey,
-        is_auth: bool,
-    ) -> RateLimitDecision {
-        let limit = if is_auth { self.auth_limit } else { self.normal_limit };
+    pub async fn check(&self, key: &RateLimitKey, is_auth: bool) -> RateLimitDecision {
+        let limit = if is_auth {
+            self.auth_limit
+        } else {
+            self.normal_limit
+        };
         let cutoff = Instant::now() - self.window;
 
         let mut buckets = self.buckets.lock().await;
-        let bucket = buckets
-            .entry(key.clone())
-            .or_insert_with(Vec::new);
+        let bucket = buckets.entry(key.clone()).or_insert_with(Vec::new);
 
         // Alte Einträge aus dem Fenster entfernen (sliding window)
         bucket.retain(|t| *t > cutoff);
@@ -149,64 +145,34 @@ impl SlidingWindowRateLimiter {
     }
 }
 
-/// Ermittelt die Rate-Limit-Identität aus einem Request.
+/// Ermittelt die Rate-Limit-Identität aus einem Request: die Client-IP.
 ///
-/// Priorität:
-/// 1. JWT-Subject aus dem `Authorization: Bearer <token>`-Header
-///    (Claims werden hier NICHT verifiziert — die Auth-Middleware
-///    dahinter tut das; wir brauchen nur die Identität fürs Limit).
-/// 2. Sonst die Client-IP (X-Forwarded-For bzw. Peer-Addr).
+/// Bewusst **nicht** aus dem (an dieser Stelle unverifizierten) JWT: Ein
+/// Angreifer könnte sonst mit beliebigen `sub`-Claims unbegrenzt neue
+/// Buckets erzeugen und das Limit umgehen.
+///
+/// `X-Forwarded-For` wird nur ausgewertet, wenn die Verbindung von einem
+/// lokalen Reverse-Proxy (Loopback) kommt; dann zählt der **letzte**
+/// Eintrag (vom Proxy angehängt, vom Client nicht fälschbar).
 pub fn extract_rate_limit_key(
     headers: &axum::http::HeaderMap,
     peer_addr: Option<std::net::SocketAddr>,
 ) -> RateLimitKey {
-    // 1) Bearer-Token: Sub-Claim unverschlüsselt auslesen (Base64URL-Mitte)
-    if let Some(auth) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
-        if let Some(token) = auth.strip_prefix("Bearer ") {
-            if let Some(sub) = jwt_subject(token) {
-                return RateLimitKey::User(sub);
-            }
-        }
-    }
-
-    // 2) Client-IP: X-Forwarded-For (erster Eintrag) oder Peer-Addr
-    let ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next().map(|s| s.trim().to_string()))
-        .or_else(|| {
-            peer_addr.map(|a| a.ip().to_string())
-        })
-        .unwrap_or_else(|| "unknown".into());
-
-    RateLimitKey::Ip(ip)
-}
-
-/// Liest den `sub`-Claim aus einem JWT, ohne den Token zu verifizieren.
-///
-/// Der Token wird von der Auth-Middleware dahinter verifiziert — hier
-/// reicht die Identität für die Rate-Limit-Gruppierung. Bei fehlenden
-/// oder defekten Claims wird `None` zurückgegeben (Fallback auf IP).
-fn jwt_subject(token: &str) -> Option<String> {
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() < 2 {
-        return None;
-    }
-    // Base64URL-Decoder (JWT verwendet Base64URL ohne Padding)
-    let b64 = parts[1].to_string();
-    let padding = match b64.len() % 4 {
-        2 => "==",
-        3 => "=",
-        _ => "",
+    let from_proxy = peer_addr.map(|a| a.ip().is_loopback()).unwrap_or(false);
+    let forwarded = if from_proxy {
+        headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.rsplit(',').next())
+            .map(|s| s.trim().to_string())
+            .filter(|s| s.parse::<std::net::IpAddr>().is_ok())
+    } else {
+        None
     };
-    let engine = base64::engine::GeneralPurpose::new(
-        &base64::alphabet::URL_SAFE,
-        base64::engine::GeneralPurposeConfig::new(),
-    );
-    let bytes = engine.decode(format!("{b64}{padding}")).ok()?;
-    let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let sub = json.get("sub")?.as_str()?.to_string();
-    Some(sub)
+    let ip = forwarded
+        .or_else(|| peer_addr.map(|a| a.ip().to_string()))
+        .unwrap_or_else(|| "unknown".into());
+    RateLimitKey::Ip(ip)
 }
 
 /// Axum-Middleware: prüft das Rate-Limit vor der Handler-Ausführung.
@@ -241,7 +207,10 @@ pub async fn rate_limit_middleware(
             // X-RateLimit-Remaining: Rest im Fenster (Information, kein Secret)
             resp.headers_mut().insert(
                 "X-RateLimit-Remaining",
-                remaining.to_string().parse().unwrap_or_else(|_| "0".parse().unwrap()),
+                remaining
+                    .to_string()
+                    .parse()
+                    .unwrap_or_else(|_| "0".parse().unwrap()),
             );
             resp
         }
@@ -350,22 +319,41 @@ mod tests {
         }
         match limiter.check(&key, true).await {
             RateLimitDecision::Blocked { retry_after_secs } => {
-                assert!(retry_after_secs >= 1 && retry_after_secs <= 60);
+                assert!((1..=60).contains(&retry_after_secs));
             }
             other => panic!("erwartete Blocked, bekam {other:?}"),
         }
     }
 
-    /// JWT-Sub-Extraktion aus einem (unverifizierten) Bearer-Token.
+    /// Gefälschte Bearer-Tokens dürfen keine eigenen Buckets erzeugen.
     #[test]
-    fn test_jwt_subject_extraction() {
-        // sub = "user:42", Base64URL-codiert (JWT-Format, ohne Padding)
-        let b64url = base64::engine::GeneralPurpose::new(
-            &base64::alphabet::URL_SAFE,
-            base64::engine::GeneralPurposeConfig::new().with_encode_padding(false),
+    fn test_key_ignores_bearer_token() {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(
+            header::AUTHORIZATION,
+            "Bearer x.eyJzdWIiOiJhIn0.y".parse().unwrap(),
         );
-        let payload = b64url.encode(r#"{"sub":"user:42","exp":9999999999}"#);
-        let token = format!("header.{payload}.sig");
-        assert_eq!(jwt_subject(&token), Some("user:42".into()));
+        let peer: std::net::SocketAddr = "203.0.113.7:5000".parse().unwrap();
+        assert_eq!(
+            extract_rate_limit_key(&h, Some(peer)),
+            RateLimitKey::Ip("203.0.113.7".into())
+        );
+    }
+
+    /// X-Forwarded-For nur von einem lokalen Proxy, letzter Eintrag zählt.
+    #[test]
+    fn test_forwarded_for_only_from_loopback() {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert("x-forwarded-for", "1.1.1.1, 198.51.100.4".parse().unwrap());
+        let external: std::net::SocketAddr = "203.0.113.7:5000".parse().unwrap();
+        let proxy: std::net::SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        assert_eq!(
+            extract_rate_limit_key(&h, Some(external)),
+            RateLimitKey::Ip("203.0.113.7".into())
+        );
+        assert_eq!(
+            extract_rate_limit_key(&h, Some(proxy)),
+            RateLimitKey::Ip("198.51.100.4".into())
+        );
     }
 }
