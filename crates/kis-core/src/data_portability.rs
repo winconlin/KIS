@@ -14,7 +14,6 @@
 //! Alle Exporte werden im Audit-Log nachgewiesen
 //! (`patient.export` + Format + Datensatzgröße).
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -23,8 +22,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::db::Database;
-use super::security::{AuthUser, Permission, Security};
 use super::models::ApiError;
+use super::security::{AuthUser, Permission, Security};
 
 /// Export-Format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +70,9 @@ pub enum ExportError {
 
     #[error("unsupported export format: {0}")]
     UnsupportedFormat(String),
+
+    #[error("serialization error: {0}")]
+    Serialization(String),
 }
 
 impl From<ExportError> for ApiError {
@@ -146,7 +148,8 @@ pub struct MedicationRecord {
 #[serde(rename_all = "camelCase")]
 pub struct ConsentRecord {
     pub id: Uuid,
-    pub type: String,
+    #[serde(rename = "type")]
+    pub consent_type: String,
     pub granted: bool,
     pub granted_at: DateTime<Utc>,
     pub withdrawn_at: Option<DateTime<Utc>>,
@@ -187,7 +190,7 @@ impl DataPortabilityService {
              FROM patients WHERE id = $1",
         )
         .bind(patient_id)
-        .fetch_optional(self.db.read_pool())
+        .fetch_optional(self.db.read())
         .await?
         .ok_or(ExportError::NotFound(patient_id))?;
 
@@ -218,7 +221,7 @@ impl DataPortabilityService {
              ORDER BY start_time ASC",
         )
         .bind(patient_id)
-        .fetch_all(self.db.read_pool())
+        .fetch_all(self.db.read())
         .await?;
         let appointments = appt_rows
             .into_iter()
@@ -241,7 +244,7 @@ impl DataPortabilityService {
              ORDER BY start_date ASC",
         )
         .bind(patient_id)
-        .fetch_all(self.db.read_pool())
+        .fetch_all(self.db.read())
         .await?;
         let medications = med_rows
             .into_iter()
@@ -261,13 +264,13 @@ impl DataPortabilityService {
              FROM consents WHERE patient_id = $1 ORDER BY granted_at ASC",
         )
         .bind(patient_id)
-        .fetch_all(self.db.read_pool())
+        .fetch_all(self.db.read())
         .await?;
         let consents = consent_rows
             .into_iter()
             .map(|r| ConsentRecord {
                 id: r.get("id"),
-                type: r.get("type"),
+                consent_type: r.get("type"),
                 granted: r.get("granted"),
                 granted_at: r.get("granted_at"),
                 withdrawn_at: r.get("withdrawn_at"),
@@ -283,7 +286,7 @@ impl DataPortabilityService {
              ORDER BY timestamp ASC",
         )
         .bind(patient_id.to_string())
-        .fetch_all(self.db.read_pool())
+        .fetch_all(self.db.read())
         .await?;
         let audit_log = audit_rows
             .into_iter()
@@ -316,10 +319,8 @@ impl DataPortabilityService {
         actor: &AuthUser,
     ) -> Result<serde_json::Value, ExportError> {
         let export = self.load(patient_id).await?;
-        let value = serde_json::to_value(&export)
-            .map_err(|e| ExportError::Db(sqlx::Error::Encode(format!(
-                "JSON-Serialisierung fehlgeschlagen: {e}",
-            ))))?;
+        let value =
+            serde_json::to_value(&export).map_err(|e| ExportError::Serialization(e.to_string()))?;
 
         self.audit_export(actor, patient_id, "json", &value).await?;
         Ok(value)
@@ -365,7 +366,8 @@ impl DataPortabilityService {
         let export = self.load(patient_id).await?;
         let bundle = build_fhir_r4_bundle(&export);
 
-        self.audit_export(actor, patient_id, "fhir", &bundle).await?;
+        self.audit_export(actor, patient_id, "fhir", &bundle)
+            .await?;
         Ok(bundle)
     }
 
@@ -408,13 +410,18 @@ impl DataPortabilityService {
     ) -> Result<(), ExportError> {
         self.security
             .log_audit(
-                self.db.read_pool(),
+                self.db.write(),
                 &actor.user_id,
                 "patient.export",
                 "patient",
                 Some(&patient_id.to_string()),
                 None,
-                Some(&serde_json::json!({ "format": format, "preview": payload })),
+                // Kein Inhalt im (unveränderlichen) Audit-Trail, nur ein
+                // Fingerabdruck zum Nachweis, was herausgegeben wurde.
+                Some(&serde_json::json!({
+                    "format": format,
+                    "sha256": payload_digest(payload),
+                })),
                 None,
             )
             .await
@@ -425,6 +432,12 @@ impl DataPortabilityService {
 // ===========================================================================
 // CSV-Hilfen
 // ===========================================================================
+
+fn payload_digest(payload: &serde_json::Value) -> String {
+    use sha2::{Digest, Sha256};
+    let d = Sha256::digest(payload.to_string().as_bytes());
+    d.iter().map(|b| format!("{b:02x}")).collect()
+}
 
 /// Eine CSV-Zeile (ein Feld = eine Zelle).
 #[derive(Debug, Clone)]
@@ -468,6 +481,7 @@ fn timestamp_rfc3339(s: &str) -> String {
 
 /// Splitzt eine CSV-Zeile in Spalten (respektiert quoted Fields).
 /// Wird in den Unit-Tests zur Konsistenzprüfung verwendet.
+#[cfg(test)]
 fn split_csv_line(line: &str) -> Vec<String> {
     let mut cols: Vec<String> = Vec::new();
     let mut cur = String::new();
@@ -519,10 +533,16 @@ fn export_to_csv_rows(export: &PatientExport) -> Vec<CsvRow> {
     push("gender", &p.gender.clone().unwrap_or_default());
     push("phone", &p.phone.clone().unwrap_or_default());
     push("email", &p.email.clone().unwrap_or_default());
-    push("address_street", &p.address_street.clone().unwrap_or_default());
+    push(
+        "address_street",
+        &p.address_street.clone().unwrap_or_default(),
+    );
     push("address_zip", &p.address_zip.clone().unwrap_or_default());
     push("address_city", &p.address_city.clone().unwrap_or_default());
-    push("insurance_number", &p.insurance_number.clone().unwrap_or_default());
+    push(
+        "insurance_number",
+        &p.insurance_number.clone().unwrap_or_default(),
+    );
     push("allergies", &p.allergies.to_string());
 
     // Termine
@@ -574,7 +594,7 @@ fn export_to_csv_rows(export: &PatientExport) -> Vec<CsvRow> {
             data_type: "consent",
             id: c.id.to_string(),
             field: "type".into(),
-            value: c.type.clone(),
+            value: c.consent_type.clone(),
             timestamp: c.granted_at.to_rfc3339(),
         });
         rows.push(CsvRow {
@@ -692,7 +712,7 @@ fn build_fhir_r4_bundle(export: &PatientExport) -> serde_json::Value {
                 }]
             },
             "category": [{
-                "coding": [{ "system": "urn:kis:consent", "code": c.type.clone() }]
+                "coding": [{ "system": "urn:kis:consent", "code": c.consent_type.clone() }]
             }],
             "provision": {
                 "type": if c.granted { "permit" } else { "deny" },
@@ -801,7 +821,7 @@ mod tests {
             }],
             consents: vec![ConsentRecord {
                 id: Uuid::new_v4(),
-                type: "treatment".into(),
+                consent_type: "treatment".into(),
                 granted: true,
                 granted_at: Utc::now(),
                 withdrawn_at: None,
@@ -855,8 +875,7 @@ mod tests {
         }
 
         // Alle 5 data_types vorhanden
-        let types: std::collections::HashSet<_> =
-            rows.iter().map(|r| r.data_type).collect();
+        let types: std::collections::HashSet<_> = rows.iter().map(|r| r.data_type).collect();
         assert!(types.contains(&"patient"));
         assert!(types.contains(&"appointment"));
         assert!(types.contains(&"medication"));
@@ -864,8 +883,7 @@ mod tests {
         assert!(types.contains(&"audit"));
 
         // Patient-Zeilen: eine pro Feld
-        let patient_rows: Vec<&CsvRow> =
-            rows.iter().filter(|r| r.data_type == "patient").collect();
+        let patient_rows: Vec<&CsvRow> = rows.iter().filter(|r| r.data_type == "patient").collect();
         assert!(patient_rows.len() >= 11, "Patient hat min. 11 Felder");
 
         // ID-Konsistenz: alle patient-Zeilen haben dieselbe ID
@@ -898,7 +916,10 @@ mod tests {
         assert!(bundle["timestamp"].is_string());
 
         let entries = bundle["entry"].as_array().unwrap();
-        assert!(entries.len() >= 4, "min. Patient + Appointment + Med + Consent");
+        assert!(
+            entries.len() >= 4,
+            "min. Patient + Appointment + Med + Consent"
+        );
 
         let resource_types: Vec<&str> = entries
             .iter()
@@ -966,7 +987,11 @@ mod tests {
             .collect();
 
         assert_eq!(json_appts, csv_appt_ids.len(), "Terminanzahl muss stimmen");
-        assert_eq!(json_meds, csv_med_ids.len(), "Medikamentenanzahl muss stimmen");
+        assert_eq!(
+            json_meds,
+            csv_med_ids.len(),
+            "Medikamentenanzahl muss stimmen"
+        );
     }
 
     /// ExportError → ApiError-Mapping (Status-Codes).

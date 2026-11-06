@@ -27,8 +27,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as B64;
 use kis_core::config::{AppConfig, MedicoInterfaceConfig};
 use kis_core::db::Database;
 use kis_core::models::{ApiError, ApiResponse, ResponseMeta};
@@ -56,6 +54,7 @@ struct TokenResponse {
     #[serde(default = "default_token_lifetime")]
     expires_in: u64,
     #[serde(default)]
+    #[allow(dead_code)]
     token_type: String,
 }
 
@@ -132,11 +131,17 @@ impl MedicoAuth {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             error!(status = %status, body = %body, "OAuth-Token-Request fehlgeschlagen");
-            return Err(MedicoError::Auth(format!("Token-Request fehlgeschlagen ({}): {}", status, body)));
+            return Err(MedicoError::Auth(format!(
+                "Token-Request fehlgeschlagen ({}): {}",
+                status, body
+            )));
         }
 
         let token_resp: TokenResponse = resp.json().await.map_err(MedicoError::Http)?;
-        info!(expires_in = token_resp.expires_in, "MEDICO-Access-Token erhalten");
+        info!(
+            expires_in = token_resp.expires_in,
+            "MEDICO-Access-Token erhalten"
+        );
 
         let cached = CachedToken {
             access_token: token_resp.access_token.clone(),
@@ -148,7 +153,11 @@ impl MedicoAuth {
     }
 
     /// Baut einen `reqwest::RequestBuilder` mit Authorization-Header.
-    pub async fn authorized_request(&self, method: reqwest::Method, url: &str) -> Result<reqwest::RequestBuilder, MedicoError> {
+    pub async fn authorized_request(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+    ) -> Result<reqwest::RequestBuilder, MedicoError> {
         let token = self.access_token().await?;
         Ok(self
             .client
@@ -242,108 +251,229 @@ impl MedicoClient {
     /// GET Patient (paginiert). `since`: optionaler `_since`-Filter für Inkrementell-Sync.
     ///
     /// FHIR R4: `Patient?_count=50&_next=<cursor>` bzw. `Patient?_search=...`
-    pub async fn get_patients(&self, count: i64, next: Option<&str>, since: Option<&str>) -> Result<FhirBundle, MedicoError> {
-        let mut url = format!("{}/Patient?_count={}", self.config.base_url.trim_end_matches('/'), count);
+    pub async fn get_patients(
+        &self,
+        count: i64,
+        next: Option<&str>,
+        since: Option<&str>,
+    ) -> Result<FhirBundle, MedicoError> {
+        let mut url = format!(
+            "{}/Patient?_count={}",
+            self.config.base_url.trim_end_matches('/'),
+            count
+        );
         if let Some(s) = since {
             url.push_str(&format!("&_since={}", s));
         }
         if let Some(next) = next {
             url = self.resolve_url(next);
         }
-        let resp = self.auth.authorized_request(reqwest::Method::GET, &url).await?.send().await?;
+        let resp = self
+            .auth
+            .authorized_request(reqwest::Method::GET, &url)
+            .await?
+            .send()
+            .await?;
         self.fhir_response(resp).await
     }
 
     /// GET Appointment (paginiert, optional `lastUpdated`-Filter für Inkrementell-Sync)
-    pub async fn get_appointments(&self, count: i64, next: Option<&str>, last_updated: Option<&str>) -> Result<FhirBundle, MedicoError> {
-        let mut url = format!("{}/Appointment?_count={}", self.config.base_url.trim_end_matches('/'), count);
+    pub async fn get_appointments(
+        &self,
+        count: i64,
+        next: Option<&str>,
+        last_updated: Option<&str>,
+    ) -> Result<FhirBundle, MedicoError> {
+        let mut url = format!(
+            "{}/Appointment?_count={}",
+            self.config.base_url.trim_end_matches('/'),
+            count
+        );
         if let Some(lu) = last_updated {
             url.push_str(&format!("_search=lastUpdated&lastUpdated=gt{}", lu));
         }
         if let Some(next) = next {
             url = self.resolve_url(next);
         }
-        let resp = self.auth.authorized_request(reqwest::Method::GET, &url).await?.send().await?;
+        let resp = self
+            .auth
+            .authorized_request(reqwest::Method::GET, &url)
+            .await?
+            .send()
+            .await?;
         self.fhir_response(resp).await
     }
 
     /// GET Slot (Verfügbarkeitsfenster)
-    pub async fn get_slots(&self, count: i64, next: Option<&str>) -> Result<FhirBundle, MedicoError> {
-        let mut url = format!("{}/Slot?_count={}", self.config.base_url.trim_end_matches('/'), count);
+    pub async fn get_slots(
+        &self,
+        count: i64,
+        next: Option<&str>,
+    ) -> Result<FhirBundle, MedicoError> {
+        let mut url = format!(
+            "{}/Slot?_count={}",
+            self.config.base_url.trim_end_matches('/'),
+            count
+        );
         if let Some(next) = next {
             url = self.resolve_url(next);
         }
-        let resp = self.auth.authorized_request(reqwest::Method::GET, &url).await?.send().await?;
+        let resp = self
+            .auth
+            .authorized_request(reqwest::Method::GET, &url)
+            .await?
+            .send()
+            .await?;
         self.fhir_response(resp).await
     }
 
     /// GET Practitioner
-    pub async fn get_practitioners(&self, count: i64, next: Option<&str>) -> Result<FhirBundle, MedicoError> {
-        let mut url = format!("{}/Practitioner?_count={}", self.config.base_url.trim_end_matches('/'), count);
+    pub async fn get_practitioners(
+        &self,
+        count: i64,
+        next: Option<&str>,
+    ) -> Result<FhirBundle, MedicoError> {
+        let mut url = format!(
+            "{}/Practitioner?_count={}",
+            self.config.base_url.trim_end_matches('/'),
+            count
+        );
         if let Some(next) = next {
             url = self.resolve_url(next);
         }
-        let resp = self.auth.authorized_request(reqwest::Method::GET, &url).await?.send().await?;
-        self.fhir_response(resp)
-        .await
+        let resp = self
+            .auth
+            .authorized_request(reqwest::Method::GET, &url)
+            .await?
+            .send()
+            .await?;
+        self.fhir_response(resp).await
     }
 
     /// GET PractitionerRole (Arzt-Rollen/Praxiszuordnung)
-    pub async fn get_practitioner_roles(&self, count: i64, next: Option<&str>) -> Result<FhirBundle, MedicoError> {
-        let mut url = format!("{}/PractitionerRole?_count={}", self.config.base_url.trim_end_matches('/'), count);
+    pub async fn get_practitioner_roles(
+        &self,
+        count: i64,
+        next: Option<&str>,
+    ) -> Result<FhirBundle, MedicoError> {
+        let mut url = format!(
+            "{}/PractitionerRole?_count={}",
+            self.config.base_url.trim_end_matches('/'),
+            count
+        );
         if let Some(next) = next {
             url = self.resolve_url(next);
         }
-        let resp = self.auth.authorized_request(reqwest::Method::GET, &url).await?.send().await?;
+        let resp = self
+            .auth
+            .authorized_request(reqwest::Method::GET, &url)
+            .await?
+            .send()
+            .await?;
         self.fhir_response(resp).await
     }
 
     /// GET Organization (Praxen, Abteilungen)
-    pub async fn get_organizations(&self, count: i64, next: Option<&str>) -> Result<FhirBundle, MedicoError> {
-        let mut url = format!("{}/Organization?_count={}", self.config.base_url.trim_end_matches('/'), count);
+    pub async fn get_organizations(
+        &self,
+        count: i64,
+        next: Option<&str>,
+    ) -> Result<FhirBundle, MedicoError> {
+        let mut url = format!(
+            "{}/Organization?_count={}",
+            self.config.base_url.trim_end_matches('/'),
+            count
+        );
         if let Some(next) = next {
             url = self.resolve_url(next);
         }
-        let resp = self.auth.authorized_request(reqwest::Method::GET, &url).await?.send().await?;
+        let resp = self
+            .auth
+            .authorized_request(reqwest::Method::GET, &url)
+            .await?
+            .send()
+            .await?;
         self.fhir_response(resp).await
     }
 
     /// GET Observation (Labore, Vitalwerte)
-    pub async fn get_observations(&self, count: i64, next: Option<&str>, since: Option<&str>) -> Result<FhirBundle, MedicoError> {
-        let mut url = format!("{}/Observation?_count={}", self.config.base_url.trim_end_matches('/'), count);
+    pub async fn get_observations(
+        &self,
+        count: i64,
+        next: Option<&str>,
+        since: Option<&str>,
+    ) -> Result<FhirBundle, MedicoError> {
+        let mut url = format!(
+            "{}/Observation?_count={}",
+            self.config.base_url.trim_end_matches('/'),
+            count
+        );
         if let Some(s) = since {
             url.push_str(&format!("&_since={}", s));
         }
         if let Some(next) = next {
             url = self.resolve_url(next);
         }
-        let resp = self.auth.authorized_request(reqwest::Method::GET, &url).await?.send().await?;
+        let resp = self
+            .auth
+            .authorized_request(reqwest::Method::GET, &url)
+            .await?
+            .send()
+            .await?;
         self.fhir_response(resp).await
     }
 
     /// GET DocumentReference (Befunde, Briefe)
-    pub async fn get_document_references(&self, count: i64, next: Option<&str>, since: Option<&str>) -> Result<FhirBundle, MedicoError> {
-        let mut url = format!("{}/DocumentReference?_count={}", self.config.base_url.trim_end_matches('/'), count);
+    pub async fn get_document_references(
+        &self,
+        count: i64,
+        next: Option<&str>,
+        since: Option<&str>,
+    ) -> Result<FhirBundle, MedicoError> {
+        let mut url = format!(
+            "{}/DocumentReference?_count={}",
+            self.config.base_url.trim_end_matches('/'),
+            count
+        );
         if let Some(s) = since {
             url.push_str(&format!("&_since={}", s));
         }
         if let Some(next) = next {
             url = self.resolve_url(next);
         }
-        let resp = self.auth.authorized_request(reqwest::Method::GET, &url).await?.send().await?;
+        let resp = self
+            .auth
+            .authorized_request(reqwest::Method::GET, &url)
+            .await?
+            .send()
+            .await?;
         self.fhir_response(resp).await
     }
 
     /// GET MedicationRequest (Verordnungen)
-    pub async fn get_medication_requests(&self, count: i64, next: Option<&str>, since: Option<&str>) -> Result<FhirBundle, MedicoError> {
-        let mut url = format!("{}/MedicationRequest?_count={}", self.config.base_url.trim_end_matches('/'), count);
+    pub async fn get_medication_requests(
+        &self,
+        count: i64,
+        next: Option<&str>,
+        since: Option<&str>,
+    ) -> Result<FhirBundle, MedicoError> {
+        let mut url = format!(
+            "{}/MedicationRequest?_count={}",
+            self.config.base_url.trim_end_matches('/'),
+            count
+        );
         if let Some(s) = since {
             url.push_str(&format!("&_since={}", s));
         }
         if let Some(next) = next {
             url = self.resolve_url(next);
         }
-        let resp = self.auth.authorized_request(reqwest::Method::GET, &url).await?.send().await?;
+        let resp = self
+            .auth
+            .authorized_request(reqwest::Method::GET, &url)
+            .await?
+            .send()
+            .await?;
         self.fhir_response(resp).await
     }
 
@@ -365,7 +495,11 @@ impl MedicoClient {
     }
 
     /// POST Appointment/$book — Termin-Buchung in MEDICO
-    pub async fn book_appointment(&self, appointment_id: &str, body: &Value) -> Result<Value, MedicoError> {
+    pub async fn book_appointment(
+        &self,
+        appointment_id: &str,
+        body: &Value,
+    ) -> Result<Value, MedicoError> {
         let url = format!(
             "{}/Appointment/{}/$book",
             self.config.base_url.trim_end_matches('/'),
@@ -387,7 +521,11 @@ impl MedicoClient {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             error!(status = %status, "FHIR-Request fehlgeschlagen: {}", body.chars().take(500).collect::<String>());
-            return Err(MedicoError::Fhir(format!("HTTP {}: {}", status, body.chars().take(300).collect::<String>())));
+            return Err(MedicoError::Fhir(format!(
+                "HTTP {}: {}",
+                status,
+                body.chars().take(300).collect::<String>()
+            )));
         }
         Ok(resp.json::<FhirBundle>().await?)
     }
@@ -396,7 +534,11 @@ impl MedicoClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(MedicoError::Fhir(format!("HTTP {}: {}", status, body.chars().take(300).collect::<String>())));
+            return Err(MedicoError::Fhir(format!(
+                "HTTP {}: {}",
+                status,
+                body.chars().take(300).collect::<String>()
+            )));
         }
         Ok(resp.json::<Value>().await?)
     }
@@ -408,7 +550,10 @@ impl MedicoClient {
 
 /// Extrahiert den FHIR-ID-Wert (z. B. `resource.id`)
 fn fhir_id(resource: &Value) -> Option<String> {
-    resource.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
+    resource
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// Extrahiert das FHIR-`meta.lastUpdated`-Feld
@@ -435,7 +580,10 @@ fn fhir_gender(resource: &Value) -> &'static str {
 
 /// Extrahiert das Geburtsdatum aus `resource.birthDate` (JJJJ-MM-TT)
 fn fhir_birth_date(resource: &Value) -> Option<String> {
-    resource.get("birthDate").and_then(|v| v.as_str()).map(|s| s.to_string())
+    resource
+        .get("birthDate")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// Extrahiert den ersten Nachnamen aus `resource.name[0].family`
@@ -467,7 +615,11 @@ fn fhir_insurance_no(resource: &Value) -> Option<String> {
         .and_then(|i| i.as_array())
         .and_then(|arr| {
             arr.iter().find(|id| {
-                let system = id.get("system").and_then(|s| s.as_str()).unwrap_or("").to_lowercase();
+                let system = id
+                    .get("system")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_lowercase();
                 let type_text = id
                     .get("type")
                     .and_then(|t| t.pointer("/text"))
@@ -495,7 +647,10 @@ fn fhir_phone(resource: &Value) -> Option<String> {
         .and_then(|arr| {
             arr.iter()
                 .find(|t| t.get("system").and_then(|s| s.as_str()) == Some("phone"))
-                .or_else(|| arr.iter().find(|t| t.get("system").and_then(|s| s.as_str()) == Some("mobile")))
+                .or_else(|| {
+                    arr.iter()
+                        .find(|t| t.get("system").and_then(|s| s.as_str()) == Some("mobile"))
+                })
         })
         .and_then(|t| t.get("value").and_then(|v| v.as_str()))
         .map(|s| s.to_string())
@@ -506,7 +661,10 @@ fn fhir_email(resource: &Value) -> Option<String> {
     resource
         .get("telecom")
         .and_then(|t| t.as_array())
-        .and_then(|arr| arr.iter().find(|t| t.get("system").and_then(|s| s.as_str()) == Some("email")))
+        .and_then(|arr| {
+            arr.iter()
+                .find(|t| t.get("system").and_then(|s| s.as_str()) == Some("email"))
+        })
         .and_then(|t| t.get("value").and_then(|v| v.as_str()))
         .map(|s| s.to_string())
 }
@@ -515,9 +673,18 @@ fn fhir_email(resource: &Value) -> Option<String> {
 /// -> (Straße, PLZ, Stadt)
 fn fhir_address(resource: &Value) -> (Option<String>, Option<String>, Option<String>) {
     let addr = resource.get("address").and_then(|a| a.get(0));
-    let street = addr.and_then(|a| a.get("text")).and_then(|v| v.as_str()).map(|s| s.to_string());
-    let zip = addr.and_then(|a| a.get("postalCode")).and_then(|v| v.as_str()).map(|s| s.to_string());
-    let city = addr.and_then(|a| a.get("city")).and_then(|v| v.as_str()).map(|s| s.to_string());
+    let street = addr
+        .and_then(|a| a.get("text"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let zip = addr
+        .and_then(|a| a.get("postalCode"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let city = addr
+        .and_then(|a| a.get("city"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     (street, zip, city)
 }
 
@@ -549,12 +716,12 @@ pub struct SyncStatus {
 }
 
 #[derive(Default)]
-struct SyncState {
+pub struct SyncState {
     inner: tokio::sync::RwLock<SyncStatusInner>,
 }
 
 #[derive(Default, Clone)]
-struct SyncStatusInner {
+pub struct SyncStatusInner {
     last_sync: Option<chrono::DateTime<chrono::Utc>>,
     next_sync: Option<chrono::DateTime<chrono::Utc>>,
     state: String,
@@ -609,6 +776,7 @@ struct SyncResult {
 /// Die Sync-Engine: Initial-Import (paginiert) + inkrementeller Sync (30 s, lastUpdated)
 pub struct SyncEngine {
     db: Arc<Database>,
+    #[allow(dead_code)]
     security: Arc<Security>,
     client: Arc<MedicoClient>,
     config: MedicoInterfaceConfig,
@@ -623,7 +791,13 @@ impl SyncEngine {
         config: MedicoInterfaceConfig,
         state: Arc<SyncState>,
     ) -> Self {
-        Self { db, security, client, config, state }
+        Self {
+            db,
+            security,
+            client,
+            config,
+            state,
+        }
     }
 
     /// Startet den Sync-Loop als Hintergrund-Task.
@@ -669,7 +843,10 @@ impl SyncEngine {
                             s.appointments_total = result.appointments;
                             s.sync_runs += 1;
                             s.next_sync = Some(
-                                chrono::Utc::now() + chrono::Duration::seconds(self.config.sync_interval_seconds as i64),
+                                chrono::Utc::now()
+                                    + chrono::Duration::seconds(
+                                        self.config.sync_interval_seconds as i64,
+                                    ),
                             );
                         })
                         .await;
@@ -686,7 +863,8 @@ impl SyncEngine {
             }
 
             // --- Inkrementeller Sync-Loop ---
-            let mut interval = tokio::time::interval(Duration::from_secs(self.config.sync_interval_seconds));
+            let mut interval =
+                tokio::time::interval(Duration::from_secs(self.config.sync_interval_seconds));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
             loop {
@@ -696,7 +874,10 @@ impl SyncEngine {
                     .update(|s| {
                         s.state = "running".into();
                         s.next_sync = Some(
-                            chrono::Utc::now() + chrono::Duration::seconds(self.config.sync_interval_seconds as i64),
+                            chrono::Utc::now()
+                                + chrono::Duration::seconds(
+                                    self.config.sync_interval_seconds as i64,
+                                ),
                         );
                     })
                     .await;
@@ -764,7 +945,10 @@ impl SyncEngine {
         // Termine (paginiert)
         let mut next: Option<String> = None;
         loop {
-            let bundle = self.client.get_appointments(100, next.as_deref(), None).await?;
+            let bundle = self
+                .client
+                .get_appointments(100, next.as_deref(), None)
+                .await?;
             for entry in &bundle.entry {
                 if let Err(e) = self.upsert_appointment(&entry.resource).await {
                     warn!(error = %e, "Appointment-Sync fehlgeschlagen");
@@ -785,7 +969,10 @@ impl SyncEngine {
         // Beobachtungen (paginiert)
         let mut next: Option<String> = None;
         loop {
-            let bundle = self.client.get_observations(100, next.as_deref(), None).await?;
+            let bundle = self
+                .client
+                .get_observations(100, next.as_deref(), None)
+                .await?;
             for entry in &bundle.entry {
                 if let Err(e) = self.upsert_observation(&entry.resource).await {
                     warn!(error = %e, "Observation-Sync fehlgeschlagen");
@@ -806,7 +993,10 @@ impl SyncEngine {
         // Medikamente (paginiert)
         let mut next: Option<String> = None;
         loop {
-            let bundle = self.client.get_medication_requests(100, next.as_deref(), None).await?;
+            let bundle = self
+                .client
+                .get_medication_requests(100, next.as_deref(), None)
+                .await?;
             for entry in &bundle.entry {
                 if let Err(e) = self.upsert_medication(&entry.resource).await {
                     warn!(error = %e, "Medication-Sync fehlgeschlagen");
@@ -837,7 +1027,9 @@ impl SyncEngine {
             .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
             .unwrap_or_else(|| {
                 // Fallback: letzte 24 h
-                (chrono::Utc::now() - chrono::Duration::hours(24)).format("%Y-%m-%dT%H:%M:%SZ").to_string()
+                (chrono::Utc::now() - chrono::Duration::hours(24))
+                    .format("%Y-%m-%dT%H:%M:%SZ")
+                    .to_string()
             });
 
         let mut result = SyncResult::default();
@@ -853,7 +1045,10 @@ impl SyncEngine {
         }
 
         // Termine seit letztem Sync
-        let bundle = self.client.get_appointments(100, None, Some(&since)).await?;
+        let bundle = self
+            .client
+            .get_appointments(100, None, Some(&since))
+            .await?;
         for entry in &bundle.entry {
             if let Err(e) = self.upsert_appointment(&entry.resource).await {
                 warn!(error = %e, "Inkrementeller Appointment-Sync fehlgeschlagen");
@@ -863,7 +1058,10 @@ impl SyncEngine {
         }
 
         // Beobachtungen seit letztem Sync
-        let bundle = self.client.get_observations(100, None, Some(&since)).await?;
+        let bundle = self
+            .client
+            .get_observations(100, None, Some(&since))
+            .await?;
         for entry in &bundle.entry {
             if let Err(e) = self.upsert_observation(&entry.resource).await {
                 warn!(error = %e, "Inkrementelle Observation-Sync fehlgeschlagen");
@@ -873,7 +1071,10 @@ impl SyncEngine {
         }
 
         // Medikamente seit letztem Sync
-        let bundle = self.client.get_medication_requests(100, None, Some(&since)).await?;
+        let bundle = self
+            .client
+            .get_medication_requests(100, None, Some(&since))
+            .await?;
         for entry in &bundle.entry {
             if let Err(e) = self.upsert_medication(&entry.resource).await {
                 warn!(error = %e, "Inkrementeller Medication-Sync fehlgeschlagen");
@@ -895,10 +1096,13 @@ impl SyncEngine {
     /// Last-Write-Wins: Nur aktualisieren, wenn das FHIR-`lastUpdated`
     /// neuer als das KIS-`updated_at` ist.
     async fn upsert_patient(&self, resource: &Value) -> Result<(), MedicoError> {
-        let external_id = fhir_id(resource).ok_or_else(|| MedicoError::Fhir("Patient ohne id".into()))?;
-        let last_name = fhir_last_name(resource).ok_or_else(|| MedicoError::Fhir("Patient ohne Name.family".into()))?;
+        let external_id =
+            fhir_id(resource).ok_or_else(|| MedicoError::Fhir("Patient ohne id".into()))?;
+        let last_name = fhir_last_name(resource)
+            .ok_or_else(|| MedicoError::Fhir("Patient ohne Name.family".into()))?;
         let first_name = fhir_first_name(resource).unwrap_or_default();
-        let birth_date = fhir_birth_date(resource).ok_or_else(|| MedicoError::Fhir("Patient ohne birthDate".into()))?;
+        let birth_date = fhir_birth_date(resource)
+            .ok_or_else(|| MedicoError::Fhir("Patient ohne birthDate".into()))?;
         let gender = fhir_gender(resource);
         let insurance = fhir_insurance_no(resource);
         let phone = fhir_phone(resource);
@@ -913,12 +1117,11 @@ impl SyncEngine {
                     .map(|t| t.with_timezone(&chrono::Utc))
                     .unwrap_or_else(|_| chrono::Utc::now());
                 // Bestehendes updated_at lesen
-                let existing: Option<(chrono::DateTime<chrono::Utc>,)> = sqlx::query_as(
-                    "SELECT updated_at FROM patients WHERE external_id = $1",
-                )
-                .bind(&external_id)
-                .fetch_optional(&self.db.read_pool)
-                .await?;
+                let existing: Option<(chrono::DateTime<chrono::Utc>,)> =
+                    sqlx::query_as("SELECT updated_at FROM patients WHERE external_id = $1")
+                        .bind(&external_id)
+                        .fetch_optional(&self.db.read_pool)
+                        .await?;
                 match existing {
                     Some((updated_at,)) => fhir_time > updated_at,
                     None => true,
@@ -977,7 +1180,8 @@ impl SyncEngine {
 
     /// Upsert eines FHIR-Accomptments (Termins) in KIS.
     async fn upsert_appointment(&self, resource: &Value) -> Result<(), MedicoError> {
-        let external_id = fhir_id(resource).ok_or_else(|| MedicoError::Fhir("Appointment ohne id".into()))?;
+        let external_id =
+            fhir_id(resource).ok_or_else(|| MedicoError::Fhir("Appointment ohne id".into()))?;
 
         // Patient-Referenz (participant[0].individual.reference -> Patient/xxx)
         let patient_ref = resource
@@ -1035,19 +1239,23 @@ impl SyncEngine {
 
         // Patient-KIS-ID finden (über external_id)
         let patient_kis_id: Option<Uuid> = match &patient_ref {
-            Some(ext) => sqlx::query_scalar("SELECT id FROM patients WHERE external_id = $1")
-                .bind(ext)
-                .fetch_optional(&self.db.read_pool)
-                .await?,
+            Some(ext) => {
+                sqlx::query_scalar("SELECT id FROM patients WHERE external_id = $1")
+                    .bind(ext)
+                    .fetch_optional(&self.db.read_pool)
+                    .await?
+            }
             None => None,
         };
 
         // Doctor-KIS-ID finden (über external_id)
         let doctor_kis_id: Option<Uuid> = match &doctor_ref {
-            Some(ext) => sqlx::query_scalar("SELECT id FROM doctors WHERE external_id = $1")
-                .bind(ext)
-                .fetch_optional(&self.db.read_pool)
-                .await?,
+            Some(ext) => {
+                sqlx::query_scalar("SELECT id FROM doctors WHERE external_id = $1")
+                    .bind(ext)
+                    .fetch_optional(&self.db.read_pool)
+                    .await?
+            }
             None => None,
         };
 
@@ -1104,7 +1312,8 @@ impl SyncEngine {
 
     /// Upsert eines FHIR-MedicationRequest (Verordnung).
     async fn upsert_medication(&self, resource: &Value) -> Result<(), MedicoError> {
-        let external_id = fhir_id(resource).ok_or_else(|| MedicoError::Fhir("MedicationRequest ohne id".into()))?;
+        let external_id = fhir_id(resource)
+            .ok_or_else(|| MedicoError::Fhir("MedicationRequest ohne id".into()))?;
 
         // Patient-Referenz (subject.reference -> Patient/xxx)
         let patient_ref = resource
@@ -1135,10 +1344,12 @@ impl SyncEngine {
             .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
 
         let patient_kis_id: Option<Uuid> = match &patient_ref {
-            Some(ext) => sqlx::query_scalar("SELECT id FROM patients WHERE external_id = $1")
-                .bind(ext)
-                .fetch_optional(&self.db.read_pool)
-                .await?,
+            Some(ext) => {
+                sqlx::query_scalar("SELECT id FROM patients WHERE external_id = $1")
+                    .bind(ext)
+                    .fetch_optional(&self.db.read_pool)
+                    .await?
+            }
             None => None,
         };
 
@@ -1224,7 +1435,10 @@ async fn trigger_sync_handler(
             "observations": r.observations,
             "medications": r.medications,
         }))),
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal(&e.to_string())))),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::internal(&e.to_string())),
+        )),
     }
 }
 
@@ -1239,11 +1453,7 @@ async fn trigger_sync_handler(
 /// - `POST /api/v1/interfaces/medico/sync/trigger`
 ///
 /// Ruft zusätzlich den Sync-Engine-Hintergrund-Task auf.
-pub fn register_router(
-    db: Arc<Database>,
-    security: Arc<Security>,
-    config: AppConfig,
-) -> Router {
+pub fn register_router(db: Arc<Database>, security: Arc<Security>, config: AppConfig) -> Router {
     let medico_config = config.interfaces.medico.clone();
     let client = Arc::new(MedicoClient::new(medico_config.clone()));
     let sync_state = SyncState::new();
@@ -1268,7 +1478,10 @@ pub fn register_router(
 
     Router::new()
         .route("/api/v1/interfaces/medico/status", get(status_handler))
-        .route("/api/v1/interfaces/medico/sync/trigger", post(trigger_sync_handler))
+        .route(
+            "/api/v1/interfaces/medico/sync/trigger",
+            post(trigger_sync_handler),
+        )
         .with_state(state)
 }
 
@@ -1337,7 +1550,10 @@ mod tests {
         assert_eq!(fhir_gender(&resource), "m");
         assert_eq!(fhir_insurance_no(&resource).as_deref(), Some("V123456789"));
         assert_eq!(fhir_phone(&resource).as_deref(), Some("030/1234567"));
-        assert_eq!(fhir_email(&resource).as_deref(), Some("max.muster@example.com"));
+        assert_eq!(
+            fhir_email(&resource).as_deref(),
+            Some("max.muster@example.com")
+        );
         let (street, zip, city) = fhir_address(&resource);
         assert_eq!(street.as_deref(), Some("Musterstraße 42"));
         assert_eq!(zip.as_deref(), Some("10115"));
@@ -1382,11 +1598,15 @@ mod tests {
 
         assert_eq!(fhir_id(&resource).as_deref(), Some("appt-456"));
         assert_eq!(
-            resource.pointer("/participant/0/individual/reference").and_then(|v| v.as_str()),
+            resource
+                .pointer("/participant/0/individual/reference")
+                .and_then(|v| v.as_str()),
             Some("Patient/medico-123")
         );
         assert_eq!(
-            resource.pointer("/participant/1/individual/reference").and_then(|v| v.as_str()),
+            resource
+                .pointer("/participant/1/individual/reference")
+                .and_then(|v| v.as_str()),
             Some("Practitioner/doc-789")
         );
     }
@@ -1408,11 +1628,15 @@ mod tests {
 
         assert_eq!(fhir_id(&resource).as_deref(), Some("med-789"));
         assert_eq!(
-            resource.pointer("/subject/reference").and_then(|v| v.as_str()),
+            resource
+                .pointer("/subject/reference")
+                .and_then(|v| v.as_str()),
             Some("Patient/medico-123")
         );
         assert_eq!(
-            resource.pointer("/medicationCodeableConcept/text").and_then(|v| v.as_str()),
+            resource
+                .pointer("/medicationCodeableConcept/text")
+                .and_then(|v| v.as_str()),
             Some("Ibuprofen 400 mg")
         );
     }

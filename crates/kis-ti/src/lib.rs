@@ -17,8 +17,8 @@
 //! - Audit-Log für alle TI-Operationen
 //! - TLS 1.3 erzwungen (rustls)
 
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
@@ -136,7 +136,11 @@ impl CertManager {
             ("CA-Bundle", &ca_path),
         ] {
             if !path.exists() {
-                return Err(TiError::Cert(format!("{} nicht gefunden: {}", label, path.display())));
+                return Err(TiError::Cert(format!(
+                    "{} nicht gefunden: {}",
+                    label,
+                    path.display()
+                )));
             }
         }
 
@@ -336,7 +340,10 @@ impl CardReaderManager {
     /// Simuliert die Verbindung mit einem Kartenleser.
     pub async fn connect(&self) -> Result<(), TiError> {
         let mut state = self.state.write().await;
-        info!(reader = self.config.egk_reader_path.as_str(), "Kartenleser-Verbindung hergestellt");
+        info!(
+            reader = self.config.egk_reader_path.as_str(),
+            "Kartenleser-Verbindung hergestellt"
+        );
         state.connected = true;
         state.last_error = None;
         Ok(())
@@ -406,10 +413,13 @@ impl EpaClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(TiError::Epa(format!("ePA-Liste fehlgeschlagen ({}): {}", status, body)));
+            return Err(TiError::Epa(format!(
+                "ePA-Liste fehlgeschlagen ({}): {}",
+                status, body
+            )));
         }
 
-        let json: Value = resp.json().await.map_err(|e| TiError::Http(e))?;
+        let json: Value = resp.json().await.map_err(TiError::Http)?;
         let docs = json
             .get("documents")
             .and_then(|d| d.as_array())
@@ -453,16 +463,14 @@ impl EpaClient {
             self.config.base_url.trim_end_matches('/'),
             doc_id
         );
-        let resp = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(TiError::Http)?;
+        let resp = self.client.get(&url).send().await.map_err(TiError::Http)?;
 
         if !resp.status().is_success() {
             let status = resp.status();
-            return Err(TiError::Epa(format!("ePA-Dokument-Download fehlgeschlagen: {}", status)));
+            return Err(TiError::Epa(format!(
+                "ePA-Dokument-Download fehlgeschlagen: {}",
+                status
+            )));
         }
 
         Ok(resp.bytes().await.map_err(TiError::Http)?.to_vec())
@@ -479,7 +487,10 @@ impl EpaClient {
         mime_type: &str,
         data: &[u8],
     ) -> Result<String, TiError> {
-        let url = format!("{}/ePA/documents", self.config.base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/ePA/documents",
+            self.config.base_url.trim_end_matches('/')
+        );
         let form = serde_json::json!({
             "tsvnr": tsvnr,
             "title": title,
@@ -503,10 +514,13 @@ impl EpaClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(TiError::Epa(format!("ePA-Upload fehlgeschlagen ({}): {}", status, body)));
+            return Err(TiError::Epa(format!(
+                "ePA-Upload fehlgeschlagen ({}): {}",
+                status, body
+            )));
         }
 
-        let json: Value = resp.json().await.map_err(|e| TiError::Http(e))?;
+        let json: Value = resp.json().await.map_err(TiError::Http)?;
         Ok(json
             .get("id")
             .and_then(|id| id.as_str())
@@ -584,10 +598,13 @@ impl ERezeptClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body_text = resp.text().await.unwrap_or_default();
-            return Err(TiError::ERezept(format!("eRezept-Anlage fehlgeschlagen ({}): {}", status, body_text)));
+            return Err(TiError::ERezept(format!(
+                "eRezept-Anlage fehlgeschlagen ({}): {}",
+                status, body_text
+            )));
         }
 
-        let json: Value = resp.json().await.map_err(|e| TiError::Http(e))?;
+        let json: Value = resp.json().await.map_err(TiError::Http)?;
         let id = json
             .get("id")
             .and_then(|id| id.as_str())
@@ -602,7 +619,11 @@ impl ERezeptClient {
     ///
     /// `GET {ti_base_url}/eRezept/{id}`
     pub async fn get_prescription(&self, id: &str) -> Result<ERezeptStatus, TiError> {
-        let url = format!("{}/eRezept/{}", self.config.base_url.trim_end_matches('/'), id);
+        let url = format!(
+            "{}/eRezept/{}",
+            self.config.base_url.trim_end_matches('/'),
+            id
+        );
         let resp = self
             .client
             .get(&url)
@@ -613,10 +634,13 @@ impl ERezeptClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            return Err(TiError::ERezept(format!("eRezept-Abfrage fehlgeschlagen: {}", status)));
+            return Err(TiError::ERezept(format!(
+                "eRezept-Abfrage fehlgeschlagen: {}",
+                status
+            )));
         }
 
-        let json: Value = resp.json().await.map_err(|e| TiError::Http(e))?;
+        let json: Value = resp.json().await.map_err(TiError::Http)?;
         Ok(ERezeptStatus {
             id: id.to_string(),
             status: json
@@ -634,7 +658,10 @@ impl ERezeptClient {
                 .and_then(|p| p.get("reference"))
                 .and_then(|r| r.as_str())
                 .map(|s| s.to_string()),
-            pdf_available: json.get("pdfAvailable").and_then(|p| p.as_bool()).unwrap_or(false),
+            pdf_available: json
+                .get("pdfAvailable")
+                .and_then(|p| p.as_bool())
+                .unwrap_or(false),
         })
     }
 
@@ -642,7 +669,11 @@ impl ERezeptClient {
     ///
     /// `GET {ti_base_url}/eRezept/{id}/pdf`
     pub async fn get_pdf(&self, id: &str) -> Result<Vec<u8>, TiError> {
-        let url = format!("{}/eRezept/{}/pdf", self.config.base_url.trim_end_matches('/'), id);
+        let url = format!(
+            "{}/eRezept/{}/pdf",
+            self.config.base_url.trim_end_matches('/'),
+            id
+        );
         let resp = self
             .client
             .get(&url)
@@ -653,7 +684,10 @@ impl ERezeptClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            return Err(TiError::ERezept(format!("eRezept-PDF-Download fehlgeschlagen: {}", status)));
+            return Err(TiError::ERezept(format!(
+                "eRezept-PDF-Download fehlgeschlagen: {}",
+                status
+            )));
         }
 
         let bytes = resp.bytes().await.map_err(TiError::Http)?;
@@ -729,10 +763,13 @@ impl EAUClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body_text = resp.text().await.unwrap_or_default();
-            return Err(TiError::EAU(format!("eAU-Anlage fehlgeschlagen ({}): {}", status, body_text)));
+            return Err(TiError::EAU(format!(
+                "eAU-Anlage fehlgeschlagen ({}): {}",
+                status, body_text
+            )));
         }
 
-        let json: Value = resp.json().await.map_err(|e| TiError::Http(e))?;
+        let json: Value = resp.json().await.map_err(TiError::Http)?;
         let id = json
             .get("id")
             .and_then(|id| id.as_str())
@@ -758,10 +795,13 @@ impl EAUClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            return Err(TiError::EAU(format!("eAU-Abfrage fehlgeschlagen: {}", status)));
+            return Err(TiError::EAU(format!(
+                "eAU-Abfrage fehlgeschlagen: {}",
+                status
+            )));
         }
 
-        let json: Value = resp.json().await.map_err(|e| TiError::Http(e))?;
+        let json: Value = resp.json().await.map_err(TiError::Http)?;
         Ok(EAUStatus {
             id: id.to_string(),
             status: json
@@ -829,7 +869,7 @@ impl TiBackend {
             let status = resp.status();
             return Err(TiError::HttpStatus(status));
         }
-        Ok(resp.json().await.map_err(|e| TiError::Http(e))?)
+        resp.json().await.map_err(TiError::Http)
     }
 
     /// Führt einen generischen POST-Request aus.
@@ -850,7 +890,7 @@ impl TiBackend {
             let status = resp.status();
             return Err(TiError::HttpStatus(status));
         }
-        Ok(resp.json().await.map_err(|e| TiError::Http(e))?)
+        resp.json().await.map_err(TiError::Http)
     }
 }
 
@@ -964,12 +1004,17 @@ async fn erezept_create_handler(
         .await
     {
         Ok(id) => {
-            state.ops_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            state
+                .ops_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(Json(serde_json::json!({ "id": id })))
         }
         Err(e) => {
             error!(error = %e, "eRezept-Anlage fehlgeschlagen");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal(&e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::internal(&e.to_string())),
+            ))
         }
     }
 }
@@ -992,7 +1037,10 @@ async fn erezept_get_handler(
         })),
         Err(e) => {
             error!(id = %id, error = %e, "eRezept-Abfrage fehlgeschlagen");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal(&e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::internal(&e.to_string())),
+            ))
         }
     }
 }
@@ -1009,7 +1057,9 @@ async fn erezept_pdf_handler(
 
     match state.erezept.get_pdf(&id).await {
         Ok(pdf_bytes) => {
-            state.ops_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            state
+                .ops_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(axum::response::Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/pdf")
@@ -1027,7 +1077,10 @@ async fn erezept_pdf_handler(
         }
         Err(e) => {
             error!(id = %id, error = %e, "eRezept-PDF-Download fehlgeschlagen");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal(&e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::internal(&e.to_string())),
+            ))
         }
     }
 }
@@ -1070,12 +1123,17 @@ async fn eau_create_handler(
         .await
     {
         Ok(id) => {
-            state.ops_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            state
+                .ops_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(Json(serde_json::json!({ "id": id })))
         }
         Err(e) => {
             error!(error = %e, "eAU-Anlage fehlgeschlagen");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal(&e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::internal(&e.to_string())),
+            ))
         }
     }
 }
@@ -1098,7 +1156,10 @@ async fn eau_get_handler(
         })),
         Err(e) => {
             error!(id = %id, error = %e, "eAU-Abfrage fehlgeschlagen");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal(&e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::internal(&e.to_string())),
+            ))
         }
     }
 }
@@ -1111,7 +1172,9 @@ async fn egk_read_handler(
 ) -> Result<Json<ApiResponse<CardInfo>>, (StatusCode, Json<ApiError>)> {
     match state.card_reader.read_card().await {
         Ok(card) => {
-            state.ops_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            state
+                .ops_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(Json(ApiResponse {
                 data: card,
                 meta: ResponseMeta {
@@ -1123,7 +1186,10 @@ async fn egk_read_handler(
         }
         Err(e) => {
             warn!(error = %e, "eGK-Lesen fehlgeschlagen");
-            Err((StatusCode::BAD_GATEWAY, Json(ApiError::internal(&e.to_string()))))
+            Err((
+                StatusCode::BAD_GATEWAY,
+                Json(ApiError::internal(&e.to_string())),
+            ))
         }
     }
 }
@@ -1135,9 +1201,12 @@ async fn epa_documents_handler(
     State(state): State<TiState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<ApiResponse<Vec<EpaDocument>>>, (StatusCode, Json<ApiError>)> {
-    let tsvnr = params
-        .get("tsvnr")
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(ApiError::internal("tsvnr fehlt"))))?;
+    let tsvnr = params.get("tsvnr").ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError::internal("tsvnr fehlt")),
+        )
+    })?;
 
     match state.epa.list_documents(tsvnr).await {
         Ok(docs) => {
@@ -1153,7 +1222,10 @@ async fn epa_documents_handler(
         }
         Err(e) => {
             error!(error = %e, "ePA-Dokumentenliste fehlgeschlagen");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal(&e.to_string()))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::internal(&e.to_string())),
+            ))
         }
     }
 }
@@ -1176,11 +1248,7 @@ async fn epa_documents_handler(
 ///
 /// Falls das TI-Backend nicht konfiguriert ist (keine Zertifikate),
 /// wird ein Router ohne TI-Funktionalität geliefert (Graceful Degradation).
-pub fn register_router(
-    db: Arc<Database>,
-    security: Arc<Security>,
-    config: AppConfig,
-) -> Router {
+pub fn register_router(db: Arc<Database>, security: Arc<Security>, config: AppConfig) -> Router {
     let ti_config = config.interfaces.ti.clone();
 
     // TI-Backend initialisieren (kann fehlschlagen, wenn keine Zertifikate)
@@ -1191,7 +1259,10 @@ pub fn register_router(
             let backend = Arc::new(backend);
             let card_reader = Arc::new(CardReaderManager::new(ti_config.clone()));
             let epa = Arc::new(EpaClient::new(ti_config.clone(), backend.client.clone()));
-            let erezept = Arc::new(ERezeptClient::new(ti_config.clone(), backend.client.clone()));
+            let erezept = Arc::new(ERezeptClient::new(
+                ti_config.clone(),
+                backend.client.clone(),
+            ));
             let eau = Arc::new(EAUClient::new(ti_config.clone(), backend.client.clone()));
 
             let state = TiState {
@@ -1208,13 +1279,25 @@ pub fn register_router(
 
             Router::new()
                 .route("/api/v1/interfaces/ti/status", get(ti_status_handler))
-                .route("/api/v1/interfaces/ti/erezept", post(erezept_create_handler))
-                .route("/api/v1/interfaces/ti/erezept/:id", get(erezept_get_handler))
-                .route("/api/v1/interfaces/ti/erezept/:id/pdf", get(erezept_pdf_handler))
+                .route(
+                    "/api/v1/interfaces/ti/erezept",
+                    post(erezept_create_handler),
+                )
+                .route(
+                    "/api/v1/interfaces/ti/erezept/:id",
+                    get(erezept_get_handler),
+                )
+                .route(
+                    "/api/v1/interfaces/ti/erezept/:id/pdf",
+                    get(erezept_pdf_handler),
+                )
                 .route("/api/v1/interfaces/ti/eau", post(eau_create_handler))
                 .route("/api/v1/interfaces/ti/eau/:id", get(eau_get_handler))
                 .route("/api/v1/interfaces/ti/egk/read", post(egk_read_handler))
-                .route("/api/v1/interfaces/ti/epa/documents", get(epa_documents_handler))
+                .route(
+                    "/api/v1/interfaces/ti/epa/documents",
+                    get(epa_documents_handler),
+                )
                 .with_state(state)
         }
         Err(e) => {
@@ -1232,11 +1315,7 @@ pub fn register_router(
 
 impl TiState {
     /// Erzeugt einen State für den Fall, dass das TI-Backend nicht verfügbar ist.
-    fn unavailable(
-        db: Arc<Database>,
-        security: Arc<Security>,
-        config: AppConfig,
-    ) -> Self {
+    fn unavailable(db: Arc<Database>, security: Arc<Security>, config: AppConfig) -> Self {
         let ti_config = config.interfaces.ti.clone();
         let dummy_client = reqwest::Client::new();
         Self {

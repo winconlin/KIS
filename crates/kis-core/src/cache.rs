@@ -26,8 +26,8 @@
 // ============================================================
 
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use moka::sync::Cache as MokaCache;
@@ -77,7 +77,11 @@ pub struct CacheStats {
 impl CacheStats {
     fn from_counts(hit: u64, miss: u64, evictions: u64) -> Self {
         let total = hit + miss;
-        let hit_rate = if total == 0 { 0.0 } else { hit as f64 / total as f64 };
+        let hit_rate = if total == 0 {
+            0.0
+        } else {
+            hit as f64 / total as f64
+        };
         Self {
             hit_count: hit,
             miss_count: miss,
@@ -225,14 +229,12 @@ impl EntityCache {
                 self.cache.insert(key.clone(), json);
                 debug!(
                     entity_type,
-                    entity_id,
-                    "Read-Through: Loader-Ergebnis im Cache gespeichert"
+                    entity_id, "Read-Through: Loader-Ergebnis im Cache gespeichert"
                 );
             }
             None => debug!(
                 entity_type,
-                entity_id,
-                "Read-Through: Loader lieferte None (wird nicht gecacht)"
+                entity_id, "Read-Through: Loader lieferte None (wird nicht gecacht)"
             ),
         }
         Ok(value)
@@ -251,8 +253,7 @@ impl EntityCache {
         self.cache.insert(key, json);
         debug!(
             entity_type,
-            entity_id,
-            "Cache-Set (TTL läuft ab dem jetzigen Zeitpunkt)"
+            entity_id, "Cache-Set (TTL läuft ab dem jetzigen Zeitpunkt)"
         );
         Ok(())
     }
@@ -264,7 +265,10 @@ impl EntityCache {
         if let Ok(mut known) = self.known_keys.lock() {
             known.remove(&key);
         }
-        debug!(entity_type, entity_id, "Cache-Eintrag invalidiert (nach Write)");
+        debug!(
+            entity_type,
+            entity_id, "Cache-Eintrag invalidiert (nach Write)"
+        );
     }
 
     /// Invalidiert ALLE Einträge eines Entity-Typs (Task 5.2).
@@ -279,7 +283,13 @@ impl EntityCache {
             .known_keys
             .lock()
             .ok()
-            .map(|known| known.iter().filter(|k| k.starts_with(&prefix)).cloned().collect())
+            .map(|known| {
+                known
+                    .iter()
+                    .filter(|k| k.starts_with(&prefix))
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
 
         for key in &keys {
@@ -312,9 +322,7 @@ impl EntityCache {
     /// ältere Einträge aus — wir schätzen das als Eviction.
     fn track_insert(&self, key: &str) {
         if let Ok(mut known) = self.known_keys.lock() {
-            if known.insert(key.to_string())
-                && known.len() as u64 > self.max_entries
-            {
+            if known.insert(key.to_string()) && known.len() as u64 > self.max_entries {
                 self.evictions.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -418,7 +426,9 @@ mod tests {
     #[tokio::test]
     async fn test_ttl_expiry() {
         let cache = EntityCache::new(&test_config(1, 1000));
-        cache.set("patient", "999", &serde_json::json!({"v": 1})).unwrap();
+        cache
+            .set("patient", "999", &serde_json::json!({"v": 1}))
+            .unwrap();
         assert!(cache.get("patient", "999").is_some());
 
         tokio::time::sleep(Duration::from_millis(1200)).await;
@@ -473,23 +483,26 @@ mod tests {
         let result: Option<serde_json::Value> = cache
             .get_or_load("patient", "42", || {
                 calls.fetch_add(1, Ordering::Relaxed);
-                async move {
-                    anyhow::Ok(Some(serde_json::json!({"id": "42", "name": "Muster"})))
-                }
+                async move { anyhow::Ok(Some(serde_json::json!({"id": "42", "name": "Muster"}))) }
             })
             .await
             .expect("Read-Through darf nicht fehlschlagen");
 
-        assert_eq!(result, Some(serde_json::json!({"id": "42", "name": "Muster"})));
-        assert_eq!(calls.load(Ordering::Relaxed), 1, "Loader muss einmal laufen");
+        assert_eq!(
+            result,
+            Some(serde_json::json!({"id": "42", "name": "Muster"}))
+        );
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "Loader muss einmal laufen"
+        );
 
         // Zweiter Aufruf: Cache-Hit, Loader NICHT erneut
         let result2: Option<serde_json::Value> = cache
             .get_or_load("patient", "42", || {
                 calls.fetch_add(1, Ordering::Relaxed);
-                async move {
-                    anyhow::Ok(Some(serde_json::json!({"id": "42"})))
-                }
+                async move { anyhow::Ok(Some(serde_json::json!({"id": "42"}))) }
             })
             .await
             .unwrap();
@@ -639,9 +652,15 @@ mod tests {
     #[test]
     fn test_invalidate_prefix() {
         let cache = EntityCache::new(&test_config(300, 1000));
-        cache.set("patient", "1", &serde_json::json!({"a": 1})).unwrap();
-        cache.set("patient", "2", &serde_json::json!({"a": 2})).unwrap();
-        cache.set("doctor", "9", &serde_json::json!({"d": 9})).unwrap();
+        cache
+            .set("patient", "1", &serde_json::json!({"a": 1}))
+            .unwrap();
+        cache
+            .set("patient", "2", &serde_json::json!({"a": 2}))
+            .unwrap();
+        cache
+            .set("doctor", "9", &serde_json::json!({"d": 9}))
+            .unwrap();
 
         cache.invalidate_prefix("patient");
 

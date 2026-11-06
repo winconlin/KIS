@@ -27,11 +27,10 @@ use std::sync::Arc;
 
 use axum::{extract::Path, routing::get, Json, Router};
 use base64::Engine;
-use sqlx::Row;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use kis_core::db::Database;
@@ -264,9 +263,9 @@ impl XdsServer {
     ) -> Result<SubmissionResponse, XdsError> {
         // 1. Inhalt dekodieren
         let engine = base64::engine::general_purpose::STANDARD;
-        let content = engine
-            .decode(&req.content_base64)
-            .map_err(|e| XdsError::InvalidRequest(format!("Base64-Dekodierung fehlgeschlagen: {}", e)))?;
+        let content = engine.decode(&req.content_base64).map_err(|e| {
+            XdsError::InvalidRequest(format!("Base64-Dekodierung fehlgeschlagen: {}", e))
+        })?;
         if content.is_empty() {
             return Err(XdsError::EmptyDocument);
         }
@@ -353,10 +352,7 @@ impl XdsServer {
 
     /// Document Query (QPDT-Q01/Q02/Q03): Sucht DocumentEntries nach
     /// PatientID, Klasse, Typ, Datum.
-    pub async fn handle_query(
-        &self,
-        req: &QueryRequest,
-    ) -> Result<QueryResponse, XdsError> {
+    pub async fn handle_query(&self, req: &QueryRequest) -> Result<QueryResponse, XdsError> {
         let limit = req.limit.min(500) as i32;
 
         // Parametrisierte Abfrage mit optionalen Kriterien
@@ -417,11 +413,12 @@ impl XdsServer {
 
     /// Liefert ein einzelnes Dokument (Inhalt) anhand der DocumentEntry-ID.
     pub async fn get_document(&self, id: &Uuid) -> Result<Vec<u8>, XdsError> {
-        let row: Option<(String,)> =
-            sqlx::query_as::<_, (String,)>("SELECT storage_path FROM xds_document_entries WHERE id = $1")
-                .bind(id)
-                .fetch_optional(self.db.read())
-                .await?;
+        let row: Option<(String,)> = sqlx::query_as::<_, (String,)>(
+            "SELECT storage_path FROM xds_document_entries WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(self.db.read())
+        .await?;
 
         let path = match row {
             Some((p,)) => p,
@@ -464,7 +461,11 @@ async fn audit_entry(
            VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)"#,
     )
     .bind(actor)
-    .bind(data.get("action").and_then(|v| v.as_str()).unwrap_or("UNKNOWN"))
+    .bind(
+        data.get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("UNKNOWN"),
+    )
     .bind(data)
     .bind(&hash)
     .bind(&prev_hash)

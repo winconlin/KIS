@@ -1,5 +1,8 @@
 # KIS — Fahrplan für die Entwicklung
 
+> **Hinweis (06.11.2026):** Teile dieses Dokuments beschreiben den entfernten SQLite-Prototyp oder ein Zielbild. Maßgeblich für den Ist-Zustand sind [INSTALLATION](INSTALLATION.md), [API](API.md), [DATABASE](DATABASE.md) und [REVIEW_STATUS](REVIEW_STATUS.md).
+
+
 > **Dieses Dokument beschreibt die langfristige Roadmap.**
 > Agenten lesen zunächst [Root-AGENTS.md](../AGENTS.md), den [operativen Auftrag](AGENTEN_AUFTRAG.md) und die [Sicherheits-Abnahme](SICHERHEITS_ABNAHME.md).
 > Zugewiesene Arbeitspakete werden anhand tatsächlicher Nachweise abgeschlossen. Übliche technische Entscheidungen erfolgen selbstständig innerhalb dieses Auftrags; neue Produkt-/Datenfreigaben werden nicht aus der Roadmap abgeleitet.

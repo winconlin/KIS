@@ -21,7 +21,6 @@
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Pool, Row};
-use std::str::FromStr;
 use tracing::{info, warn};
 
 pub struct Database {
@@ -93,6 +92,24 @@ impl Database {
         max_connections: u32,
         read_max_connections: Option<u32>,
     ) -> anyhow::Result<Self> {
+        Self::connect_pools_opts(
+            write_url,
+            read_url,
+            max_connections,
+            read_max_connections,
+            true,
+        )
+        .await
+    }
+
+    /// Wie [`Database::connect_pools`], Migrationen optional.
+    pub async fn connect_pools_opts(
+        write_url: &str,
+        read_url: Option<&str>,
+        max_connections: u32,
+        read_max_connections: Option<u32>,
+        run_migrations: bool,
+    ) -> anyhow::Result<Self> {
         // Write-Pool
         let write_pool = PgPoolOptions::new()
             .max_connections(max_connections)
@@ -114,24 +131,19 @@ impl Database {
                 .connect(rurl)
                 .await?;
 
-            info!(
-                max_connections = read_max,
-                "Read-Pool (Replica) verbunden"
-            );
+            info!(max_connections = read_max, "Read-Pool (Replica) verbunden");
             pool
         } else {
             warn!("Kein separater Read-Pool — Lese-Queries nutzen den Write-Pool");
             write_pool.clone()
         };
 
-        // Migrations auf dem Write-Pool
-        // Hinweis: Der Pfad ist relativ zur Crate (crates/kis-core) —
-        // die Workspace-Migrationen liegen unter /migrations
-        sqlx::migrate!("../../migrations")
-            .run(&write_pool)
-            .await?;
-
-        info!("Migrations erfolgreich ausgeführt");
+        // Migrationen laufen nur, wenn ausdrücklich gewünscht. Für den
+        // Betrieb wird `Database::migrate` mit einer eigenen, höher
+        // privilegierten Verbindung empfohlen (siehe docs/DATABASE.md).
+        if run_migrations {
+            Self::run_migrations(&write_pool).await?;
+        }
 
         Ok(Self {
             write_max_connections: max_connections,
@@ -140,6 +152,28 @@ impl Database {
             write_pool,
             read_pool,
         })
+    }
+
+    /// Führt alle eingebetteten Migrationen aus. Bereits angewendete
+    /// Migrationen werden über ihre Prüfsumme verifiziert; Abweichungen
+    /// brechen ab (kein stilles Überschreiben).
+    pub async fn run_migrations(pool: &Pool<sqlx::Postgres>) -> anyhow::Result<()> {
+        sqlx::migrate!("../../migrations").run(pool).await?;
+        info!("Migrationen angewendet");
+        Ok(())
+    }
+
+    /// Verbindet kurzzeitig mit `migration_url` (Schema-Eigentümer) und
+    /// migriert. Die Laufzeitverbindung braucht danach keine DDL-Rechte.
+    pub async fn migrate(migration_url: &str) -> anyhow::Result<()> {
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(10))
+            .connect(migration_url)
+            .await?;
+        let res = Self::run_migrations(&pool).await;
+        pool.close().await;
+        res
     }
 
     /// Zugriff auf den Write-Pool
@@ -164,7 +198,7 @@ impl Database {
     }
 
     fn metrics_of(pool: &Pool<sqlx::Postgres>, max: u32) -> PoolMetrics {
-        let active = pool.size() as u32;
+        let active = pool.size();
         let idle = pool.num_idle() as u32;
         PoolMetrics {
             total: active,

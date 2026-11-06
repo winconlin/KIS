@@ -13,18 +13,18 @@
 //!   DELETE /api/v1/doctors/:id       — Soft-Delete
 //!   GET    /api/v1/doctors/:id/schedule — Zeitplan (Termine + Slots)
 
-use std::sync::Arc;
 use axum::{
     extract::{Path, Query, State},
-    routing::{get, post, put, delete},
+    routing::get,
     Json, Router,
 };
 use chrono::{DateTime, Utc};
+use kis_core::security::{append_audit, RequireRole};
 use serde::{Deserialize, Serialize};
+use sqlx::postgres::PgPool;
+use std::sync::Arc;
 use tracing::{info, warn};
 use uuid::Uuid;
-use sqlx::postgres::PgPool;
-
 
 // ===========================================================================
 // Modelle
@@ -41,7 +41,7 @@ pub struct Doctor {
     /// Haupt-Spezialität
     pub specialty: Option<String>,
     /// Alle Spezialitäten als JSONB-Array
-    pub specialties: Vec<String>,
+    pub specialties: sqlx::types::Json<Vec<String>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
@@ -158,10 +158,18 @@ impl From<DoctorError> for axum::response::Response {
             .status(status)
             .header("content-type", "application/json")
             .body(axum::body::Body::from(
-                serde_json::to_string(&ErrorBody { success: false, error: e.to_string() })
-                    .unwrap_or_else(|_| "{}".into()),
+                serde_json::to_string(&ErrorBody {
+                    success: false,
+                    error: public_message(&e),
+                })
+                .unwrap_or_else(|_| "{}".into()),
             ))
-            .unwrap_or_else(|_| axum::response::Response::builder().status(500).body(axum::body::Body::empty()).unwrap())
+            .unwrap_or_else(|_| {
+                axum::response::Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::empty())
+                    .unwrap()
+            })
     }
 }
 
@@ -189,7 +197,7 @@ async fn list_doctors(
     State(db): State<Arc<PgPool>>,
     Query(params): Query<ListDoctorsQuery>,
 ) -> Result<Json<DoctorPage>, axum::response::Response> {
-    let limit = params.limit.unwrap_or(50).min(200).max(1);
+    let limit = params.limit.unwrap_or(50).clamp(1, 200);
     let active = params.active.unwrap_or(true);
 
     let mut sql = String::from("SELECT * FROM doctors");
@@ -203,7 +211,9 @@ async fn list_doctors(
         bind_idx += 1;
         let _ = search;
         // ILIKE für Name-Suche
-        conds.push(format!("(name_family ILIKE ${bind_idx} OR name_given ILIKE ${bind_idx})"));
+        conds.push(format!(
+            "(name_family ILIKE ${bind_idx} OR name_given ILIKE ${bind_idx})"
+        ));
     }
     if let Some(ref spec) = params.specialty {
         bind_idx += 1;
@@ -240,13 +250,12 @@ async fn get_doctor(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Doctor>, axum::response::Response> {
     let pool = db.as_ref();
-    let doc: Option<Doctor> = sqlx::query_as(
-        "SELECT * FROM doctors WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| DoctorError::Db(e.to_string()))?;
+    let doc: Option<Doctor> =
+        sqlx::query_as("SELECT * FROM doctors WHERE id = $1 AND deleted_at IS NULL")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| DoctorError::Db(e.to_string()))?;
 
     match doc {
         Some(d) => Ok(Json(d)),
@@ -257,9 +266,13 @@ async fn get_doctor(
 /// POST /api/v1/doctors — Arzt anlegen
 async fn create_doctor(
     State(db): State<Arc<PgPool>>,
+    auth: RequireRole,
     Json(body): Json<CreateDoctor>,
 ) -> Result<Json<Doctor>, axum::response::Response> {
-    let pool = db.as_ref();
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| DoctorError::Db(e.to_string()))?;
     let specs_json = serde_json::to_value(body.specialties.unwrap_or_default())
         .unwrap_or_else(|_| serde_json::json!([]));
 
@@ -277,29 +290,36 @@ async fn create_doctor(
     .bind(&body.name_given)
     .bind(&body.specialty)
     .bind(specs_json)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| DoctorError::Db(e.to_string()))?;
 
     info!(doctor_id = %doc.id, "Arzt angelegt");
+    audit(&mut tx, &auth, "doctor.create", "doctor", doc.id).await?;
+    tx.commit()
+        .await
+        .map_err(|e| DoctorError::Db(e.to_string()))?;
     Ok(Json(doc))
 }
 
 /// PUT /api/v1/doctors/:id — Arzt aktualisieren (Optimistic Locking)
 async fn update_doctor(
     State(db): State<Arc<PgPool>>,
+    auth: RequireRole,
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateDoctor>,
 ) -> Result<Json<Doctor>, axum::response::Response> {
-    let pool = db.as_ref();
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| DoctorError::Db(e.to_string()))?;
 
-    let current: Option<(i32,)> = sqlx::query_as(
-        "SELECT version FROM doctors WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| DoctorError::Db(e.to_string()))?;
+    let current: Option<(i32,)> =
+        sqlx::query_as("SELECT version FROM doctors WHERE id = $1 AND deleted_at IS NULL")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| DoctorError::Db(e.to_string()))?;
 
     let current_version = match current {
         Some((v,)) => v,
@@ -308,14 +328,19 @@ async fn update_doctor(
 
     if current_version != body.version {
         warn!(doctor_id = %id, expected = body.version, actual = current_version, "Versionenkonflikt");
-        return Err(axum::response::Response::from(DoctorError::VersionConflict {
-            expected: body.version,
-            actual: current_version,
-        }));
+        return Err(axum::response::Response::from(
+            DoctorError::VersionConflict {
+                expected: body.version,
+                actual: current_version,
+            },
+        ));
     }
 
     let new_version = body.version + 1;
-    let specs_val = body.specialties.as_ref().and_then(|s| serde_json::to_value(s).ok());
+    let specs_val = body
+        .specialties
+        .as_ref()
+        .and_then(|s| serde_json::to_value(s).ok());
 
     let doc: Option<Doctor> = sqlx::query_as(
         r#"
@@ -339,28 +364,38 @@ async fn update_doctor(
     .bind(specs_val)
     .bind(new_version)
     .bind(body.version)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| DoctorError::Db(e.to_string()))?;
 
     match doc {
         Some(d) => {
             info!(doctor_id = %d.id, new_version = d.version, "Arzt aktualisiert");
+            audit(&mut tx, &auth, "doctor.update", "doctor", d.id).await?;
+            tx.commit()
+                .await
+                .map_err(|e| DoctorError::Db(e.to_string()))?;
             Ok(Json(d))
         }
-        None => Err(axum::response::Response::from(DoctorError::VersionConflict {
-            expected: body.version,
-            actual: current_version,
-        })),
+        None => Err(axum::response::Response::from(
+            DoctorError::VersionConflict {
+                expected: body.version,
+                actual: current_version,
+            },
+        )),
     }
 }
 
 /// DELETE /api/v1/doctors/:id — Soft-Delete
 async fn delete_doctor(
     State(db): State<Arc<PgPool>>,
+    auth: RequireRole,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, axum::response::Response> {
-    let pool = db.as_ref();
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| DoctorError::Db(e.to_string()))?;
     let result = sqlx::query(
         r#"
         UPDATE doctors
@@ -370,13 +405,17 @@ async fn delete_doctor(
         "#,
     )
     .bind(id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| DoctorError::Db(e.to_string()))?;
 
     match result {
         Some(_) => {
             info!(doctor_id = %id, "Arzt soft-gelöscht");
+            audit(&mut tx, &auth, "doctor.delete", "doctor", id).await?;
+            tx.commit()
+                .await
+                .map_err(|e| DoctorError::Db(e.to_string()))?;
             Ok(Json(serde_json::json!({
                 "success": true,
                 "message": "Arzt soft-gelöscht",
@@ -411,16 +450,12 @@ async fn doctor_schedule(
     // Zeitraum berechnen (Default: heute bis morgen)
     let now = Utc::now();
     let today = now.date_naive();
-    let date_from = params.date_from.unwrap_or_else(|| {
-        today.and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc()
-    });
-    let date_to = params.date_to.unwrap_or_else(|| {
-        today.and_hms_opt(23, 59, 59)
-            .unwrap()
-            .and_utc()
-    });
+    let date_from = params
+        .date_from
+        .unwrap_or_else(|| today.and_hms_opt(0, 0, 0).unwrap().and_utc());
+    let date_to = params
+        .date_to
+        .unwrap_or_else(|| today.and_hms_opt(23, 59, 59).unwrap().and_utc());
 
     // Termin-Liste mit Patient-Namen (JOIN)
     let appts: Vec<ScheduleAppointment> = sqlx::query_as(
@@ -487,4 +522,39 @@ pub struct ModuleStatus {
 }
 
 pub const MODULE_NAME: &str = "kis-doctors";
-pub const MODULE_DESCRIPTION: &str = "KIS Arzt-Service — Phase 1: CRUD, Optimistic Locking, Zeitplan";
+pub const MODULE_DESCRIPTION: &str =
+    "KIS Arzt-Service — Phase 1: CRUD, Optimistic Locking, Zeitplan";
+
+/// Schreibt den Audit-Eintrag einer Änderung in die laufende Transaktion.
+/// Schlägt das Audit fehl, wird die Änderung verworfen.
+async fn audit(
+    tx: &mut sqlx::PgConnection,
+    auth: &RequireRole,
+    action: &str,
+    entity: &str,
+    id: Uuid,
+) -> Result<(), DoctorError> {
+    append_audit(
+        tx,
+        auth.user_id(),
+        action,
+        entity,
+        Some(&id.to_string()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .map_err(|e| DoctorError::Db(e.to_string()))
+}
+
+/// Fehlermeldung für den Client: interne DB-Details nur ins Log.
+fn public_message(e: &DoctorError) -> String {
+    match e {
+        DoctorError::Db(detail) => {
+            tracing::error!(%detail, "doctors: DB-Fehler");
+            "Interner Serverfehler".to_string()
+        }
+        other => other.to_string(),
+    }
+}

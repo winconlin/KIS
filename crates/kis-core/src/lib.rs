@@ -15,7 +15,9 @@
 //! sind separate Crates im Workspace. Der Binary-Crate `kis-app`
 //! merge-t deren Router.
 
+pub mod access_policy;
 pub mod anonymization;
+pub mod auth;
 pub mod cache;
 pub mod config;
 pub mod data_deletion;
@@ -25,7 +27,6 @@ pub mod models;
 pub mod query_optimizer;
 pub mod rate_limit;
 pub mod security;
-pub mod session;
 pub mod validation;
 
 /// Version des KIS (aus Cargo.toml)

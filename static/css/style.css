@@ -1727,3 +1727,10 @@ textarea {
         color: #000;
     }
 }
+
+/* Kalender-Titel (früher Inline-Style; CSP erlaubt keine Inline-Styles) */
+.cal-title {
+    min-width: 180px;
+    text-align: center;
+    font-weight: 600;
+}

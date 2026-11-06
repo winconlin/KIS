@@ -36,3 +36,6 @@ reqwest = { workspace = true }
 
 # KIS-Kern
 kis-core = { workspace = true }
+
+[lints]
+workspace = true

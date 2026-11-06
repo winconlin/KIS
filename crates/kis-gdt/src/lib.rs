@@ -18,11 +18,13 @@
 //!   `ON CONFLICT (external_id) DO UPDATE`
 //! - Fehlerzeilen werden gesammelt, nicht der ganze Import abgebrochen
 
+#![allow(clippy::type_complexity)]
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path as PathExtract, Query, State},
+    extract::State,
     http::StatusCode,
     routing::{get, post},
     Json, Router,
@@ -34,7 +36,7 @@ use kis_core::models::{ApiError, ApiResponse, ResponseMeta};
 use kis_core::security::Security;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 /// Name des Moduls
@@ -256,7 +258,9 @@ fn parse_gdt_csv(content: &str) -> (bool, Vec<GdtRecord>, Vec<ImportLineError>) 
 
     // Header prüfen (Zeile 1)
     let header_ok = match lines.next() {
-        Some((0, first)) => first.trim() == GDT_HEADER || first.trim() == GDT_HEADER.trim_end_matches(';'),
+        Some((0, first)) => {
+            first.trim() == GDT_HEADER || first.trim() == GDT_HEADER.trim_end_matches(';')
+        }
         _ => false,
     };
 
@@ -273,17 +277,24 @@ fn parse_gdt_csv(content: &str) -> (bool, Vec<GdtRecord>, Vec<ImportLineError>) 
         if fields.len() < 5 {
             errors.push(ImportLineError {
                 line: line_no,
-                error: format!("Nur {} Felder, mindestens 5 erforderlich (Patienten_ID..Geschlecht)", fields.len()),
+                error: format!(
+                    "Nur {} Felder, mindestens 5 erforderlich (Patienten_ID..Geschlecht)",
+                    fields.len()
+                ),
             });
             continue;
         }
 
         // Geburtsdatum validieren (JJJJ-MM-TT)
         let geburtsdatum = fields.get(3).cloned().unwrap_or_default();
-        if !geburtsdatum.is_empty() && NaiveDate::parse_from_str(&geburtsdatum, "%Y-%m-%d").is_err() {
+        if !geburtsdatum.is_empty() && NaiveDate::parse_from_str(&geburtsdatum, "%Y-%m-%d").is_err()
+        {
             errors.push(ImportLineError {
                 line: line_no,
-                error: format!("Ungültiges Geburtsdatum: {} (erwartet JJJJ-MM-TT)", geburtsdatum),
+                error: format!(
+                    "Ungültiges Geburtsdatum: {} (erwartet JJJJ-MM-TT)",
+                    geburtsdatum
+                ),
             });
             continue;
         }
@@ -294,12 +305,30 @@ fn parse_gdt_csv(content: &str) -> (bool, Vec<GdtRecord>, Vec<ImportLineError>) 
             vorname: fields.get(2).cloned().unwrap_or_default(),
             geburtsdatum,
             geschlecht: fields.get(4).cloned().unwrap_or_default().to_lowercase(),
-            versichertennummer: fields.get(5).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-            telefon: fields.get(6).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-            email: fields.get(7).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-            strasse: fields.get(8).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-            plz: fields.get(9).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-            stadt: fields.get(10).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            versichertennummer: fields
+                .get(5)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            telefon: fields
+                .get(6)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            email: fields
+                .get(7)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            strasse: fields
+                .get(8)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            plz: fields
+                .get(9)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            stadt: fields
+                .get(10)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
         });
     }
 
@@ -330,7 +359,19 @@ pub async fn export_patients(
     std::fs::create_dir_all(&export_dir)?;
 
     // Alle Patienten laden (Read-Pool)
-    let rows: Vec<(String, String, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> = if include_deleted {
+    let rows: Vec<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = if include_deleted {
         sqlx::query_as(
             "SELECT id, last_name, first_name, birth_date, gender, insurance_no, phone, email, address_line, address_zip, address_city
              FROM patients
@@ -352,24 +393,27 @@ pub async fn export_patients(
     // In GDT-Format mappen
     let records: Vec<GdtRecord> = rows
         .into_iter()
-        .map(|(id, last, first, birth, gender, insurance, phone, email, street, zip, city)| GdtRecord {
-            patienten_id: id,
-            nachname: last,
-            vorname: first,
-            geburtsdatum: birth,
-            geschlecht: gender.unwrap_or_else(|| "x".into()),
-            versichertennummer: insurance,
-            telefon: phone,
-            email,
-            strasse: street,
-            plz: zip,
-            stadt: city,
-        })
+        .map(
+            |(id, last, first, birth, gender, insurance, phone, email, street, zip, city)| {
+                GdtRecord {
+                    patienten_id: id,
+                    nachname: last,
+                    vorname: first,
+                    geburtsdatum: birth,
+                    geschlecht: gender.unwrap_or_else(|| "x".into()),
+                    versichertennummer: insurance,
+                    telefon: phone,
+                    email,
+                    strasse: street,
+                    plz: zip,
+                    stadt: city,
+                }
+            },
+        )
         .collect();
 
     // CSV bauen: BOM + Header + Daten + abschließendes Zeilenende
-    let mut file_content = String::from_utf8(UTF8_BOM.to_vec())
-        .expect("BOM ist gültiges UTF-8");
+    let mut file_content = String::from_utf8(UTF8_BOM.to_vec()).expect("BOM ist gültiges UTF-8");
     file_content.push_str(GDT_HEADER);
     file_content.push('\n');
     if !records.is_empty() {
@@ -390,9 +434,7 @@ pub async fn export_patients(
         "include_deleted": include_deleted,
         "timestamp": now.to_rfc3339(),
     });
-    let prev_hash = security
-        .audit_hash("", &audit_data)
-        .to_string();
+    let prev_hash = security.audit_hash("", &audit_data).to_string();
     let _ = sqlx::query(
         "INSERT INTO audit_log (timestamp, user_id, action, entity_type, entity_id, new_value, prev_hash, current_hash)
          VALUES ($1, NULL, 'gdt_export', 'patient', NULL, $2, $3, $4)",
@@ -432,10 +474,13 @@ pub async fn list_exports() -> Result<Vec<ExportStatus>, GdtExportError> {
         // Metadaten aus dem Dateinamen ableiten
         if let Ok(meta) = entry.metadata() {
             let size = meta.len();
-            let modified = meta
-                .modified()
-                .ok()
-                .and_then(|t| chrono::DateTime::<Utc>::from_timestamp_millis(t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64));
+            let modified = meta.modified().ok().and_then(|t| {
+                chrono::DateTime::<Utc>::from_timestamp_millis(
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as i64,
+                )
+            });
 
             // Anzahl Datensätze: Zeilen - 1 (Header)
             let record_count = if let Ok(content) = std::fs::read_to_string(&path) {
@@ -455,7 +500,7 @@ pub async fn list_exports() -> Result<Vec<ExportStatus>, GdtExportError> {
             });
         }
     }
-    statuses.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    statuses.sort_by_key(|s| std::cmp::Reverse(s.created_at));
     Ok(statuses)
 }
 
@@ -485,7 +530,11 @@ pub async fn import_gdt(
     if !header_ok {
         warn!("GDT-Header weicht vom Standard ab — Import mit best-effort-Parsing fortgesetzt");
     }
-    info!(records = records.len(), parse_errors = parse_errors.len(), "GDT-Datei geparst");
+    info!(
+        records = records.len(),
+        parse_errors = parse_errors.len(),
+        "GDT-Datei geparst"
+    );
 
     // Strukturfehler zählen
     let mut failed = parse_errors.len() as i64;
@@ -555,7 +604,7 @@ pub async fn import_gdt(
             }
             Err(e) => {
                 failed += 1;
-                let line_no = (inserted + updated + failed) as i64;
+                let line_no = inserted + updated + failed;
                 line_errors.push(ImportLineError {
                     line: line_no,
                     error: format!("DB-Fehler für {}: {}", record.patienten_id, e),
@@ -673,7 +722,10 @@ async fn export_handler(
         })),
         Err(e) => {
             warn!(error = %e, "GDT-Export fehlgeschlagen");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Export fehlgeschlagen"))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::internal("Export fehlgeschlagen")),
+            ))
         }
     }
 }
@@ -681,19 +733,26 @@ async fn export_handler(
 /// GET /api/v1/export/gdt
 ///
 /// Listet vorhandene GDT-Exportdateien.
-async fn list_exports_handler() -> Result<Json<ApiResponse<Vec<ExportStatus>>>, (StatusCode, Json<ApiError>)> {
+async fn list_exports_handler(
+) -> Result<Json<ApiResponse<Vec<ExportStatus>>>, (StatusCode, Json<ApiError>)> {
     match list_exports().await {
-        Ok(exports) => { let total = exports.len() as i64; Ok(Json(ApiResponse {
-            data: exports,
-            meta: ResponseMeta {
-                total,
-                has_more: false,
-                next_cursor: None,
-            },
-        })) },
+        Ok(exports) => {
+            let total = exports.len() as i64;
+            Ok(Json(ApiResponse {
+                data: exports,
+                meta: ResponseMeta {
+                    total,
+                    has_more: false,
+                    next_cursor: None,
+                },
+            }))
+        }
         Err(e) => {
             warn!(error = %e, "Export-Liste nicht ladbar");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Export-Liste nicht ladbar"))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::internal("Export-Liste nicht ladbar")),
+            ))
         }
     }
 }
@@ -707,24 +766,42 @@ async fn download_handler(
 ) -> Result<axum::response::Response, (StatusCode, Json<ApiError>)> {
     // Path-Traversal-Schutz: nur einfache Dateinamen, erlaubtes Suffix
     if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
-        return Err((StatusCode::BAD_REQUEST, Json(ApiError::bad_request("Ungültiger Dateiname"))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError::bad_request("Ungültiger Dateiname")),
+        ));
     }
     if !filename.starts_with("kis_export_") || !filename.ends_with(".gdt") {
-        return Err((StatusCode::BAD_REQUEST, Json(ApiError::bad_request("Nur GDT-Exportdateien (kis_export_*.gdt) sind erlaubt"))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError::bad_request(
+                "Nur GDT-Exportdateien (kis_export_*.gdt) sind erlaubt",
+            )),
+        ));
     }
 
     let path = Path::new(DEFAULT_EXPORT_DIR).join(&filename);
     if !path.exists() {
-        return Err((StatusCode::NOT_FOUND, Json(ApiError::not_found("Datei nicht gefunden"))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiError::not_found("Datei nicht gefunden")),
+        ));
     }
 
-    let content = std::fs::read(&path)
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Datei nicht lesbar"))))?;
+    let content = std::fs::read(&path).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::internal("Datei nicht lesbar")),
+        )
+    })?;
 
     Ok(axum::response::Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/csv; charset=utf-8")
-        .header("Content-Disposition", format!("attachment; filename=\"{}\"", filename))
+        .header(
+            "Content-Disposition",
+            format!("attachment; filename=\"{}\"", filename),
+        )
         .header("Content-Length", content.len().to_string())
         .body(axum::body::Body::from(content))
         .unwrap())
@@ -738,16 +815,23 @@ async fn import_handler(
     State(state): State<GdtState>,
     Json(req): Json<ImportRequest>,
 ) -> Result<Json<ApiResponse<ImportStatus>>, (StatusCode, Json<ApiError>)> {
-    use base64::Engine;
     use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine;
 
     // Base64 dekodieren
-    let content_bytes = B64
-        .decode(&req.content_base64)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiError::bad_request(&format!("Ungültiges Base64: {}", e)))))?;
+    let content_bytes = B64.decode(&req.content_base64).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError::bad_request(&format!("Ungültiges Base64: {}", e))),
+        )
+    })?;
 
-    let content = String::from_utf8(content_bytes)
-        .map_err(|_| (StatusCode::BAD_REQUEST, Json(ApiError::bad_request("Datei ist kein gültiges UTF-8"))))?;
+    let content = String::from_utf8(content_bytes).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError::bad_request("Datei ist kein gültiges UTF-8")),
+        )
+    })?;
 
     let filename = req.filename.clone().unwrap_or_else(|| "upload.gdt".into());
 
@@ -765,7 +849,10 @@ async fn import_handler(
         }
         Err(e) => {
             warn!(error = %e, "GDT-Import fehlgeschlagen");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::internal("Import fehlgeschlagen"))))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::internal("Import fehlgeschlagen")),
+            ))
         }
     }
 }
@@ -786,7 +873,10 @@ async fn import_status_handler(
                 next_cursor: None,
             },
         })),
-        None => Err((StatusCode::NOT_FOUND, Json(ApiError::not_found("Import-Job nicht gefunden")))),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiError::not_found("Import-Job nicht gefunden")),
+        )),
     }
 }
 
@@ -802,11 +892,7 @@ async fn import_status_handler(
 /// - `GET    /api/v1/export/gdt/download/:filename`
 /// - `POST   /api/v1/import/gdt`
 /// - `GET    /api/v1/import/gdt/status/:id`
-pub fn register_router(
-    db: Arc<Database>,
-    security: Arc<Security>,
-    config: AppConfig,
-) -> Router {
+pub fn register_router(db: Arc<Database>, security: Arc<Security>, config: AppConfig) -> Router {
     let state = GdtState {
         db,
         security,
@@ -817,7 +903,10 @@ pub fn register_router(
     Router::new()
         .route("/api/v1/export/gdt", post(export_handler))
         .route("/api/v1/export/gdt", get(list_exports_handler))
-        .route("/api/v1/export/gdt/download/{filename}", get(download_handler))
+        .route(
+            "/api/v1/export/gdt/download/{filename}",
+            get(download_handler),
+        )
         .route("/api/v1/import/gdt", post(import_handler))
         .route("/api/v1/import/gdt/status/{id}", get(import_status_handler))
         .with_state(state)
@@ -860,7 +949,9 @@ mod tests {
     /// Test: CSV-Parsing mit angeführten Feldern
     #[test]
     fn test_csv_parse_line() {
-        let fields = csv_parse_line("1;Muster;Max;1990-01-01;m;V123;030/123;max@test.de;Str. 1;10115;Berlin");
+        let fields = csv_parse_line(
+            "1;Muster;Max;1990-01-01;m;V123;030/123;max@test.de;Str. 1;10115;Berlin",
+        );
         assert_eq!(fields.len(), 11);
         assert_eq!(fields[1], "Muster");
         assert_eq!(fields[6], "030/123");
@@ -886,7 +977,8 @@ mod tests {
     /// Test: Ungültiges Geburtsdatum wird als Fehler erkannt
     #[test]
     fn test_parse_gdt_csv_invalid_date() {
-        let csv = "Patienten_ID;Nachname;Vorname;Geburtsdatum;Geschlecht\nP1;Muster;Max;31-12-1990;m\n";
+        let csv =
+            "Patienten_ID;Nachname;Vorname;Geburtsdatum;Geschlecht\nP1;Muster;Max;31-12-1990;m\n";
         let (_, records, errors) = parse_gdt_csv(csv);
         assert!(records.is_empty());
         assert_eq!(errors.len(), 1);
@@ -937,7 +1029,10 @@ mod tests {
         let (_, parsed, errors) = parse_gdt_csv(&csv);
         assert!(errors.is_empty());
         assert_eq!(parsed.len(), 2);
-        assert_eq!(parsed[0].strasse.as_deref(), Some("Musterstr. 1; Hinterhof"));
+        assert_eq!(
+            parsed[0].strasse.as_deref(),
+            Some("Musterstr. 1; Hinterhof")
+        );
         assert_eq!(parsed[1].versichertennummer, None);
     }
 }

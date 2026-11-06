@@ -13,18 +13,20 @@
 //!   DELETE /api/v1/medications/:id          — Soft-Delete
 //!   GET    /api/v1/medications/:patient_id  — Alle Medikationen eines Patienten
 
-use std::sync::Arc;
+#![allow(clippy::type_complexity)]
+
 use axum::{
     extract::{Path, Query, State},
-    routing::{get, post, put, delete},
+    routing::get,
     Json, Router,
 };
 use chrono::{DateTime, Utc};
+use kis_core::security::{append_audit, RequireRole};
 use serde::{Deserialize, Serialize};
+use sqlx::postgres::PgPool;
+use std::sync::Arc;
 use tracing::{info, warn};
 use uuid::Uuid;
-use sqlx::postgres::PgPool;
-
 
 // ===========================================================================
 // Modelle
@@ -140,7 +142,9 @@ pub enum MedicationError {
 impl From<&MedicationError> for axum::http::StatusCode {
     fn from(e: &MedicationError) -> Self {
         match e {
-            MedicationError::NotFound(_) | MedicationError::PatientNotFound(_) => axum::http::StatusCode::NOT_FOUND,
+            MedicationError::NotFound(_) | MedicationError::PatientNotFound(_) => {
+                axum::http::StatusCode::NOT_FOUND
+            }
             MedicationError::VersionConflict { .. } => axum::http::StatusCode::CONFLICT,
             MedicationError::InvalidDateRange => axum::http::StatusCode::BAD_REQUEST,
             MedicationError::Db(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -161,10 +165,18 @@ impl From<MedicationError> for axum::response::Response {
             .status(status)
             .header("content-type", "application/json")
             .body(axum::body::Body::from(
-                serde_json::to_string(&ErrorBody { success: false, error: e.to_string() })
-                    .unwrap_or_else(|_| "{}".into()),
+                serde_json::to_string(&ErrorBody {
+                    success: false,
+                    error: public_message(&e),
+                })
+                .unwrap_or_else(|_| "{}".into()),
             ))
-            .unwrap_or_else(|_| axum::response::Response::builder().status(500).body(axum::body::Body::empty()).unwrap())
+            .unwrap_or_else(|_| {
+                axum::response::Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::empty())
+                    .unwrap()
+            })
     }
 }
 
@@ -175,11 +187,21 @@ impl From<MedicationError> for axum::response::Response {
 /// Registriert den Medikations-Router
 pub fn register_router(db: Arc<PgPool>) -> Router {
     Router::new()
-        .route("/api/v1/medications", get(list_medications).post(create_medication))
-        .route("/api/v1/medications/:patient_id", get(medications_by_patient))
+        .route(
+            "/api/v1/medications",
+            get(list_medications).post(create_medication),
+        )
+        // Eindeutiger Pfad: `/medications/:id` und `/medications/:patient_id`
+        // kollidierten (Panic beim Start).
+        .route(
+            "/api/v1/medications/patient/:patient_id",
+            get(medications_by_patient),
+        )
         .route(
             "/api/v1/medications/:id",
-            get(get_medication).put(update_medication).delete(delete_medication),
+            get(get_medication)
+                .put(update_medication)
+                .delete(delete_medication),
         )
         .with_state(db)
 }
@@ -193,7 +215,7 @@ async fn list_medications(
     State(db): State<Arc<PgPool>>,
     Query(params): Query<ListMedicationsQuery>,
 ) -> Result<Json<MedicationPage>, axum::response::Response> {
-    let limit = params.limit.unwrap_or(50).min(200).max(1);
+    let limit = params.limit.unwrap_or(50).clamp(1, 200);
     let active = params.active.unwrap_or(true);
 
     let mut sql = String::from("SELECT * FROM medications");
@@ -260,45 +282,53 @@ async fn get_medication(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Medication>, axum::response::Response> {
     let pool = db.as_ref();
-    let med: Option<Medication> = sqlx::query_as(
-        "SELECT * FROM medications WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| MedicationError::Db(e.to_string()))?;
+    let med: Option<Medication> =
+        sqlx::query_as("SELECT * FROM medications WHERE id = $1 AND deleted_at IS NULL")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| MedicationError::Db(e.to_string()))?;
 
     match med {
         Some(m) => Ok(Json(m)),
-        None => Err(axum::response::Response::from(MedicationError::NotFound(id))),
+        None => Err(axum::response::Response::from(MedicationError::NotFound(
+            id,
+        ))),
     }
 }
 
 /// POST /api/v1/medications — Medikament anlegen
 async fn create_medication(
     State(db): State<Arc<PgPool>>,
+    auth: RequireRole,
     Json(body): Json<CreateMedication>,
 ) -> Result<Json<Medication>, axum::response::Response> {
-    let pool = db.as_ref();
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| MedicationError::Db(e.to_string()))?;
 
     // Patient existiert?
-    let p: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM patients WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(body.patient_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| MedicationError::Db(e.to_string()))?;
+    let p: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM patients WHERE id = $1 AND deleted_at IS NULL")
+            .bind(body.patient_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| MedicationError::Db(e.to_string()))?;
 
     if p.is_none() {
-        return Err(axum::response::Response::from(MedicationError::PatientNotFound(body.patient_id)));
+        return Err(axum::response::Response::from(
+            MedicationError::PatientNotFound(body.patient_id),
+        ));
     }
 
     // Datums-Validierung
     let start = body.start_date.unwrap_or_else(|| Utc::now().date_naive());
     if let Some(end) = body.end_date {
         if end < start {
-            return Err(axum::response::Response::from(MedicationError::InvalidDateRange));
+            return Err(axum::response::Response::from(
+                MedicationError::InvalidDateRange,
+            ));
         }
     }
 
@@ -319,48 +349,63 @@ async fn create_medication(
     .bind(&body.frequency)
     .bind(start)
     .bind(body.end_date)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| MedicationError::Db(e.to_string()))?;
 
     info!(medication_id = %med.id, patient_id = %med.patient_id, "Medikament angelegt");
+    audit(&mut tx, &auth, "medication.create", "medication", med.id).await?;
+    tx.commit()
+        .await
+        .map_err(|e| MedicationError::Db(e.to_string()))?;
     Ok(Json(med))
 }
 
 /// PUT /api/v1/medications/:id — Medikament aktualisieren (Optimistic Locking)
 async fn update_medication(
     State(db): State<Arc<PgPool>>,
+    auth: RequireRole,
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateMedication>,
 ) -> Result<Json<Medication>, axum::response::Response> {
-    let pool = db.as_ref();
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| MedicationError::Db(e.to_string()))?;
 
-    let current: Option<(i32,)> = sqlx::query_as(
-        "SELECT version FROM medications WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| MedicationError::Db(e.to_string()))?;
+    let current: Option<(i32,)> =
+        sqlx::query_as("SELECT version FROM medications WHERE id = $1 AND deleted_at IS NULL")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| MedicationError::Db(e.to_string()))?;
 
     let current_version = match current {
         Some((v,)) => v,
-        None => return Err(axum::response::Response::from(MedicationError::NotFound(id))),
+        None => {
+            return Err(axum::response::Response::from(MedicationError::NotFound(
+                id,
+            )))
+        }
     };
 
     if current_version != body.version {
         warn!(medication_id = %id, expected = body.version, actual = current_version, "Versionenkonflikt");
-        return Err(axum::response::Response::from(MedicationError::VersionConflict {
-            expected: body.version,
-            actual: current_version,
-        }));
+        return Err(axum::response::Response::from(
+            MedicationError::VersionConflict {
+                expected: body.version,
+                actual: current_version,
+            },
+        ));
     }
 
     // Datums-Validierung bei Änderung
     if let Some(ref new_start) = body.start_date {
         if let Some(ref new_end) = body.end_date {
             if new_end < new_start {
-                return Err(axum::response::Response::from(MedicationError::InvalidDateRange));
+                return Err(axum::response::Response::from(
+                    MedicationError::InvalidDateRange,
+                ));
             }
         }
     }
@@ -390,28 +435,38 @@ async fn update_medication(
     .bind(body.end_date)
     .bind(new_version)
     .bind(body.version)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| MedicationError::Db(e.to_string()))?;
 
     match med {
         Some(m) => {
             info!(medication_id = %m.id, new_version = m.version, "Medikament aktualisiert");
+            audit(&mut tx, &auth, "medication.update", "medication", m.id).await?;
+            tx.commit()
+                .await
+                .map_err(|e| MedicationError::Db(e.to_string()))?;
             Ok(Json(m))
         }
-        None => Err(axum::response::Response::from(MedicationError::VersionConflict {
-            expected: body.version,
-            actual: current_version,
-        })),
+        None => Err(axum::response::Response::from(
+            MedicationError::VersionConflict {
+                expected: body.version,
+                actual: current_version,
+            },
+        )),
     }
 }
 
 /// DELETE /api/v1/medications/:id — Soft-Delete
 async fn delete_medication(
     State(db): State<Arc<PgPool>>,
+    auth: RequireRole,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, axum::response::Response> {
-    let pool = db.as_ref();
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| MedicationError::Db(e.to_string()))?;
     let result = sqlx::query(
         r#"
         UPDATE medications
@@ -421,24 +476,30 @@ async fn delete_medication(
         "#,
     )
     .bind(id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| MedicationError::Db(e.to_string()))?;
 
     match result {
         Some(_) => {
             info!(medication_id = %id, "Medikament soft-gelöscht");
+            audit(&mut tx, &auth, "medication.delete", "medication", id).await?;
+            tx.commit()
+                .await
+                .map_err(|e| MedicationError::Db(e.to_string()))?;
             Ok(Json(serde_json::json!({
                 "success": true,
                 "message": "Medikament soft-gelöscht",
                 "id": id.to_string(),
             })))
         }
-        None => Err(axum::response::Response::from(MedicationError::NotFound(id))),
+        None => Err(axum::response::Response::from(MedicationError::NotFound(
+            id,
+        ))),
     }
 }
 
-/// GET /api/v1/medications/:patient_id — Alle Medikationen eines Patienten
+/// GET /api/v1/medications/patient/:patient_id — Alle Medikationen eines Patienten
 async fn medications_by_patient(
     State(db): State<Arc<PgPool>>,
     Path(patient_id): Path<Uuid>,
@@ -446,21 +507,33 @@ async fn medications_by_patient(
     let pool = db.as_ref();
 
     // Patient existiert?
-    let p: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM patients WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(patient_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| MedicationError::Db(e.to_string()))?;
+    let p: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM patients WHERE id = $1 AND deleted_at IS NULL")
+            .bind(patient_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| MedicationError::Db(e.to_string()))?;
 
     if p.is_none() {
-        return Err(axum::response::Response::from(MedicationError::PatientNotFound(patient_id)));
+        return Err(axum::response::Response::from(
+            MedicationError::PatientNotFound(patient_id),
+        ));
     }
 
-    let rows: Vec<(Uuid, String, Uuid, String, Option<String>, Option<String>, chrono::NaiveDate, Option<chrono::NaiveDate>, DateTime<Utc>, DateTime<Utc>, i32)> =
-        sqlx::query_as(
-            r#"
+    let rows: Vec<(
+        Uuid,
+        String,
+        Uuid,
+        String,
+        Option<String>,
+        Option<String>,
+        chrono::NaiveDate,
+        Option<chrono::NaiveDate>,
+        DateTime<Utc>,
+        DateTime<Utc>,
+        i32,
+    )> = sqlx::query_as(
+        r#"
             SELECT m.id,
                    (p.name_family || ' ' || p.name_given) AS patient_name,
                    m.patient_id, m.name, m.dosage, m.frequency,
@@ -472,29 +545,43 @@ async fn medications_by_patient(
               AND m.deleted_at IS NULL
             ORDER BY m.start_date DESC, m.created_at DESC
             "#,
-        )
-        .bind(patient_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| MedicationError::Db(e.to_string()))?;
+    )
+    .bind(patient_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| MedicationError::Db(e.to_string()))?;
 
     let meds: Vec<MedicationDetail> = rows
         .into_iter()
-        .map(|(id, patient_name, pid, name, dosage, frequency, start, end, created, updated, version)| {
-            MedicationDetail {
+        .map(
+            |(
                 id,
-                patient_id: pid,
                 patient_name,
+                pid,
                 name,
                 dosage,
                 frequency,
-                start_date: start,
-                end_date: end,
-                created_at: created,
-                updated_at: updated,
+                start,
+                end,
+                created,
+                updated,
                 version,
-            }
-        })
+            )| {
+                MedicationDetail {
+                    id,
+                    patient_id: pid,
+                    patient_name,
+                    name,
+                    dosage,
+                    frequency,
+                    start_date: start,
+                    end_date: end,
+                    created_at: created,
+                    updated_at: updated,
+                    version,
+                }
+            },
+        )
         .collect();
 
     Ok(Json(meds))
@@ -512,4 +599,39 @@ pub struct ModuleStatus {
 }
 
 pub const MODULE_NAME: &str = "kis-medications";
-pub const MODULE_DESCRIPTION: &str = "KIS Medikations-Service — Phase 1: CRUD, Optimistic Locking, Patient-Filter";
+pub const MODULE_DESCRIPTION: &str =
+    "KIS Medikations-Service — Phase 1: CRUD, Optimistic Locking, Patient-Filter";
+
+/// Schreibt den Audit-Eintrag einer Änderung in die laufende Transaktion.
+/// Schlägt das Audit fehl, wird die Änderung verworfen.
+async fn audit(
+    tx: &mut sqlx::PgConnection,
+    auth: &RequireRole,
+    action: &str,
+    entity: &str,
+    id: Uuid,
+) -> Result<(), MedicationError> {
+    append_audit(
+        tx,
+        auth.user_id(),
+        action,
+        entity,
+        Some(&id.to_string()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .map_err(|e| MedicationError::Db(e.to_string()))
+}
+
+/// Fehlermeldung für den Client: interne DB-Details nur ins Log.
+fn public_message(e: &MedicationError) -> String {
+    match e {
+        MedicationError::Db(detail) => {
+            tracing::error!(%detail, "medications: DB-Fehler");
+            "Interner Serverfehler".to_string()
+        }
+        other => other.to_string(),
+    }
+}

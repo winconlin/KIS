@@ -16,7 +16,7 @@ Prüfe Branch, HEAD, Arbeitsbaum und den aktuellen PR-Stand. PR #1 enthält die 
 
 - Der Benutzer hat ausschließlich frische Entwicklung/Testinstallationen bestätigt.
 - Die nächste Priorität ist **PostgreSQL-Workspace und Datenmodell**.
-- Der aktive Zwischenstand ist derzeit ein SQLite-Prototyp. PostgreSQL, klinisches CRUD und vollständige Medizinschnittstellen sind noch nicht umgesetzt.
+- Seit 06.11.2026 ist der PostgreSQL-Workspace (`crates/`, Server `kis-app`) die einzige ausführbare Referenz; der SQLite-Prototyp `src/` wurde entfernt. Auth, RBAC, Audit und das CRUD der vier Kernmodule sind gegen echtes PostgreSQL getestet. Medizinschnittstellen (HL7, FHIR, DICOM, XDS, GDT, MEDICO, TI) sind nicht eingebunden und nicht betriebsbereit; Stand und offene Punkte in [REVIEW_STATUS.md](docs/REVIEW_STATUS.md).
 - Implementiere nur das zugewiesene Arbeitspaket und notwendige Fehlerkorrekturen. Erweitere den Auftrag nicht eigenmächtig um GUI, klinische Entscheidungen, automatische MEDICO-Schreiboperationen oder LLM-Funktionen.
 - Übliche technische Entscheidungen, lokale Änderungen, isolierte Tests und Fehlerbehebung selbstständig durchführen. Produktentscheidungen, unbekannte Gegenstellenprofile oder tatsächlich angetroffene schützenswerte Daten nicht erfinden.
 - Wird eine bestehende Datenbank mit erhaltenswerten Daten entdeckt, nur den destruktiven Teil anhalten; lesende Prüfung und unabhängige Aufgaben fortsetzen. Keine Datenbank oder fremden Volumes zur Fehlerbehebung löschen.
@@ -59,18 +59,21 @@ Die Arbeitsregeln stehen hier, die unmittelbar auszuführenden Pakete im Agenten
 
 Ein Test ist nur bestanden, wenn er auf dem angegebenen Commit tatsächlich ausgeführt wurde und sein relevantes Verhalten bestätigt. Nicht ausgeführte, übersprungene, simulierte oder wegen fehlender Infrastruktur ausgefallene Prüfungen bleiben offen.
 
-Der aktuelle Root-Build wird mit folgenden Befehlen geprüft:
+Der Workspace wird mit folgenden Befehlen geprüft (Details in [DEVELOPMENT.md](docs/DEVELOPMENT.md)):
 
 ```bash
-cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+KIS_TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres KIS_REQUIRE_PG_TESTS=1 \
+  cargo test --locked --workspace
 cargo build --locked --bins
 python3 scripts/check_docs.py
 python3 -m unittest discover -s tests -p 'test_*.py' -v
+python3 scripts/check_sql.py --database-url "$MIGRATED_DB_URL" --crate kis-core --crate kis-app \
+  --crate kis-patients --crate kis-doctors --crate kis-appointments --crate kis-medications --crate kis-ui
 ```
 
-Die Backup-Tests brauchen age und age-keygen. Der Container-Test braucht ein tatsächlich gebautes Image und einen Docker-Daemon. Fehlende Voraussetzungen nicht als Erfolg zählen. Nach Herstellung des Workspaces zusätzlich die Workspace-Prüfungen aus dem Agentenauftrag ausführen.
+Ohne `KIS_REQUIRE_PG_TESTS=1` werden die PostgreSQL-Tests bei fehlender Datenbank übersprungen; das ist kein Erfolg. Die Backup-Tests brauchen age, pg_dump und PostgreSQL. Der Container-Test braucht ein gebautes Image und einen Docker-Daemon. Neue Routen brauchen einen Eintrag in `crates/kis-core/src/access_policy.rs` mit Test.
 
 Für sicherheitsrelevante Änderungen sind die betroffenen negativen Tests aus [SICHERHEITS_ABNAHME.md](docs/SICHERHEITS_ABNAHME.md) verpflichtend. Ein PostgreSQL-Speicherpaket ist ohne echte PostgreSQL-Integrationstests nicht fertig. Nach bestandenen relevanten Prüfungen nur bei neuen Änderungen, Fehlern oder konkreten offenen Risiken weiter testen.
 

@@ -24,7 +24,7 @@ pub fn validate_name(s: &str) -> ValidationResult {
         return Err("Name darf nicht leer sein".into());
     }
     let len = s.chars().count();
-    if len < 2 || len > 100 {
+    if !(2..=100).contains(&len) {
         return Err(format!(
             "Name muss 2-100 Zeichen lang sein (aktuell: {len})"
         ));
@@ -98,18 +98,15 @@ pub fn validate_phone(s: &str) -> ValidationResult {
     let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
 
     // Ländercode prüfen: +49 oder 0049
-    let normalized = s
-        .replace(['+', '-', ' ', '(', ')'], "");
+    let normalized = s.replace(['+', '-', ' ', '(', ')'], "");
     let has_intl_prefix = normalized.starts_with("49") || normalized.starts_with("0049");
     if !has_intl_prefix {
-        return Err(
-            "Telefonnummer muss mit +49 oder 0049 beginnen".into(),
-        );
+        return Err("Telefonnummer muss mit +49 oder 0049 beginnen".into());
     }
 
     // Ziffernanzahl nach dem Ländercode: 10-15 gesamt (inkl. 49)
     let digit_count = digits.len();
-    if digit_count < 10 || digit_count > 15 {
+    if !(10..=15).contains(&digit_count) {
         return Err(format!(
             "Telefonnummer muss 10-15 Ziffern haben (inkl. Ländercode, aktuell: {digit_count})"
         ));
@@ -122,9 +119,8 @@ pub fn validate_phone(s: &str) -> ValidationResult {
 // ----------------------------------------------------------------
 pub fn validate_date(s: &str) -> ValidationResult {
     let s = s.trim();
-    let date = NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| {
-        "Datum muss das Format JJJJ-MM-TT haben (z. B. 1990-05-15)".to_string()
-    })?;
+    let date = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .map_err(|_| "Datum muss das Format JJJJ-MM-TT haben (z. B. 1990-05-15)".to_string())?;
 
     // Keine Zukunft (Geburtsdatum)
     let today = Utc::now().date_naive();
@@ -149,7 +145,7 @@ pub fn validate_id_number(s: &str) -> ValidationResult {
         return Err("Versichertennummer darf nicht leer sein".into());
     }
     let len = s.chars().count();
-    if len < 10 || len > 18 {
+    if !(10..=18).contains(&len) {
         return Err(format!(
             "Versichertennummer muss 10-18 Zeichen lang sein (aktuell: {len})"
         ));
@@ -226,6 +222,7 @@ pub fn validate_stadt(s: &str) -> ValidationResult {
 //
 // Gibt ein VEC der deutschen Fehlermeldungen zurück; leer = valide.
 // ----------------------------------------------------------------
+#[allow(clippy::too_many_arguments)]
 pub fn validate_patient_fields(
     vorname: Option<&str>,
     nachname: Option<&str>,
@@ -442,20 +439,25 @@ mod tests {
     #[test]
     fn test_patient_fields_collects_multiple_errors() {
         let errors = validate_patient_fields(
-            Some("A"),             // Name zu kurz
+            Some("A"), // Name zu kurz
             None,
-            Some("invalid"),       // E-Mail falsch
-            Some("+12 345"),       // Telefon falsch
-            Some("12345"),         // ID zu kurz
+            Some("invalid"), // E-Mail falsch
+            Some("+12 345"), // Telefon falsch
+            Some("12345"),   // ID zu kurz
             None,
-            Some("1011"),          // PLZ zu kurz
-            Some("B"),             // Stadt zu kurz
-            Some("2999-01-01"),    // Datum Zukunft
+            Some("1011"),       // PLZ zu kurz
+            Some("B"),          // Stadt zu kurz
+            Some("2999-01-01"), // Datum Zukunft
         );
         assert!(errors.len() >= 7, "erwartete ≥7 Fehler, bekam: {errors:?}");
         let felder = [
-            "Vorname", "E-Mail", "Telefon", "Versichertennummer",
-            "PLZ", "Stadt", "Geburtsdatum"
+            "Vorname",
+            "E-Mail",
+            "Telefon",
+            "Versichertennummer",
+            "PLZ",
+            "Stadt",
+            "Geburtsdatum",
         ];
         for e in &errors {
             assert!(

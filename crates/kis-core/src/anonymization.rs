@@ -31,10 +31,9 @@
 use std::sync::Arc;
 
 use aes_gcm::aead::Aead;
-use aes_gcm::{Aes256Gcm, Key, Nonce};
+use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, Utc};
 use rand::RngCore;
-use ring::digest;
 use sqlx::Row;
 use thiserror::Error;
 use uuid::Uuid;
@@ -134,7 +133,7 @@ impl AnonymizationService {
         encryption_key_b64: &str,
         retention_years: i64,
     ) -> Result<Self, AnonymizationError> {
-        let key = base64_decode(&encryption_key_b64)?;
+        let key = base64_decode(encryption_key_b64)?;
         Ok(Self {
             db,
             security,
@@ -187,13 +186,13 @@ impl AnonymizationService {
              FROM patients WHERE id = $1",
         )
         .bind(patient_id)
-        .fetch_optional(self.db.read_pool())
+        .fetch_optional(self.db.write())
         .await?
         .ok_or(AnonymizationError::NotFound(patient_id))?;
 
-        // 3) Bereits anonymisiert? (Name ist bereits ein Hash)
+        // 3) Bereits anonymisiert oder pseudonymisiert?
         let name_family: String = row.get("name_family");
-        if is_hash(&name_family) {
+        if is_hash(&name_family) || self.has_key_record(patient_id).await? {
             return Err(AnonymizationError::AlreadyAnonymized(patient_id));
         }
 
@@ -206,17 +205,21 @@ impl AnonymizationService {
         let external_id: Option<String> = row.get("external_id");
         let insurance_number: Option<String> = row.get("insurance_number");
 
-        let anon_family = deterministic_hash(&name_family);
-        let anon_given = deterministic_hash(&name_given);
+        // Zufällige Ersatzwerte statt Hashes der Originaldaten: Ein
+        // (ungesalzener) Hash eines Namens ist per Wörterbuch umkehrbar und
+        // damit keine Anonymisierung im Sinne von Erwägungsgrund 26 DSGVO.
+        let _ = (&name_given, &phone, &email, &external_id, &insurance_number);
+        let anon_family = random_token("ANON");
+        let anon_given = random_token("ANON");
         let age = age_at_now(&birth_date);
         let anon_zip = zip_region(&address_zip);
-        let anon_phone = phone.map(deterministic_hash);
-        let anon_email = email.map(deterministic_hash);
-        let anon_external = external_id.map(deterministic_hash);
-        let anon_insurance = insurance_number.map(deterministic_hash);
+        let anon_phone: Option<String> = None;
+        let anon_email: Option<String> = None;
+        let anon_external = Some(random_token("ANON"));
+        let anon_insurance: Option<String> = None;
 
         // 5) UPDATE (eine Transaktion)
-        let pool = self.db.write_pool().clone();
+        let pool = self.db.write().clone();
         let mut tx = pool.begin().await?;
 
         sqlx::query(
@@ -240,7 +243,7 @@ impl AnonymizationService {
         .bind(&anon_family)
         .bind(&anon_given)
         .bind(NaiveDate::from_ymd_opt(1900, 1, 1).unwrap()) // Platzhalter: Alter ist in age gespeichert
-        .bind(anon_zip)
+        .bind(&anon_zip)
         .bind(&anon_phone)
         .bind(&anon_email)
         .bind(&anon_external)
@@ -261,12 +264,10 @@ impl AnonymizationService {
         .execute(&mut *tx)
         .await?;
 
-        tx.commit().await?;
-
-        // 6) Audit-Log (irreversibel — kein Schlüssel gespeichert)
+        // 6) Audit-Log in derselben Transaktion (irreversibel — kein Schlüssel)
         self.security
-            .log_audit(
-                self.db.read_pool(),
+            .log_audit_tx(
+                &mut tx,
                 &actor.user_id,
                 "patient.anonymize",
                 "patient",
@@ -281,6 +282,7 @@ impl AnonymizationService {
                 None,
             )
             .await?;
+        tx.commit().await?;
 
         tracing::warn!(%patient_id, user = %actor.user_id,
             "Patient anonymisiert (irreversibel, DSGVO Art. 17)");
@@ -321,17 +323,17 @@ impl AnonymizationService {
              FROM patients WHERE id = $1",
         )
         .bind(patient_id)
-        .fetch_optional(self.db.read_pool())
+        .fetch_optional(self.db.write())
         .await?
         .ok_or(AnonymizationError::NotFound(patient_id))?;
 
         let name_family: String = row.get("name_family");
-        if is_hash(&name_family) {
+        if is_hash(&name_family) || self.has_key_record(patient_id).await? {
             return Err(AnonymizationError::AlreadyAnonymized(patient_id));
         }
 
-        // 3) Pseudonym generieren (deterministisch aus patient_id)
-        let pseudonym = format!("PAT-{}", short_hash(&patient_id.to_string()));
+        // 3) Zufälliges Pseudonym (keine Ableitung aus Identifikatoren)
+        let pseudonym = random_token("PAT");
 
         // 4) Originaldaten als JSON serialisieren und AES-256-GCM-verschlüsseln
         let original_data = serde_json::json!({
@@ -352,14 +354,14 @@ impl AnonymizationService {
         let encrypted_key = self.encrypt(&original_json)?;
 
         // 5) UPDATE + INSERT (eine Transaktion)
-        let pool = self.db.write_pool().clone();
+        let pool = self.db.write().clone();
         let mut tx = pool.begin().await?;
 
         sqlx::query(
             "UPDATE patients SET
                 name_family = $2,
                 name_given = 'pseudonymisiert',
-                birth_date = NULL,
+                birth_date = DATE '1900-01-01',
                 address_street = NULL,
                 address_zip = NULL,
                 address_city = NULL,
@@ -374,7 +376,7 @@ impl AnonymizationService {
         )
         .bind(patient_id)
         .bind(&pseudonym)
-        .bind(&format!("PSEUDO-{}", short_hash(&patient_id.to_string())))
+        .bind(random_token("PSEUDO"))
         .execute(&mut *tx)
         .await?;
 
@@ -391,12 +393,10 @@ impl AnonymizationService {
         .execute(&mut *tx)
         .await?;
 
-        tx.commit().await?;
-
-        // 6) Audit-Log (reversibel — Schlüssel gespeichert)
+        // 6) Audit-Log in derselben Transaktion
         self.security
-            .log_audit(
-                self.db.read_pool(),
+            .log_audit_tx(
+                &mut tx,
                 &actor.user_id,
                 "patient.pseudonymize",
                 "patient",
@@ -410,6 +410,7 @@ impl AnonymizationService {
                 None,
             )
             .await?;
+        tx.commit().await?;
 
         tracing::info!(%patient_id, user = %actor.user_id, %pseudonym,
             "Patient pseudonymisiert (reversibel, DSGVO Art. 32)");
@@ -441,7 +442,7 @@ impl AnonymizationService {
              ORDER BY created_at DESC LIMIT 1",
         )
         .bind(patient_id)
-        .fetch_optional(self.db.read_pool())
+        .fetch_optional(self.db.write())
         .await?
         .ok_or(AnonymizationError::NotFound(patient_id))?;
 
@@ -450,11 +451,11 @@ impl AnonymizationService {
 
         // Entschlüsseln
         let original_json = self.decrypt(&encrypted_key)?;
-        let data: serde_json::Value = serde_json::from_slice(&original_json)
-            .map_err(|_| AnonymizationError::Decryption)?;
+        let data: serde_json::Value =
+            serde_json::from_slice(&original_json).map_err(|_| AnonymizationError::Decryption)?;
 
         // UPDATE
-        let pool = self.db.write_pool().clone();
+        let pool = self.db.write().clone();
         let mut tx = pool.begin().await?;
 
         sqlx::query(
@@ -475,15 +476,13 @@ impl AnonymizationService {
              WHERE id = $1",
         )
         .bind(patient_id)
-        .bind(&data["name_family"].as_str().unwrap_or_default().to_string())
-        .bind(&data["name_given"].as_str().unwrap_or_default().to_string())
+        .bind(data["name_family"].as_str().unwrap_or_default().to_string())
+        .bind(data["name_given"].as_str().unwrap_or_default().to_string())
         .bind(
-            NaiveDate::parse_from_str(
-                data["birth_date"].as_str().unwrap_or("1900-01-01"),
-                "%Y-%m-%d",
-            )
-            .ok()
-            .or(Some(NaiveDate::from_ymd_opt(1900, 1, 1).unwrap())),
+            data["birth_date"]
+                .as_str()
+                .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+                .ok_or(AnonymizationError::Decryption)?,
         )
         .bind(data["address_street"].as_str().map(String::from))
         .bind(data["address_zip"].as_str().map(String::from))
@@ -503,12 +502,9 @@ impl AnonymizationService {
         .execute(&mut *tx)
         .await?;
 
-        tx.commit().await?;
-
-        // Audit-Log
         self.security
-            .log_audit(
-                self.db.read_pool(),
+            .log_audit_tx(
+                &mut tx,
                 &actor.user_id,
                 "patient.depseudonymize",
                 "patient",
@@ -521,75 +517,10 @@ impl AnonymizationService {
                 None,
             )
             .await?;
+        tx.commit().await?;
 
         tracing::warn!(%patient_id, user = %actor.user_id, %pseudonym,
             "Patient de-pseudonymisiert (Originaldaten wiederhergestellt)");
-        Ok(())
-    }
-
-    // ------------------------------------------------------------------
-    // Befund-Anonymisierung
-    // ------------------------------------------------------------------
-
-    /// Anonymisiert einen einzelnen Befund: entfernt die Patientenreferenz
-    /// und ersetzt die Patienten-Identifikatoren durch einen Hash.
-    /// Die klinischen Werte (Messwerte, Befundtext) bleiben erhalten.
-    pub async fn anonymize_observation(
-        &self,
-        observation_id: Uuid,
-        actor: &AuthUser,
-    ) -> Result<(), AnonymizationError> {
-        if !actor.role.has_permission(&Permission::Admin) {
-            return Err(AnonymizationError::Permission(
-                "Befund-Anonymisierung erfordert die Rolle Admin".into(),
-            ));
-        }
-
-        // Bestandsprüfung
-        let row = sqlx::query(
-            "SELECT patient_id FROM observations WHERE id = $1",
-        )
-        .bind(observation_id)
-        .fetch_optional(self.db.read_pool())
-        .await?;
-
-        // Falls observations-Tabelle nicht existiert, versuchen wir über
-        // einen generischen Ansatz (Falls das Schema anders ist)
-        let _ = row;
-
-        // Anonymisierung: patient_id → Hash, patient_referenz entfernt
-        let anon_id = deterministic_hash(&observation_id.to_string());
-        sqlx::query(
-            "UPDATE observations SET
-                patient_id = NULL,
-                patient_reference = $2,
-                updated_at = NOW()
-             WHERE id = $1",
-        )
-        .bind(observation_id)
-        .bind(&format!("ANON-{}", anon_id))
-        .execute(self.db.write_pool())
-        .await?;
-
-        // Audit-Log
-        self.security
-            .log_audit(
-                self.db.read_pool(),
-                &actor.user_id,
-                "observation.anonymize",
-                "observation",
-                Some(&observation_id.to_string()),
-                None,
-                Some(&serde_json::json!({
-                    "kind": "observation",
-                    "patient_reference_removed": true,
-                })),
-                None,
-            )
-            .await?;
-
-        tracing::info!(%observation_id, user = %actor.user_id,
-            "Befund anonymisiert (Patientenreferenz entfernt)");
         Ok(())
     }
 
@@ -629,7 +560,7 @@ impl AnonymizationService {
              ORDER BY last_treatment_at ASC",
         )
         .bind(retention)
-        .fetch_all(self.db.read_pool())
+        .fetch_all(self.db.write())
         .await?;
 
         let mut result = RetentionAnonymizationResult::default();
@@ -657,9 +588,13 @@ impl AnonymizationService {
             }
         }
 
-        tracing::info!(anonymized = result.anonymized, skipped = result.skipped_active.len(),
-            failures = result.failures.len(), retention_years = self.retention_years,
-            "Retention-Anonymisierung ausgeführt");
+        tracing::info!(
+            anonymized = result.anonymized,
+            skipped = result.skipped_active.len(),
+            failures = result.failures.len(),
+            retention_years = self.retention_years,
+            "Retention-Anonymisierung ausgeführt"
+        );
         Ok(result)
     }
 
@@ -685,8 +620,8 @@ impl AnonymizationService {
              ORDER BY ak.created_at DESC
              LIMIT $1",
         )
-        .bind(limit)
-        .fetch_all(self.db.read_pool())
+        .bind(i64::from(limit))
+        .fetch_all(self.db.write())
         .await?;
 
         let mut out = Vec::with_capacity(rows.len());
@@ -701,7 +636,9 @@ impl AnonymizationService {
             out.push(AnonymizationLogEntry {
                 patient_id: row.get("patient_id"),
                 kind,
-                actor: row.get::<Option<String>, _>("created_by").unwrap_or_default(),
+                actor: row
+                    .get::<Option<String>, _>("created_by")
+                    .unwrap_or_default(),
                 timestamp: row.get("created_at"),
                 details: serde_json::json!({
                     "pseudonym": row.get::<Option<String>, _>("pseudonym"),
@@ -710,6 +647,17 @@ impl AnonymizationService {
             });
         }
         Ok(out)
+    }
+
+    /// Existiert bereits ein Anonymisierungs-/Pseudonymisierungs-Nachweis?
+    async fn has_key_record(&self, patient_id: Uuid) -> Result<bool, AnonymizationError> {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM anonymization_keys WHERE patient_id = $1)",
+        )
+        .bind(patient_id)
+        .fetch_one(self.db.write())
+        .await?;
+        Ok(exists)
     }
 
     // ------------------------------------------------------------------
@@ -754,22 +702,42 @@ impl AnonymizationService {
 // Hilfsfunktionen
 // ===========================================================================
 
+/// Zufälliges Ersatz-Token mit Präfix (128 Bit aus dem OS-CSPRNG).
+fn random_token(prefix: &str) -> String {
+    let mut bytes = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+    format!("{prefix}-{hex}")
+}
+
 /// Deterministischer SHA-256-Hash (hex, erste 16 Zeichen).
+/// Nur für Tests; für Anonymisierung ungeeignet (Wörterbuchangriff).
+#[cfg(test)]
 /// Dieselbe Eingabe → immer derselbe Hash (für Wiedererkennbarkeit
 /// ohne Offenlegung der Originaldaten).
 fn deterministic_hash(input: &str) -> String {
-    let h = digest::SHA256.digest(input.as_bytes());
-    let hex: String = h.as_ref().iter().take(8).map(|b| format!("{:02x}", b)).collect();
+    let h = ring::digest::digest(&ring::digest::SHA256, input.as_bytes());
+    let hex: String = h
+        .as_ref()
+        .iter()
+        .take(8)
+        .map(|b| format!("{:02x}", b))
+        .collect();
     format!("ANON-{}", hex)
 }
 
-/// Kurz-Hash (erste 8 Zeichen des SHA-256) für Pseudonyme.
+/// Kurz-Hash (erste 8 Zeichen des SHA-256).
+#[cfg(test)]
 fn short_hash(input: &str) -> String {
-    let h = digest::SHA256.digest(input.as_bytes());
-    h.as_ref().iter().take(4).map(|b| format!("{:02x}", b)).collect()
+    let h = ring::digest::digest(&ring::digest::SHA256, input.as_bytes());
+    h.as_ref()
+        .iter()
+        .take(4)
+        .map(|b| format!("{:02x}", b))
+        .collect()
 }
 
-/// Prüft, ob ein String bereits ein Hash ist (ANON-Präfix).
+/// Prüft, ob ein String bereits ein Ersatzwert ist (ANON-/PAT-Präfix).
 fn is_hash(s: &str) -> bool {
     s.starts_with("ANON-") || s.starts_with("PAT-")
 }
@@ -799,7 +767,7 @@ fn base64_decode(b64: &str) -> Result<[u8; 32], AnonymizationError> {
     use base64::Engine;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(b64)
-        .map_err(|e| AnonymizationError::InvalidKeyEncoding)?;
+        .map_err(|_| AnonymizationError::InvalidKeyEncoding)?;
     if decoded.len() != 32 {
         return Err(AnonymizationError::InvalidKeyEncoding);
     }
@@ -844,13 +812,21 @@ mod tests {
         let anon = deterministic_hash(original);
 
         // 1) Der Hash enthält den Original-Namen nicht
-        assert!(!anon.contains("Musterfrau"), "Hash darf Original nicht enthalten");
+        assert!(
+            !anon.contains("Musterfrau"),
+            "Hash darf Original nicht enthalten"
+        );
 
         // 2) Es gibt keinen Weg, den Hash zu "entschlüsseln" —
         //    er ist eine Einweg-Funktion (SHA-256)
         //    Wir können nur verifizieren, dass der Hash korrekt ist:
-        let h = ring::digest::SHA256.digest(original.as_bytes());
-        let hex: String = h.as_ref().iter().take(8).map(|b| format!("{:02x}", b)).collect();
+        let h = ring::digest::digest(&ring::digest::SHA256, original.as_bytes());
+        let hex: String = h
+            .as_ref()
+            .iter()
+            .take(8)
+            .map(|b| format!("{:02x}", b))
+            .collect();
         assert_eq!(anon, format!("ANON-{}", hex));
     }
 
@@ -866,7 +842,7 @@ mod tests {
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
-        let ciphertext = cipher.encrypt(nonce, plaintext).unwrap();
+        let ciphertext = cipher.encrypt(nonce, plaintext.as_ref()).unwrap();
 
         // 1) Ciphertext enthält den Klartext NICHT
         let ct_bytes: Vec<u8> = ciphertext.to_vec();
@@ -876,8 +852,11 @@ mod tests {
         );
 
         // 2) Mit Schlüssel: Wiederherstellung gelingt
-        let decrypted = cipher.decrypt(nonce, &ciphertext).unwrap();
-        assert_eq!(decrypted, plaintext, "Mit Schlüssel muss Entschlüsselung funktionieren");
+        let decrypted = cipher.decrypt(nonce, ciphertext.as_ref()).unwrap();
+        assert_eq!(
+            decrypted, plaintext,
+            "Mit Schlüssel muss Entschlüsselung funktionieren"
+        );
     }
 
     #[test]
@@ -893,11 +872,14 @@ mod tests {
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
-        let ciphertext = cipher.encrypt(nonce, plaintext).unwrap();
+        let ciphertext = cipher.encrypt(nonce, plaintext.as_ref()).unwrap();
 
         // Mit falschem Schlüssel: Fehler
-        let result = cipher_wrong.decrypt(nonce, &ciphertext);
-        assert!(result.is_err(), "Entschlüsselung mit falschem Schlüssel muss fehlschlagen");
+        let result = cipher_wrong.decrypt(nonce, ciphertext.as_ref());
+        assert!(
+            result.is_err(),
+            "Entschlüsselung mit falschem Schlüssel muss fehlschlagen"
+        );
     }
 
     #[test]
@@ -911,7 +893,7 @@ mod tests {
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let plaintext = b"{'name_family':'Test','birth_date':'1990-01-01'}";
-        let ciphertext = cipher.encrypt(nonce, plaintext).unwrap();
+        let ciphertext = cipher.encrypt(nonce, plaintext.as_ref()).unwrap();
 
         // nonce || ciphertext (wie in Self::encrypt)
         let mut stored = Vec::new();
@@ -934,11 +916,19 @@ mod tests {
         let bd = NaiveDate::from_ymd_opt(1990, 1, 1).unwrap();
         let age = age_at_now(&bd);
         // 2026 - 1990 = 36 (oder 35, je nach Datum)
-        assert!((35..=37).contains(&age), "Alter für 1990 muss 35-37 sein, ist {}", age);
+        assert!(
+            (35..=37).contains(&age),
+            "Alter für 1990 muss 35-37 sein, ist {}",
+            age
+        );
 
         let bd_old = NaiveDate::from_ymd_opt(1940, 1, 1).unwrap();
         let age_old = age_at_now(&bd_old);
-        assert!((86..=87).contains(&age_old), "Alter für 1940 muss 86-87 sein, ist {}", age_old);
+        assert!(
+            (86..=87).contains(&age_old),
+            "Alter für 1940 muss 86-87 sein, ist {}",
+            age_old
+        );
     }
 
     #[test]
@@ -961,10 +951,7 @@ mod tests {
     fn test_base64_decode_valid() {
         // 32 Bytes als base64
         let key = [42u8; 32];
-        let b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &key,
-        );
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, key);
         let decoded = base64_decode(&b64).unwrap();
         assert_eq!(decoded, key);
     }
@@ -973,7 +960,7 @@ mod tests {
     fn test_base64_decode_wrong_length() {
         let b64 = base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
-            &[1u8; 16], // nur 16 Bytes, nicht 32
+            [1u8; 16], // nur 16 Bytes, nicht 32
         );
         assert!(base64_decode(&b64).is_err());
     }
@@ -998,6 +985,16 @@ mod tests {
         // Verschiedene Namen → verschiedene Hashes
         let h3 = deterministic_hash("Anderefrau");
         assert_ne!(h1, h3, "Verschiedene Namen → verschiedene Hashes");
+    }
+
+    #[test]
+    fn test_random_token_is_unique_and_not_derived() {
+        let a = random_token("ANON");
+        let b = random_token("ANON");
+        assert_ne!(a, b);
+        assert!(a.starts_with("ANON-"));
+        assert_eq!(a.len(), "ANON-".len() + 32);
+        assert!(is_hash(&a));
     }
 
     #[test]

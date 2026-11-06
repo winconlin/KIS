@@ -16,7 +16,6 @@
 
 use sqlx::PgPool;
 use sqlx::Row;
-use tracing::debug;
 
 /// Geschätzter Query-Plan mit Index-Nutzungsgrad (Task 5.5).
 ///
@@ -83,8 +82,7 @@ impl QueryPlan {
     /// Löst den geschätzten Index-Nutzungsgrad aus einem EXPLAIN-Text.
     pub fn parse(explain_text: &str) -> Self {
         let has_seq_scan = explain_text.contains("Seq Scan on");
-        let has_index_scan = explain_text
-            .contains("Index Scan using")
+        let has_index_scan = explain_text.contains("Index Scan using")
             || explain_text.contains("Index Only Scan using")
             || explain_text.contains("Bitmap Index Scan on");
         let has_sort = explain_text.contains("Sort Method") || explain_text.contains("Sort Key");
@@ -97,9 +95,9 @@ impl QueryPlan {
             .lines()
             .rev()
             .find_map(|line| {
-                line.split("rows=").nth(1).and_then(|r| {
-                    r.split_whitespace().next()?.parse::<i64>().ok()
-                })
+                line.split("rows=")
+                    .nth(1)
+                    .and_then(|r| r.split_whitespace().next()?.parse::<i64>().ok())
             })
             .unwrap_or(0);
 
@@ -397,7 +395,10 @@ mod tests {
         let idx = &indexes[0];
         assert!(idx.contains("diagnoses"));
         assert!(idx.contains("ics_code"));
-        assert!(idx.contains("patient_id"), "FK patient_id sollte indiziert sein");
+        assert!(
+            idx.contains("patient_id"),
+            "FK patient_id sollte indiziert sein"
+        );
     }
 
     /// Task 5.5: Unbekannte Tabelle → nutze die übergebenen Spalten.
@@ -480,7 +481,7 @@ mod tests {
         // Extrem schlechter Plan: Seq Scan + Filter + Sort
         let bad = "Seq Scan on patients\nRows Removed by Filter: 9000\nSort Method: quicksort";
         let usage = QueryPlan::estimate_index_usage(bad);
-        assert!(usage >= 0.0 && usage <= 1.0);
+        assert!((0.0..=1.0).contains(&usage));
         assert!(usage < 0.5);
 
         // Perfekter Plan: Index Only Scan
@@ -544,7 +545,14 @@ mod tests {
             .nth(1)
             .and_then(|c| c.split(')').next())
             .expect("Spaltenliste in Klammern");
-        let count = cols_part.split(',').filter(|c| c.trim() == "personal_number").count();
-        assert_eq!(count, 1, "personal_number sollte nur einmal in der Spaltenliste vorkommen: {}", idx);
+        let count = cols_part
+            .split(',')
+            .filter(|c| c.trim() == "personal_number")
+            .count();
+        assert_eq!(
+            count, 1,
+            "personal_number sollte nur einmal in der Spaltenliste vorkommen: {}",
+            idx
+        );
     }
 }

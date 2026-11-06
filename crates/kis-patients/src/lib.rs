@@ -14,18 +14,18 @@
 //!   DELETE /api/v1/patients/:id        — Soft-Delete
 //!   GET    /api/v1/patients/:id/history — Audit-Log
 
-use std::sync::Arc;
 use axum::{
     extract::{Path, Query, State},
-    routing::{get, post, put, delete},
+    routing::get,
     Json, Router,
 };
 use chrono::{DateTime, Utc};
+use kis_core::security::{append_audit, RequireRole};
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPool;
-use tracing::{info, warn};
+use std::sync::Arc;
+use tracing::{error, info, warn};
 use uuid::Uuid;
-
 
 // ===========================================================================
 // Modelle
@@ -48,7 +48,7 @@ pub struct Patient {
     pub address_city: Option<String>,
     pub insurance_number: Option<String>,
     /// Allergien als JSONB-Array, z.B. ["Penizillin", "Nuss"]
-    pub allergies: Vec<String>,
+    pub allergies: sqlx::types::Json<Vec<String>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     /// Soft-Delete: NULL = aktiv, TIMESTAMP = gelöscht
@@ -129,13 +129,12 @@ pub struct PatientPage {
 pub struct AuditEntry {
     pub id: i64,
     pub timestamp: DateTime<Utc>,
-    pub user_id: Option<Uuid>,
-    pub username: Option<String>,
+    pub user_id: Option<String>,
     pub action: String,
     pub entity_type: String,
     pub entity_id: Option<String>,
-    pub old_value: Option<serde_json::Value>,
-    pub new_value: Option<serde_json::Value>,
+    pub old_data: Option<serde_json::Value>,
+    pub new_data: Option<serde_json::Value>,
     pub ip_address: Option<String>,
 }
 
@@ -187,11 +186,23 @@ impl From<PatientError> for axum::response::Response {
             .body(axum::body::Body::from(
                 serde_json::to_string(&ErrorBody {
                     success: false,
-                    error: e.to_string(),
+                    // Interne Details (SQL etc.) nur ins Log, nicht zum Client
+                    error: match &e {
+                        PatientError::Db(detail) => {
+                            error!(%detail, "Patient-Service: DB-Fehler");
+                            "Interner Serverfehler".to_string()
+                        }
+                        other => other.to_string(),
+                    },
                 })
                 .unwrap_or_else(|_| "{}".into()),
             ))
-            .unwrap_or_else(|_| axum::response::Response::builder().status(500).body(axum::body::Body::empty()).unwrap())
+            .unwrap_or_else(|_| {
+                axum::response::Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::empty())
+                    .unwrap()
+            })
     }
 }
 
@@ -209,10 +220,7 @@ pub fn register_router(db: Arc<PgPool>) -> Router {
             "/api/v1/patients/:id",
             get(get_patient).put(update_patient).delete(delete_patient),
         )
-        .route(
-            "/api/v1/patients/:id/history",
-            get(patient_history),
-        )
+        .route("/api/v1/patients/:id/history", get(patient_history))
         .with_state(db)
 }
 
@@ -231,10 +239,13 @@ pub fn register_router(db: Arc<PgPool>) -> Router {
 ///   limit     — Seiten-Größe (Default: 50, Max: 200)
 async fn list_patients(
     State(db): State<Arc<PgPool>>,
+    auth: RequireRole,
     Query(params): Query<ListPatientsQuery>,
 ) -> Result<Json<PatientPage>, axum::response::Response> {
-    let limit = params.limit.unwrap_or(50).min(200).max(1);
-    let active = params.active.unwrap_or(true);
+    let limit = params.limit.unwrap_or(50).clamp(1, 200);
+    // Gelöschte (gesperrte) Datensätze sieht nur, wer löschen darf.
+    let may_see_deleted = auth.can(&kis_core::security::Permission::PatientDelete);
+    let active = params.active.unwrap_or(true) || !may_see_deleted;
 
     // Cursor-basierte Paginierung (keyset-based, performant auch bei großen Tabellen)
     let mut query = String::from("SELECT * FROM patients");
@@ -243,12 +254,13 @@ async fn list_patients(
     if active {
         conditions.push("deleted_at IS NULL".to_string());
     }
-    if let Some(ref search) = params.search {
-        conditions.push(format!(
-            "(name_family ILIKE $1 OR name_given ILIKE $1 OR external_id ILIKE $1)",
-        ));
+    if params.search.is_some() {
+        conditions.push(
+            "(name_family ILIKE $1 OR name_given ILIKE $1 OR external_id ILIKE $1)".to_string(),
+        );
     }
     if let Some(ref cursor) = params.cursor {
+        // `cursor` ist als Uuid typisiert; Display liefert nur Hex/Bindestriche.
         conditions.push(format!("id > '{}'", cursor));
     }
 
@@ -289,13 +301,12 @@ async fn get_patient(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Patient>, axum::response::Response> {
     let pool = db.as_ref();
-    let patient: Option<Patient> = sqlx::query_as(
-        "SELECT * FROM patients WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| PatientError::Db(e.to_string()))?;
+    let patient: Option<Patient> =
+        sqlx::query_as("SELECT * FROM patients WHERE id = $1 AND deleted_at IS NULL")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| PatientError::Db(e.to_string()))?;
 
     match patient {
         Some(p) => Ok(Json(p)),
@@ -308,9 +319,13 @@ async fn get_patient(
 /// Neuen Patienten anlegen.
 async fn create_patient(
     State(db): State<Arc<PgPool>>,
+    auth: RequireRole,
     Json(body): Json<CreatePatient>,
 ) -> Result<Json<Patient>, axum::response::Response> {
-    let pool = db.as_ref();
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| PatientError::Db(e.to_string()))?;
 
     let allergies_json = serde_json::to_value(body.allergies.unwrap_or_default())
         .unwrap_or_else(|_| serde_json::json!([]));
@@ -339,12 +354,15 @@ async fn create_patient(
     .bind(&body.address_city)
     .bind(&body.insurance_number)
     .bind(allergies_json)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| PatientError::Db(e.to_string()))?;
 
-    // Audit-Log eintragen
-    let _ = audit_log(pool, None, "create", "patient", &patient.id.to_string(), None, serde_json::to_value(&patient).ok().as_ref()).await;
+    // Audit in derselben Transaktion; ohne Klartext-Personendaten
+    audit(&mut tx, &auth, "patient.create", patient.id, None).await?;
+    tx.commit()
+        .await
+        .map_err(|e| PatientError::Db(e.to_string()))?;
 
     info!(patient_id = %patient.id, "Patient angelegt");
     Ok(Json(patient))
@@ -359,19 +377,23 @@ async fn create_patient(
 /// Zwischenzeit aktualisiert), wird mit HTTP 409 CONFLICT geantwortet.
 async fn update_patient(
     State(db): State<Arc<PgPool>>,
+    auth: RequireRole,
     Path(id): Path<Uuid>,
     Json(body): Json<UpdatePatient>,
 ) -> Result<Json<Patient>, axum::response::Response> {
-    let pool = db.as_ref();
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| PatientError::Db(e.to_string()))?;
+    let pool = &mut *tx;
 
     // 1. Aktuelle Version in der DB lesen
-    let current: Option<(i32,)> = sqlx::query_as(
-        "SELECT version FROM patients WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| PatientError::Db(e.to_string()))?;
+    let current: Option<(i32,)> =
+        sqlx::query_as("SELECT version FROM patients WHERE id = $1 AND deleted_at IS NULL")
+            .bind(id)
+            .fetch_optional(&mut *pool)
+            .await
+            .map_err(|e| PatientError::Db(e.to_string()))?;
 
     let current_version = match current {
         Some((v,)) => v,
@@ -385,10 +407,12 @@ async fn update_patient(
             actual = current_version,
             "Optimistic Locking: Versionenkonflikt"
         );
-        return Err(axum::response::Response::from(PatientError::VersionConflict {
-            expected: body.version,
-            actual: current_version,
-        }));
+        return Err(axum::response::Response::from(
+            PatientError::VersionConflict {
+                expected: body.version,
+                actual: current_version,
+            },
+        ));
     }
 
     // 2. Update mit WHERE version = $expected (atomar)
@@ -433,20 +457,33 @@ async fn update_patient(
     )
     .bind(new_version)
     .bind(body.version)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *pool)
     .await
     .map_err(|e| PatientError::Db(e.to_string()))?;
 
     match patient {
         Some(p) => {
-            let _ = audit_log(pool, None, "update", "patient", &p.id.to_string(), None, serde_json::to_value(&p).ok().as_ref()).await;
+            let fields = body.changed_fields();
+            audit(
+                &mut tx,
+                &auth,
+                "patient.update",
+                p.id,
+                Some(serde_json::json!({ "fields": fields, "version": p.version })),
+            )
+            .await?;
+            tx.commit()
+                .await
+                .map_err(|e| PatientError::Db(e.to_string()))?;
             info!(patient_id = %p.id, new_version = p.version, "Patient aktualisiert");
             Ok(Json(p))
         }
-        None => Err(axum::response::Response::from(PatientError::VersionConflict {
-            expected: body.version,
-            actual: current_version,
-        })),
+        None => Err(axum::response::Response::from(
+            PatientError::VersionConflict {
+                expected: body.version,
+                actual: current_version,
+            },
+        )),
     }
 }
 
@@ -457,9 +494,13 @@ async fn update_patient(
 /// sondern logisch markiert. Physische Löschung nach Aufbewahrungsfrist.)
 async fn delete_patient(
     State(db): State<Arc<PgPool>>,
+    auth: RequireRole,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, axum::response::Response> {
-    let pool = db.as_ref();
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| PatientError::Db(e.to_string()))?;
 
     let result = sqlx::query(
         r#"
@@ -470,13 +511,16 @@ async fn delete_patient(
         "#,
     )
     .bind(id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| PatientError::Db(e.to_string()))?;
 
     match result {
         Some(_) => {
-            let _ = audit_log(pool, None, "delete", "patient", &id.to_string(), None, None).await;
+            audit(&mut tx, &auth, "patient.soft_delete", id, None).await?;
+            tx.commit()
+                .await
+                .map_err(|e| PatientError::Db(e.to_string()))?;
             info!(patient_id = %id, "Patient soft-gelöscht");
             Ok(Json(serde_json::json!({
                 "success": true,
@@ -499,9 +543,9 @@ async fn patient_history(
 
     let entries: Vec<AuditEntry> = sqlx::query_as(
         r#"
-        SELECT id, timestamp, user_id, username, action,
-               entity_type, entity_id, old_value, new_value, ip_address
-        FROM audit_log
+        SELECT id, timestamp, user_id, action,
+               entity_type, entity_id, old_data, new_data, ip_address
+        FROM audit_logs
         WHERE entity_type = 'patient' AND entity_id = $1
         ORDER BY timestamp DESC, id DESC
         LIMIT 100
@@ -519,37 +563,42 @@ async fn patient_history(
 // Hilfsfunktionen
 // ===========================================================================
 
-/// Trägt einen Audit-Log-Eintrag ein (best-effort, kein Fehler bei Fehlschlag).
-async fn audit_log(
-    pool: &PgPool,
-    user_id: Option<Uuid>,
+/// Schreibt den Audit-Eintrag einer Patientenänderung in die laufende
+/// Transaktion. Schlägt das Audit fehl, wird die Änderung verworfen.
+/// Es werden nur Feldnamen protokolliert, keine Werte: der Audit-Trail ist
+/// append-only und muss eine spätere Löschung der Personendaten überdauern.
+async fn audit(
+    tx: &mut sqlx::PgConnection,
+    auth: &RequireRole,
     action: &str,
-    entity_type: &str,
-    entity_id: &str,
-    old_value: Option<&serde_json::Value>,
-    new_value: Option<&serde_json::Value>,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"
-        INSERT INTO audit_log (
-            timestamp, user_id, username, action,
-            entity_type, entity_id, old_value, new_value, ip_address, current_hash
-        ) VALUES (
-            now(), $1, NULL, $2, $3, $4, $5, $6, NULL,
-            encode(digest(coalesce($7::text, ''), 'sha256'), 'hex')
-        )
-        "#,
+    id: Uuid,
+    details: Option<serde_json::Value>,
+) -> Result<(), PatientError> {
+    append_audit(
+        tx,
+        auth.user_id(),
+        action,
+        "patient",
+        Some(&id.to_string()),
+        None,
+        details.as_ref(),
+        None,
     )
-    .bind(user_id)
-    .bind(action)
-    .bind(entity_type)
-    .bind(entity_id)
-    .bind(old_value.cloned())
-    .bind(new_value.cloned())
-    .bind(format!("{}/{}", entity_type, entity_id))
-    .execute(pool)
-    .await?;
-    Ok(())
+    .await
+    .map_err(|e| PatientError::Db(e.to_string()))
+}
+
+impl UpdatePatient {
+    /// Namen der im Update gesetzten Felder (ohne Werte).
+    pub fn changed_fields(&self) -> Vec<&'static str> {
+        let mut f = Vec::new();
+        macro_rules! chk { ($($name:ident => $label:literal),* $(,)?) => { $( if self.$name.is_some() { f.push($label); } )* } }
+        chk!(external_id => "externalId", name_family => "nameFamily", name_given => "nameGiven",
+             birth_date => "birthDate", gender => "gender", phone => "phone", email => "email",
+             address_street => "addressStreet", address_zip => "addressZip", address_city => "addressCity",
+             insurance_number => "insuranceNumber", allergies => "allergies");
+        f
+    }
 }
 
 /// Modul-Status (für das Dashboard)
@@ -561,4 +610,5 @@ pub struct ModuleStatus {
 }
 
 pub const MODULE_NAME: &str = "kis-patients";
-pub const MODULE_DESCRIPTION: &str = "KIS Patient-Service — Phase 1: CRUD, Optimistic Locking, Soft-Delete, Audit-Log";
+pub const MODULE_DESCRIPTION: &str =
+    "KIS Patient-Service — Phase 1: CRUD, Optimistic Locking, Soft-Delete, Audit-Log";

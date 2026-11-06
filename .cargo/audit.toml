@@ -1,0 +1,10 @@
+# cargo-audit-Konfiguration. Ausnahmen nur mit konkreter Begründung.
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071 (rsa, Marvin-Timing-Angriff): `rsa` steht nur über
+    # `sqlx-mysql` im Cargo.lock (bekanntes Lockfile-Artefakt der
+    # sqlx-Makros). KIS aktiviert ausschließlich das PostgreSQL-Backend;
+    # `cargo tree -i rsa --target all` zeigt keine Verwendung. Erneut
+    # prüfen bei jedem sqlx-Update.
+    "RUSTSEC-2023-0071",
+]

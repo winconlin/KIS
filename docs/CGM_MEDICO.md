@@ -5,7 +5,9 @@
 >
 > **Stand:** 01.11.2026
 >
-> **Ist-Zustand:** Vollständig implementiert in `crates/kis-medico/src/lib.rs` (~1.500 Zeilen). Das KIS ist der **VOLLSTÄNDIGE ERSATZ** für das CGM MEDICO-System. Die MEDICO-Integration übernimmt alle Funktionen: Patientensynchronisation, Terminverwaltung, Freie-Abfrage und -Reservierung, Arztverwaltung und bidirektionale Datenabgleiche.
+> **Ist-Zustand (06.11.2026): NICHT betriebsbereit.** `crates/kis-medico` kompiliert, sein Router ist aber **nicht** in `kis-app` registriert. Mehrere Abfragen verweisen auf Tabellen und Spalten, die es im Schema nicht gibt (`medico_conflicts`, `medico_migration_status`, `xds_document_entries`, `patients.first_name`, `medications.form`; Nachweis: `scripts/check_sql.py`). Die in diesem Dokument beschriebenen `/api/medico/*`-Endpunkte sind daher nicht erreichbar. Das Dokument beschreibt das **Zielbild**; Gegenstellen-Version, ISiK-Profile und Testumgebung sind weiterhin zu benennen (siehe [Prüfstatus](REVIEW_STATUS.md)).
+>
+> Langfristiges Ziel bleibt, dass das KIS CGM MEDICO vollständig ersetzt.
 
 ---
 
@@ -527,7 +529,7 @@ curl -X POST \
 
 # 5. Sync-Status überwachen
 curl -H "Authorization: Bearer $TOKEN" \
-  http://localhost:8080/api/medico/sync/<sync_id>
+  "http://localhost:8080/api/medico/sync/$SYNC_ID"
 ```
 
 ### 6.3 Datenvalidierung
@@ -545,7 +547,7 @@ curl -s -H "Authorization: Bearer $MEDICO_TOKEN" \
 
 # Diff-Bericht generieren
 curl -s -H "Authorization: Bearer $TOKEN" \
-  http://localhost:8080/api/medico/sync/<sync_id> \
+  "http://localhost:8080/api/medico/sync/$SYNC_ID" \
   | jq '.errors'
 ```
 
