@@ -28,3 +28,6 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 # Fundament: Validierung, Audit-Hash-Chain, Caching (Task 1.12/1.13/1.17)
 kis-core = { path = "../kis-core" }
+
+[lints]
+workspace = true

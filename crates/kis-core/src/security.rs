@@ -870,7 +870,6 @@ impl<S: Send + Sync> FromRequestParts<S> for RequireRole {
 ///     // ...
 /// }
 /// ```
-#[allow(clippy::result_large_err)]
 pub fn guard_roles(
     auth: &RequireRole,
     allowed: impl IntoIterator<Item = Role>,

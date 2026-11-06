@@ -104,6 +104,14 @@ kis-medico = { path = "crates/kis-medico" }
 kis-ti = { path = "crates/kis-ti" }
 kis-ui = { path = "crates/kis-ui" }
 
+# Gemeinsame Lint-Konfiguration (jede Crate: `[lints] workspace = true`).
+[workspace.lints.clippy]
+# Axum-Handler geben idiomatisch `Result<_, Response>` zurück. `Response`
+# ist größer als die Clippy-Schwelle (128 Bytes); ab Clippy 1.99 schlägt das
+# in jedem Handler an. Boxen brächte hier keinen Nutzen (Fehlerpfad, einmal
+# pro Request). Bewusste, begründete Ausnahme — keine anderen Lints.
+result_large_err = "allow"
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

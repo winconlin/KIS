@@ -246,7 +246,6 @@ fn internal_error() -> Response {
     json_error(StatusCode::INTERNAL_SERVER_ERROR, "Interner Serverfehler")
 }
 
-#[allow(clippy::result_large_err)]
 fn parse_uuid(s: &str) -> Result<Uuid, Response> {
     s.parse()
         .map_err(|_| json_error(StatusCode::BAD_REQUEST, "Ungültige ID"))
