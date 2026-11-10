@@ -1,28 +1,37 @@
 # ============================================================
-# KIS — Krankenhaus-Informations-System (VOLLSTÄNDIGER ERSATZ für CGM MEDICO)
-# Cargo-Workspace mit 13 Crates unter crates/
+# KIS — Krankenhaus-Informations-System
+# Cargo-Workspace: Kern (kis-core), Anwendung (kis-app) und je Fachmodul
+# eine eigene Crate unter crates/. Aufbau: docs/ARCHITECTURE.md
 # ============================================================
 
 [workspace]
 resolver = "2"
+# Jedes Fachmodul ist eine eigene Crate. Neues Modul: hier eintragen und in
+# crates/kis-app/src/modules.rs registrieren (siehe docs/MODULE.md).
 members = [
     "crates/kis-app",
     "crates/kis-core",
+    # Kernmodule
+    "crates/kis-org",
     "crates/kis-patients",
+    "crates/kis-cases",
+    # Fachmodule
+    "crates/kis-clinical",
+    "crates/kis-orders",
+    "crates/kis-lab",
+    "crates/kis-nursing",
+    "crates/kis-prescriptions",
+    "crates/kis-meals",
+    "crates/kis-roster",
     "crates/kis-doctors",
     "crates/kis-appointments",
     "crates/kis-medications",
-    "crates/kis-hl7",
-    "crates/kis-fhir",
-    "crates/kis-dicom",
-    "crates/kis-xds",
-    "crates/kis-gdt",
-    "crates/kis-medico",
-    "crates/kis-ti",
     "crates/kis-ui",
+    # NEUE-MODULE: scripts/new_module.py trägt oberhalb dieser Zeile ein
 ]
+# Ältere Schnittstellen-Entwürfe: nicht Teil des Builds (entwurf/README.md)
+exclude = ["entwurf"]
 
-# Zentrale Versionsverwaltung: alle Member-Crates vererben mit `workspace = true`
 [workspace.dependencies]
 # Web-Framework
 axum = { version = "0.7", features = ["macros", "multipart"] }
@@ -30,7 +39,7 @@ tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tower = { version = "0.4", features = ["util"] }
-tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
+tower-http = { version = "0.5", features = ["trace", "catch-panic", "timeout"] }
 
 # Datenbank: PostgreSQL (sqlx), Migrations, JSONB, UUID, Chrono
 sqlx = { version = "0.8", default-features = false, features = [
@@ -63,46 +72,19 @@ jsonwebtoken = "9"
 argon2 = "0.5"
 aes-gcm = "0.10"
 ring = "0.17"
-hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
 totp-rs = "5"
 
-# TLS 1.3 (Task 5.1): rustls mit ring-Backend
+# TLS 1.3: rustls mit ring-Backend
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
 
-# HTTP-Client (rustls, kein OpenSSL) — für FHIR/ISiK/Medico-Integration
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "stream",
-    "rustls-tls",
-] }
 
-# In-Memory-Cache (Task 1.17: TTL + Max-Size)
-moka = { version = "0.12", features = ["future", "sync"] }
-
-# Test-Support
-tempfile = "3"
-# Mock-Server für Unit-Tests (OAuth-Flow, Token-Refresh, Rate-Limiting)
-wiremock = "0.6"
-
-# Interne KIS-Crates (Pfad-Abhängigkeiten)
+# Interne KIS-Crates
 kis-core = { path = "crates/kis-core" }
-kis-patients = { path = "crates/kis-patients" }
-kis-doctors = { path = "crates/kis-doctors" }
-kis-appointments = { path = "crates/kis-appointments" }
-kis-medications = { path = "crates/kis-medications" }
-kis-hl7 = { path = "crates/kis-hl7" }
-kis-fhir = { path = "crates/kis-fhir" }
-kis-dicom = { path = "crates/kis-dicom" }
-kis-xds = { path = "crates/kis-xds" }
-kis-gdt = { path = "crates/kis-gdt" }
-kis-medico = { path = "crates/kis-medico" }
-kis-ti = { path = "crates/kis-ti" }
-kis-ui = { path = "crates/kis-ui" }
 
 # Gemeinsame Lint-Konfiguration (jede Crate: `[lints] workspace = true`).
 [workspace.lints.clippy]

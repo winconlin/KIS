@@ -1,49 +1,98 @@
 # KIS — Architektur
 
-> **Hinweis (06.11.2026):** Teile dieses Dokuments beschreiben den entfernten SQLite-Prototyp oder ein Zielbild. Maßgeblich für den Ist-Zustand sind [INSTALLATION](INSTALLATION.md), [API](API.md), [DATABASE](DATABASE.md) und [REVIEW_STATUS](REVIEW_STATUS.md).
+Ein Programm (`kis`), eine PostgreSQL-Datenbank. Kein Nachrichtenbroker,
+kein Cache-Dienst, kein Build-Schritt für die Oberfläche.
 
-
-Stand: 02.11.2026. Dieses Dokument trennt den aktiven Prototyp vom geplanten Ausbau.
-
-## Aktiver Root-Build
-
-`Cargo.toml` definiert das Paket `kis`, kein Cargo-Workspace und keine Modul-Features. `cargo build` kompiliert `src/` sowie die Administrations-CLI.
+## Aufbau
 
 ```text
-KIS_CONFIG_PATH oder config/kis.toml + KIS_*-Umgebung
-    → AppConfig mit Defaults und Validierung
-    → Tokio-Runtime mit server.workers
-    → SQLite-Pool + eingebettete Migrationen
-    → Krypto-Initialisierung + Audit-Prüfung + Auth-Kontext
-    → Axum-HTTP-Server
+                       ┌────────────────────────────────────────────┐
+  Browser / Geräte ──▶ │ kis-app   Zusammenbau, Middleware, Admin   │
+  Schnittstellen       ├────────────────────────────────────────────┤
+                       │ Fachmodule (je eine Crate, abschaltbar)    │
+                       │  clinical  orders  lab  nursing            │
+                       │  prescriptions  meals  roster              │
+                       │  appointments  doctors  medications  ui    │
+                       ├────────────────────────────────────────────┤
+                       │ Kernmodule   org   patients   cases        │
+                       ├────────────────────────────────────────────┤
+                       │ kis-core  Anmeldung, Rechte, Behandlungs-  │
+                       │  zusammenhang, Ereignisse, Audit, Betten,  │
+                       │  Einstellungen, Datenschutz-Funktionen     │
+                       └──────────────────────┬─────────────────────┘
+                                              ▼
+                                         PostgreSQL
 ```
 
-| Baustein | Verantwortung |
+Abhängigkeiten zeigen nur nach unten. Module kennen einander nicht; was
+sie voneinander brauchen, läuft über den Kern (Regeln und Prüfungen:
+[MODULE.md](MODULE.md)).
+
+## Weg einer Anfrage
+
+Jede Anfrage durchläuft dieselben Schichten
+([`modules.rs`](../crates/kis-app/src/modules.rs),
+[`middleware.rs`](../crates/kis-app/src/middleware.rs)):
+
+1. Protokoll, Schutz vor Abstürzen (ein Fehler in einem Handler betrifft
+   nur diese Anfrage), Sicherheits-Header, Zeit- und Größenlimit.
+2. Anfragebegrenzung je Client.
+3. **Zugriffskontrolle:** Was verlangt die Route? (Tabelle aus den
+   Registrierungen aller aktiven Module; ohne Eintrag: nur Admin.) Dann
+   Token, Sitzung und Kontostatus prüfen — eine Datenbankabfrage, die auch
+   die wirksamen Rollen liefert. Dann das Recht prüfen. Enthält der Pfad
+   `:case_id` oder `:unit_id`, zusätzlich Behandlungszusammenhang bzw.
+   Zuordnung zur Einheit.
+4. Handler des Moduls: eine Transaktion für fachliche Änderung,
+   Audit-Eintrag und Ereignis.
+
+## Wer darf was sehen
+
+| Frage | Antwort durch |
 |---|---|
-| `src/main.rs` | Konfiguration, Runtime, Start und geordnetes Beenden |
-| `src/api/mod.rs` | Routen mit einem `/api`-Präfix |
-| `src/config/mod.rs` | TOML, Defaults, ENV-Mapping und Validierung |
-| `src/db/mod.rs` | SQLite-Pool, Dateianlage und verbindliche Migrationen |
-| `src/security/` | Auth, Rollenprüfung, Audit, Limits und Krypto-Hilfen |
-| `src/bin/kis-admin.rs` | Lokale Anlage eines Administrators |
-| `scripts/backup.py` | Online-Snapshot, age-Verschlüsselung und Restore-Prüfung |
+| Welche Art von Daten darf jemand bearbeiten? | Rechte aus seinen Rollen (Daten des Hauses) |
+| Für welche Patienten? | Behandlungszusammenhang: Fall liegt in einer Einheit des Benutzers, seine Einheit behandelt mit, Notfallzugriff, oder Recht `case.access_all` |
+| Für welche Arbeitslisten? | Zuordnung zur Einheit oder einer übergeordneten |
 
-Der API-Stack verarbeitet Anfragen von außen nach innen als Trace → RateLimit → Auth → RBAC → Audit → Handler. Öffentliche Routen sind exakt Health, Login und Refresh. Die Root-Textseite gehört nicht zu diesem Stack.
+Rollenmatrix und Richtlinien hält jede Instanz im Speicher. Die
+Sitzungsprüfung liefert Versionszähler mit; nur wenn sich einer geändert
+hat, wird neu geladen. Änderungen wirken dadurch sofort und kosten im
+Normalbetrieb keine zusätzliche Abfrage.
 
-## Datenbank und Audit
+## Ereignisse
 
-SQLite ist der aktive Speicher. Die konfigurierte Pool-Größe und der Journal-Modus werden angewendet; Foreign Keys, Busy-Timeout und `synchronous=FULL` werden für Verbindungen gesetzt. Der Server startet bei Migrationsfehlern nicht.
+Ein Modul meldet, was fachlich geschehen ist. `EventBus::publish` schreibt
+das Ereignis in die Tabelle `domain_events` und ruft die angemeldeten
+Reaktionen anderer Module auf — alles in der Transaktion des Auslösers:
 
-Audit-Schreibvorgänge warten auf den DB-Commit und werden innerhalb der Instanz serialisiert. Die JSONL-Datei ist eine zusätzliche Kopie. Für Abschneiden oder vollständiges Umschreiben der Hash-Kette fehlt noch ein externer Prüfanker. Parallele KIS-Instanzen mit einer gemeinsamen DB sind nicht als Betriebsmodell freigegeben.
+- Gelingt die Reaktion, gilt sie zusammen mit dem Auslöser oder gar nicht.
+- Scheitert sie, wird nur sie zurückgerollt (Savepoint). Der Auslöser läuft
+  weiter; der Fehler steht in `event_failures` und ist für die
+  Administration sichtbar.
+- Externe Systeme lesen dieselben Ereignisse über einen Lesezeiger
+  (Outbox). Es geht nichts verloren, auch wenn die Gegenstelle ausfällt.
 
-## Noch nicht angeschlossene Entwürfe
+Beispiel: Die Entlassung (Modul `cases`) meldet `case.discharged`. Das
+Auftragswesen legt nach den Regeln des Hauses einen Auftrag zur
+Bettenaufbereitung an und sperrt das Bett. Die Küche braucht kein
+Ereignis: Ihre Produktionsliste wird aus der aktuellen Belegung berechnet.
 
-`src/ui/mod.rs` und `static/index.html` enthalten einen GUI-Entwurf. Der aktive Server liefert unter `/` einen Text. Fachliche Handler liefern HTTP 501, keine Patientendaten.
+## Datenmodell in einem Satz je Baustein
 
-Die Schnittstellen-Module enthalten Platzhalter sowie einen getrennt verwendbaren MEDICO-Client. Konfiguration allein startet keinen Schnittstellen-Server oder Pollingdienst. Auch für OpenRouter gibt es noch keinen ausführenden Client oder Modellwechsel.
+- **Organisation:** ein Baum aus Einheiten (Einrichtung, Fachabteilung,
+  Station, Funktionsbereich, Verwaltung, Versorgung) — bildet die
+  Einzelklinik wie den Verbund ab.
+- **Fall:** Klammer um alles, was an einem Patienten geschieht; lückenlose
+  Folge von Aufenthaltsabschnitten.
+- **Auftrag:** eine Leistung, die ein Bereich bei einem anderen anfordert;
+  ein Mechanismus für Diagnostik, Konsil, Therapie, Transport, Reinigung,
+  Technik.
+- Alles Weitere hängt am Fall oder an der Einheit.
 
-## Geplantes Ziel
+Einzelheiten: [DATABASE.md](DATABASE.md).
 
-Der [Fahrplan](FAHRPLAN.md) sieht einen PostgreSQL-Workspace, eigenständige Module, Read-Replicas, Optimistic Locking, GUI und medizinische Schnittstellen vor. Die Dateien unter `crates/` sind Vorarbeiten und noch kein gültig verdrahteter Workspace.
+## Nicht Teil des Systems
 
-Vor der Umstellung sind gültige Paket-Manifeste, Modulverträge, Datenmigration und Tests erforderlich. Zustandsabhängige Funktionen wie Token-Widerruf, Audit und Rate-Limits brauchen dabei ein abgestimmtes Mehrinstanz-Konzept. Das Ziel eines vollständigen MEDICO-Ersatzes ist noch nicht erreicht.
+Unter `entwurf/` liegen ältere Entwürfe für Schnittstellen (HL7, FHIR,
+DICOM, XDS, GDT, MEDICO, Telematikinfrastruktur). Sie sind nicht Teil des
+Builds und nicht betriebsbereit.

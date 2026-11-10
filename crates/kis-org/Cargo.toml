@@ -1,0 +1,18 @@
+[package]
+name = "kis-org"
+version = "0.1.0"
+edition = "2021"
+description = "KIS-Kernmodul org"
+license = "MIT"
+
+[dependencies]
+kis-core = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+[lints]
+workspace = true

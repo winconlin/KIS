@@ -16,8 +16,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    routing::get,
-    Json, Router,
+    Json,
 };
 use chrono::{DateTime, Utc};
 use kis_core::security::{append_audit, RequireRole};
@@ -26,6 +25,11 @@ use sqlx::postgres::PgPool;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 use uuid::Uuid;
+
+use kis_core::module::{Access, Maturity, Module, ModuleContext, ModuleInfo, ModuleRoutes};
+use kis_core::rbac::Permission as P;
+
+mod alerts;
 
 // ===========================================================================
 // Modelle
@@ -210,18 +214,68 @@ impl From<PatientError> for axum::response::Response {
 // Router-Registrierung
 // ===========================================================================
 
-/// Registriert den Patient-Router unter /api/v1/patients
-///
-/// `db` wird als `State` an alle Handler weitergegeben.
-pub fn register_router(db: Arc<PgPool>) -> Router {
-    Router::new()
-        .route("/api/v1/patients", get(list_patients).post(create_patient))
-        .route(
-            "/api/v1/patients/:id",
-            get(get_patient).put(update_patient).delete(delete_patient),
-        )
-        .route("/api/v1/patients/:id/history", get(patient_history))
-        .with_state(db)
+/// Modul-Deskriptor; registriert in `kis-app/src/modules.rs`.
+pub struct PatientsModule;
+
+impl Module for PatientsModule {
+    fn info(&self) -> ModuleInfo {
+        ModuleInfo {
+            id: "patients",
+            title: "Patientenstamm",
+            description: "Stammdaten, Warnhinweise (Allergien, CAVE, Isolation), Änderungshistorie",
+            depends_on: &[],
+            kernel: true,
+            version: env!("CARGO_PKG_VERSION"),
+            maturity: Maturity::Stable,
+        }
+    }
+
+    fn routes(&self, ctx: &ModuleContext) -> ModuleRoutes {
+        let alert_write = Access::AnyOf(&[P::PatientWrite, P::ClinicalWrite, P::NursingWrite]);
+        ModuleRoutes::new()
+            .get(
+                "/api/v1/patients",
+                Access::Permission(P::PatientRead),
+                list_patients,
+            )
+            .post(
+                "/api/v1/patients",
+                Access::Permission(P::PatientCreate),
+                create_patient,
+            )
+            .get(
+                "/api/v1/patients/:id",
+                Access::Permission(P::PatientRead),
+                get_patient,
+            )
+            .put(
+                "/api/v1/patients/:id",
+                Access::Permission(P::PatientWrite),
+                update_patient,
+            )
+            .delete(
+                "/api/v1/patients/:id",
+                Access::Permission(P::PatientDelete),
+                delete_patient,
+            )
+            .get(
+                "/api/v1/patients/:id/history",
+                Access::Permission(P::AuditRead),
+                patient_history,
+            )
+            .get(
+                "/api/v1/patients/:id/alerts",
+                Access::Permission(P::PatientRead),
+                alerts::list,
+            )
+            .post("/api/v1/patients/:id/alerts", alert_write, alerts::create)
+            .post(
+                "/api/v1/patients/:id/alerts/:alert_id/end",
+                alert_write,
+                alerts::end,
+            )
+            .with_state(Arc::new(ctx.pool().clone()))
+    }
 }
 
 // ===========================================================================

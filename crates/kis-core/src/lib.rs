@@ -1,49 +1,44 @@
-//! KIS Core: Konfiguration, PostgreSQL-Zugang, Sicherheit, gemeinsame Modelle.
+//! KIS-Kern: alles, was jedes Modul braucht — und nichts Fachliches.
 //!
-//! Dies ist das Fundament-Modul. Alle anderen Crates bauen darauf auf.
+//! | Baustein | Aufgabe |
+//! |---|---|
+//! | [`config`] | Infrastruktur-Konfiguration (TOML + Umgebung) |
+//! | [`db`] | PostgreSQL-Pools und Migrationen |
+//! | [`security`] | Token, Verschlüsselung, Passwort-Hash |
+//! | [`auth`] | Anmeldung, Sitzungen, Prüfung je Anfrage |
+//! | [`rbac`] | Rechte (Code) und Rollen (Daten) |
+//! | [`platform`] | Rollenmatrix und Laufzeit-Einstellungen im Speicher |
+//! | [`identity`] | Angemeldeter Benutzer einer Anfrage |
+//! | [`module`] | Modulsystem, Routen mit Zugriffsregel, Policy |
+//! | [`treatment`] | Behandlungszusammenhang, Notfallzugriff |
+//! | [`events`] | Ereignisse zwischen Modulen, Outbox |
+//! | [`facility`] | Betten sperren und freigeben |
+//! | [`audit`] | Audit-Trail (Hash-Kette) |
+//! | [`http`] | Fehlerantworten und Helfer für Handler |
+//! | [`rate_limit`] | Anfragebegrenzung je Client |
+//! | DSGVO | [`data_portability`], [`data_deletion`], [`anonymization`] |
 //!
-//! ## Architektur
-//! - [`config`]   — TOML + ENV-Konfiguration (figment)
-//! - [`db`]       — PostgreSQL Connection-Pool (Write/Read-Replica), Migrations
-//! - [`security`] — JWT, AES-256-GCM, Audit-Log (Hash-Chain), RBAC, Argon2id
-//! - [`models`]   — Gemeinsame Basis-Typen: EntityId, Pagination, ApiResponse, ApiError
-//!
-//! ## Module
-//! Die Crates `kis-patients`, `kis-doctors`, `kis-appointments`,
-//! `kis-medications` (Phase 1) sowie `kis-hl7`, `kis-fhir`, `kis-dicom`,
-//! `kis-xds`, `kis-gdt`, `kis-medico`, `kis-ti`, `kis-ui` (Phase 2–3)
-//! sind separate Crates im Workspace. Der Binary-Crate `kis-app`
-//! merge-t deren Router.
+//! Abhängigkeiten zeigen immer von Modulen auf den Kern, nie umgekehrt und
+//! nie von Modul zu Modul.
 
-pub mod access_policy;
 pub mod anonymization;
+pub mod audit;
 pub mod auth;
-pub mod cache;
 pub mod config;
 pub mod data_deletion;
 pub mod data_portability;
 pub mod db;
+pub mod events;
+pub mod facility;
+pub mod http;
+pub mod identity;
 pub mod models;
-pub mod query_optimizer;
+pub mod module;
+pub mod platform;
 pub mod rate_limit;
+pub mod rbac;
 pub mod security;
-pub mod validation;
+pub mod treatment;
 
-/// Version des KIS (aus Cargo.toml)
+/// Version des Kerns (aus Cargo.toml)
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// KIS-Baustein-Status
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct KisStatus {
-    pub version: String,
-    pub modules: Vec<ModuleStatus>,
-    pub db_connected: bool,
-    pub uptime_seconds: u64,
-}
-
-/// Status eines einzelnen Moduls
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ModuleStatus {
-    pub name: String,
-    pub enabled: bool,
-}

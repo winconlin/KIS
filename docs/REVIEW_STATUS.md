@@ -1,5 +1,107 @@
 # KIS — Prüfstatus
 
+## Umbau zum modularen Gesamtsystem vom 10.11.2026
+
+Ausgangspunkt: `main` @ `41d6757`. Ergebnis-Branch: `feature/klinischer-kern`.
+Auftrag: ein modulares System für alle Berufsgruppen eines Hauses, in dem
+die Daten ineinandergreifen; Datenschutz konfigurierbar; sparsam; Module
+unabhängig änderbar.
+
+### Was geändert wurde
+
+- **Modulsystem.** Jedes Fachgebiet ist eine Crate mit eigenem Vertrag
+  (`Module`). Routen lassen sich nur zusammen mit einer Zugriffsregel
+  registrieren; daraus entsteht die Zugriffstabelle. Module sind über die
+  Konfiguration abschaltbar. Die früheren Module (Patienten, Ärzte,
+  Termine, Dauermedikation, Oberfläche) sind auf dieses System umgestellt.
+- **Rollen und Richtlinien als Daten.** Die feste Rollenliste im Programm
+  ist ersetzt durch Rollen in der Datenbank mit zuordenbaren Rechten,
+  Zusatzrollen und zur Laufzeit änderbaren Einstellungen.
+- **Organisation und Fälle.** Organisationsbaum, Zimmer, Betten; Aufnahme,
+  Verlegung, Entlassung, Storno; Stationsliste, Bettenübersicht.
+- **Behandlungszusammenhang und Notfallzugriff**, zentral in der
+  Middleware.
+- **Ereignisse** zwischen Modulen mit isolierter Fehlerbehandlung und
+  Outbox für Schnittstellen.
+- **Neue Fachmodule:** klinische Akte, Auftragswesen, Labor, Pflege,
+  stationäre Verordnung, Verpflegung, Dienstplan.
+- **Auskunft** (JSON) um alle Falldaten erweitert.
+- **Oberfläche:** Seite „Arbeitsplatz“ (Belegung, Übergabe, Aufgaben,
+  Arbeitsliste, Betten, Küche, Fallübersicht).
+- **Schlanker Kern:** In-Memory-Cache, ungenutzte Hilfsmodule und die
+  nicht eingebundenen Schnittstellen-Crates aus dem Build entfernt
+  (Letztere liegen unter `entwurf/`).
+- **Leitplanken:** Prüfung der Modulgrenzen, unveränderliche Migrationen,
+  SQL-Abgleich für alle Crates inklusive zusammengesetzter Abfragen,
+  erzeugte API-Referenz mit Test, Modul-Gerüst, ein Prüfbefehl.
+
+### Nachweise (auf dem Ergebnis-Commit ausgeführt)
+
+- `scripts/check.sh` vollständig: Format, Leitplanken, Modulgrenzen,
+  Dokumentation, Clippy (`-D warnings`, alle Targets), Tests, SQL-Abgleich
+  (276 Anweisungen, 0 Fehler).
+- 100 Tests bestanden, davon 17 Integrationstests gegen PostgreSQL 16
+  (15 mit dem echten Router, 2 mit dem Programm `kis-admin`): die 8 bisherigen (Anmeldung, Sitzungen, Rechte,
+  Datenschutz, Audit-Kette) unverändert im Inhalt, dazu der Weg eines
+  Patienten über alle Berufsgruppen, Ausfall einer Folgeaktion,
+  abgeschaltete Module, Rollen und Richtlinien zur Laufzeit, Löschung mit
+  Auskunft, Dienstplan, API-Referenz.
+- Backup- und Restore-Tests: 6 bestanden.
+- Prozess-Rauchtest mit dem Release-Build: Migration mit Eigentümerrolle,
+  Server als Laufzeitrolle; Demodaten über die API; Oberfläche im Browser
+  (Chromium) für Pflege, Reinigung und Küche ohne Konsolenfehler unter der
+  strikten Content-Security-Policy; `DELETE FROM audit_logs`, DDL und
+  `UPDATE domain_events` für die Laufzeitrolle verweigert; Audit-Kette
+  intakt; geordnetes Beenden auf SIGTERM; Messwerte in
+  [SCALING.md](SCALING.md).
+- Das Modul-Gerüst (`scripts/new_module.py`) wurde probeweise ausgeführt:
+  erzeugtes Modul baut, ist registriert, sein Test läuft.
+
+### Nachkorrektur nach dem ersten CI-Lauf (Pull Request #5)
+
+Zwei Jobs schlugen fehl; beide Ursachen waren lokal nicht aufgefallen:
+
+- **test:** `kis-admin migrate` öffnete nach der Migration zusätzlich die
+  Laufzeitverbindung, um die Rollen-Grundausstattung anzulegen. In der CI
+  (und bei jeder Ersteinrichtung) steht dafür kein Passwort bereit. Lokal
+  blieb das unbemerkt, weil die Testdatenbank ohne Passwort erreichbar
+  ist. Jetzt nutzt der Befehl nur die Migrationsverbindung; ein Test
+  startet das Programm mit unerreichbarer Laufzeitverbindung
+  (`tests/admin_tool.rs`).
+- **audit:** neue Meldung RUSTSEC-2026-0459 zu `libsqlite3-sys`. Die Crate
+  steht nur im `Cargo.lock` (Artefakt der sqlx-Makros) und wird nicht
+  gebaut — wie bereits `rsa`. Als begründete Ausnahme eingetragen; neu
+  ist, dass ein Skript bei jedem Lauf prüft, dass ausgenommene Crates
+  tatsächlich in keinem Build vorkommen
+  (`scripts/check_audit_exceptions.py`).
+
+### Nicht geprüft / offen
+
+- **Kein Echtbetrieb.** Wesentliche Bereiche fehlen
+  ([FUNKTIONSLANDKARTE.md](FUNKTIONSLANDKARTE.md)).
+- Toolchain: lokal mit Rust 1.97 geprüft; die CI verwendet 1.99.1 (dort
+  können zusätzliche Lints anschlagen).
+- Docker-Build und Container-Rauchtest: lokal kein Docker-Daemon; nur in
+  der CI ausführbar. `cargo audit`: lokal nicht installiert, läuft in der
+  CI.
+- Kein Lasttest; die Messwerte sind Momentaufnahmen eines kleinen
+  Rechners.
+- Kein unabhängiges Sicherheitsreview der neuen Teile
+  (Behandlungszusammenhang, Rollenverwaltung, Notfallzugriff). Diese
+  Überarbeitung ist keine Sicherheitsfreigabe.
+- Die Grundausstattung der Rollen ist ein Vorschlag und fachlich vom Haus
+  zu bestätigen.
+- Medizinische Inhalte sind bewusst schlicht: Der Allergie-Abgleich ist
+  ein Textvergleich, ICD/OPS werden nur im Format geprüft, es gibt keine
+  Arzneimitteldatenbank.
+- Bekannte Altlast: eine Route des Moduls `doctors` liest Termine
+  (sichtbare Ausnahme in `config/module_tables.toml`, AP-01).
+- Weiterhin offen aus der Prüfung vom 06.11.2026: MFA-Einrichtung,
+  `mfa_secret` unverschlüsselt, Hash-Kette ohne externen Prüfanker, echter
+  TLS-Handshake und systemd-Betrieb ungeprüft.
+
+---
+
 ## Prüfung und Überarbeitung vom 06.11.2026
 
 Ausgangspunkt: `main` @ `ee6685a` („Phase 4+5"). Ergebnis-Branch: `improve/workspace-security-hardening`.

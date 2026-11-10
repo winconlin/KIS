@@ -150,7 +150,7 @@ impl DataDeletionService {
         }
 
         // 2) RBAC-Check
-        if !actor.role.has_permission(&Permission::PatientDelete) {
+        if !actor.can(&Permission::PatientDelete) {
             return Err(DeletionError::Permission(format!(
                 "Rolle {} darf Patienten nicht löschen",
                 actor.role
@@ -228,7 +228,7 @@ impl DataDeletionService {
         }
 
         // 2) RBAC: Hard Delete ist ausschließlich Admin
-        if !actor.role.has_permission(&Permission::Admin) {
+        if !actor.can(&Permission::Admin) {
             return Err(DeletionError::Permission(
                 "Hard Delete erfordert die Rolle Admin".into(),
             ));
@@ -376,7 +376,7 @@ impl DataDeletionService {
         &self,
         actor: &AuthUser,
     ) -> Result<DeletionBatchResult, DeletionError> {
-        if !actor.role.has_permission(&Permission::Admin) {
+        if !actor.can(&Permission::Admin) {
             return Err(DeletionError::Permission(
                 "Retention-Löschungen erfordern die Rolle Admin".into(),
             ));
@@ -484,7 +484,7 @@ pub const CASCADE_ORDER: &[(&str, &str)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security::Role;
+    use crate::identity::AuthUser;
     use chrono::Duration as CDur;
 
     /// Hard Delete erfordert explizite Bestätigung mit dem Familiennamen.
@@ -623,12 +623,15 @@ mod tests {
     /// RBAC: nur Admin darf hard delete (Permission-Prüfung).
     #[test]
     fn test_hard_delete_requires_admin_role() {
-        assert!(Role::Admin.has_permission(&Permission::Admin));
-        assert!(!Role::Arzt.has_permission(&Permission::Admin));
-        assert!(!Role::Pflege.has_permission(&Permission::Admin));
-        // Löschen (auch Soft Delete) ist Admin vorbehalten
-        assert!(!Role::Arzt.has_permission(&Permission::PatientDelete));
-        assert!(Role::Admin.has_permission(&Permission::PatientDelete));
+        let admin = AuthUser::with_builtin_role("a", "admin");
+        let arzt = AuthUser::with_builtin_role("b", "arzt");
+        let pflege = AuthUser::with_builtin_role("c", "pflege");
+        assert!(admin.can(&Permission::Admin));
+        assert!(!arzt.can(&Permission::Admin));
+        assert!(!pflege.can(&Permission::Admin));
+        // Löschen (auch Soft Delete) ist in der Grundausstattung Admin vorbehalten
+        assert!(!arzt.can(&Permission::PatientDelete));
+        assert!(admin.can(&Permission::PatientDelete));
     }
 
     /// RetentionCandidate: Felder sind korrekt typisiert.

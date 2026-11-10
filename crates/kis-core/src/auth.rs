@@ -1,28 +1,29 @@
 //! Authentifizierung mit persistenten Sitzungen (PostgreSQL).
 //!
 //! - Login: Argon2id-Prüfung, Kontosperre nach Fehlversuchen, optional TOTP.
-//! - Jede Anmeldung erzeugt eine Zeile in `sessions`. Sie speichert das
-//!   JTI des Refresh-Tokens (`jti`) und das des aktuellen Access-Tokens
-//!   (`access_jti`).
-//! - Refresh rotiert beide JTIs atomar (`UPDATE … WHERE jti = alt
-//!   AND revoked_at IS NULL`). Bei parallelen Anfragen gewinnt genau eine.
-//! - Logout und Widerruf setzen `revoked_at` und machen damit Access- und
-//!   Refresh-Token sofort ungültig, auch nach einem Neustart.
-//! - Jede Anfrage mit Access-Token prüft Sitzung, Kontostatus und aktuelle
-//!   Rolle auf dem Write-Pool (maßgeblicher Stand, keine Read-Replica).
-//! - Inaktivität: Sitzungen ohne Aktivität länger als
-//!   [`INACTIVITY_TIMEOUT_SECS`] (30 min) werden abgelehnt (Auto-Logout).
-
-use std::str::FromStr;
+//! - Jede Anmeldung erzeugt eine Zeile in `sessions` mit dem JTI des
+//!   Refresh-Tokens (`jti`) und des aktuellen Access-Tokens (`access_jti`).
+//! - Refresh rotiert beide JTIs atomar; bei parallelen Anfragen gewinnt
+//!   genau eine.
+//! - Logout und Widerruf machen Access- und Refresh-Token sofort ungültig,
+//!   auch nach einem Neustart.
+//! - [`validate_access`] prüft je Anfrage Sitzung, Kontostatus und
+//!   Inaktivität und bestimmt die wirksamen Rechte aus den aktuellen
+//!   Rollen des Benutzers — in **einer** Abfrage auf dem Schreib-Pool.
+//!   Rollenmatrix und Richtlinien kommen aus dem Speicher
+//!   ([`crate::platform::Platform`]) und werden nur bei geänderter Version
+//!   neu geladen.
 
 use sqlx::{PgPool, Row};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::security::{AuthUser, Role, Security, TokenType};
+use crate::identity::AuthUser;
+use crate::platform::Platform;
+use crate::security::{Security, TokenType};
 
-/// Fehler der Authentifizierung. Die `Display`-Texte sind bewusst
-/// unspezifisch, damit keine Konten aufgezählt werden können.
+/// Fehler der Authentifizierung. Die Texte sind bewusst unspezifisch,
+/// damit keine Konten aufgezählt werden können.
 #[derive(Debug, Error)]
 pub enum AuthError {
     #[error("Ungültige Anmeldedaten")]
@@ -33,6 +34,10 @@ pub enum AuthError {
     MfaRequired,
     #[error("Ungültiger oder abgelaufener Token")]
     InvalidToken,
+    /// Eingabe verletzt eine Richtlinie (z. B. Passwortlänge); der Text
+    /// darf dem Aufrufer gezeigt werden.
+    #[error("{0}")]
+    Policy(String),
     #[error("Interner Fehler")]
     Internal(#[from] anyhow::Error),
 }
@@ -43,13 +48,6 @@ impl From<sqlx::Error> for AuthError {
     }
 }
 
-/// Inaktivitäts-Timeout einer Sitzung (automatische Abmeldung).
-pub const INACTIVITY_TIMEOUT_SECS: i64 = 30 * 60;
-
-/// `last_seen_at` wird höchstens in diesem Abstand aktualisiert, damit
-/// nicht jede Anfrage einen Schreibzugriff erzeugt.
-const LAST_SEEN_RESOLUTION_SECS: i64 = 60;
-
 /// Ergebnis eines erfolgreichen Logins oder Refreshs.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TokenPair {
@@ -59,8 +57,12 @@ pub struct TokenPair {
     pub expires_in: u64,
     pub session_id: Uuid,
     pub user_id: Uuid,
-    pub role: Role,
+    pub role: String,
 }
+
+/// `last_seen_at` wird höchstens in diesem Abstand aktualisiert, damit
+/// nicht jede Anfrage einen Schreibzugriff erzeugt.
+const LAST_SEEN_RESOLUTION_SECS: f64 = 60.0;
 
 /// Fester Argon2id-Hash, gegen den bei unbekannten Benutzern geprüft wird,
 /// damit die Antwortzeit nicht verrät, ob ein Konto existiert.
@@ -78,6 +80,7 @@ fn dummy_hash(security: &Security) -> &'static str {
 pub async fn login(
     db: &PgPool,
     security: &Security,
+    platform: &Platform,
     login: &str,
     password: &str,
     totp_code: Option<&str>,
@@ -112,7 +115,7 @@ pub async fn login(
     }
 
     if !security.verify_password(password, &password_hash) {
-        record_failure(db, security, user_id, attempts, ip).await?;
+        record_failure(db, security, platform, user_id, attempts, ip).await?;
         return Err(AuthError::InvalidCredentials);
     }
 
@@ -125,22 +128,20 @@ pub async fn login(
             .map(|s| verify_totp(s, code))
             .unwrap_or(false);
         if !ok {
-            record_failure(db, security, user_id, attempts, ip).await?;
+            record_failure(db, security, platform, user_id, attempts, ip).await?;
             return Err(AuthError::InvalidCredentials);
         }
     }
 
-    let role_str: String = row.get("role");
-    let role = Role::from_str(&role_str).map_err(|e| anyhow::anyhow!(e))?;
-
+    let role: String = row.get("role");
     let session_id = Uuid::new_v4();
     let sid = session_id.to_string();
     let uid = user_id.to_string();
     let (access_token, access_jti) =
-        security.issue_token(&uid, role.as_db_string(), TokenType::Access, Some(&sid))?;
+        security.issue_token(&uid, &role, TokenType::Access, Some(&sid))?;
     let (refresh_token, refresh_jti) =
-        security.issue_token(&uid, role.as_db_string(), TokenType::Refresh, Some(&sid))?;
-    let refresh_secs = security.refresh_token_ttl().as_secs() as i64;
+        security.issue_token(&uid, &role, TokenType::Refresh, Some(&sid))?;
+    let refresh_secs = security.refresh_token_ttl().as_secs() as f64;
 
     let mut tx = db.begin().await?;
     sqlx::query(
@@ -159,7 +160,7 @@ pub async fn login(
     .bind(user_id)
     .bind(&refresh_jti)
     .bind(&access_jti)
-    .bind(refresh_secs as f64)
+    .bind(refresh_secs)
     .bind(ip)
     .execute(&mut *tx)
     .await?;
@@ -191,12 +192,14 @@ pub async fn login(
 async fn record_failure(
     db: &PgPool,
     security: &Security,
+    platform: &Platform,
     user_id: Uuid,
     attempts: i32,
     ip: Option<&str>,
 ) -> Result<(), AuthError> {
-    let max = security.max_login_attempts().max(1) as i32;
-    let lock_secs = security.lockout_duration().as_secs() as f64;
+    let policies = platform.policies();
+    let max = policies.login_max_attempts as i32;
+    let lock_secs = (policies.login_lockout_minutes * 60) as f64;
     let mut tx = db.begin().await?;
     sqlx::query(
         "UPDATE users SET
@@ -238,6 +241,7 @@ async fn record_failure(
 pub async fn refresh(
     db: &PgPool,
     security: &Security,
+    platform: &Platform,
     refresh_token: &str,
     ip: Option<&str>,
 ) -> Result<TokenPair, AuthError> {
@@ -249,8 +253,8 @@ pub async fn refresh(
         .as_deref()
         .and_then(|s| Uuid::parse_str(s).ok())
         .ok_or(AuthError::InvalidToken)?;
+    let inactivity_secs = (platform.policies().inactivity_minutes * 60) as f64;
 
-    // Aktuelle Rolle und Kontostatus vom maßgeblichen Stand lesen.
     let user = sqlx::query(
         "SELECT u.id, u.role FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.id = $1 AND s.jti = $2 AND s.revoked_at IS NULL AND s.expires_at > now()
@@ -259,19 +263,19 @@ pub async fn refresh(
     )
     .bind(session_id)
     .bind(&claims.jti)
-    .bind(INACTIVITY_TIMEOUT_SECS as f64)
+    .bind(inactivity_secs)
     .fetch_optional(db)
     .await?
     .ok_or(AuthError::InvalidToken)?;
     let user_id: Uuid = user.get("id");
-    let role = Role::from_str(&user.get::<String, _>("role")).map_err(|e| anyhow::anyhow!(e))?;
+    let role: String = user.get("role");
 
     let sid = session_id.to_string();
     let uid = user_id.to_string();
     let (access_token, access_jti) =
-        security.issue_token(&uid, role.as_db_string(), TokenType::Access, Some(&sid))?;
+        security.issue_token(&uid, &role, TokenType::Access, Some(&sid))?;
     let (new_refresh, refresh_jti) =
-        security.issue_token(&uid, role.as_db_string(), TokenType::Refresh, Some(&sid))?;
+        security.issue_token(&uid, &role, TokenType::Refresh, Some(&sid))?;
 
     let mut tx = db.begin().await?;
     let res = sqlx::query(
@@ -313,13 +317,16 @@ pub async fn refresh(
     })
 }
 
-/// Prüft ein Access-Token vollständig: Signatur/Ablauf/Typ, nicht
-/// widerrufene Sitzung mit passendem `access_jti`, aktives Konto.
-/// Die Rolle wird aus der Datenbank übernommen, damit Rollenänderungen
-/// sofort wirken.
+/// Prüft ein Access-Token vollständig und bestimmt die wirksamen Rechte.
+///
+/// Eine Abfrage liefert: gültige, nicht widerrufene, nicht inaktive
+/// Sitzung mit passendem `access_jti`; aktives Konto; Haupt- und
+/// Zusatzrollen; Versionszähler von Rollenmatrix und Einstellungen.
+/// Rollen- und Rechteänderungen wirken damit bei der nächsten Anfrage.
 pub async fn validate_access(
     db: &PgPool,
     security: &Security,
+    platform: &Platform,
     token: &str,
 ) -> Result<AuthUser, AuthError> {
     let claims = security
@@ -330,8 +337,8 @@ pub async fn validate_access(
         .as_deref()
         .and_then(|s| Uuid::parse_str(s).ok())
         .ok_or(AuthError::InvalidToken)?;
+    let inactivity_secs = (platform.policies().inactivity_minutes * 60) as f64;
 
-    // Prüfen und `last_seen_at` in einem Statement fortschreiben.
     let row = sqlx::query(
         "WITH s AS (
              SELECT s.id, u.id AS user_id, u.role,
@@ -346,27 +353,37 @@ pub async fn validate_access(
              FROM s WHERE sessions.id = s.id
                AND s.seen < now() - make_interval(secs => $4)
          )
-         SELECT user_id AS id, role FROM s",
+         SELECT s.user_id, s.role,
+                ARRAY(SELECT role_key FROM user_roles WHERE user_id = s.user_id) AS extra_roles,
+                p.rbac_version, p.settings_version
+         FROM s CROSS JOIN platform_state p",
     )
     .bind(session_id)
     .bind(&claims.jti)
-    .bind(INACTIVITY_TIMEOUT_SECS as f64)
-    .bind(LAST_SEEN_RESOLUTION_SECS as f64)
+    .bind(inactivity_secs)
+    .bind(LAST_SEEN_RESOLUTION_SECS)
     .fetch_optional(db)
     .await?
     .ok_or(AuthError::InvalidToken)?;
 
-    let user_id: Uuid = row.get("id");
-    let role = Role::from_str(&row.get::<String, _>("role")).map_err(|e| anyhow::anyhow!(e))?;
+    let user_id: Uuid = row.get("user_id");
+    let role: String = row.get("role");
+    let extra_roles: Vec<String> = row.get("extra_roles");
+    platform
+        .refresh_if_stale(db, row.get("rbac_version"), row.get("settings_version"))
+        .await?;
+    let permissions = platform
+        .permissions(std::iter::once(role.as_str()).chain(extra_roles.iter().map(String::as_str)));
     Ok(AuthUser {
         user_id: user_id.to_string(),
         role,
+        permissions,
         session_id: Some(session_id),
     })
 }
 
 /// Widerruft eine Sitzung. `owner` begrenzt den Widerruf auf Sitzungen
-/// dieses Benutzers (`None` = Admin-Widerruf beliebiger Sitzungen).
+/// dieses Benutzers (`None` = beliebige Sitzung, für die Administration).
 pub async fn revoke_session(
     db: &PgPool,
     security: &Security,
@@ -429,37 +446,64 @@ pub async fn list_sessions(
         .collect())
 }
 
-#[allow(clippy::too_many_arguments)]
-/// Legt einen Benutzer an (Bootstrap/Administration). Das Passwort muss
-/// mindestens 12 Zeichen lang sein.
+/// Angaben für ein neues Benutzerkonto.
+pub struct NewUser<'a> {
+    pub username: &'a str,
+    pub email: &'a str,
+    pub display_name: &'a str,
+    /// Schlüssel einer vorhandenen Rolle
+    pub role: &'a str,
+    pub password: &'a str,
+}
+
+/// Legt einen Benutzer an. `actor` steht im Audit (Benutzer-ID oder
+/// Werkzeugname). Passwortlänge nach Richtlinie; die Rolle muss existieren.
 pub async fn create_user(
     db: &PgPool,
     security: &Security,
-    username: &str,
-    email: &str,
-    display_name: &str,
-    role: Role,
-    password: &str,
+    platform: &Platform,
+    new: NewUser<'_>,
     actor: &str,
 ) -> Result<Uuid, AuthError> {
-    if password.chars().count() < 12 {
-        return Err(AuthError::Internal(anyhow::anyhow!(
-            "Passwort muss mindestens 12 Zeichen lang sein"
+    let min = platform.policies().password_min_length as usize;
+    if new.password.chars().count() < min {
+        return Err(AuthError::Policy(format!(
+            "Passwort muss mindestens {min} Zeichen lang sein"
         )));
     }
-    let hash = security.hash_password(password)?;
+    if new.username.trim().is_empty() || new.email.trim().is_empty() {
+        return Err(AuthError::Policy(
+            "Benutzername und E-Mail dürfen nicht leer sein".into(),
+        ));
+    }
+    let hash = security.hash_password(new.password)?;
     let mut tx = db.begin().await?;
-    let id: Uuid = sqlx::query_scalar(
+    let inserted: Result<Uuid, sqlx::Error> = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, display_name, email, role)
          VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
-    .bind(username)
+    .bind(new.username.trim())
     .bind(&hash)
-    .bind(display_name)
-    .bind(email)
-    .bind(role.as_db_string())
+    .bind(new.display_name.trim())
+    .bind(new.email.trim())
+    .bind(new.role)
     .fetch_one(&mut *tx)
-    .await?;
+    .await;
+    let id = match inserted {
+        Ok(id) => id,
+        Err(e) => {
+            let code = e
+                .as_database_error()
+                .and_then(|d| d.code().map(|c| c.to_string()));
+            return Err(match code.as_deref() {
+                Some("23503") => AuthError::Policy(format!("Unbekannte Rolle: {}", new.role)),
+                Some("23505") => {
+                    AuthError::Policy("Benutzername oder E-Mail ist bereits vergeben".into())
+                }
+                _ => e.into(),
+            });
+        }
+    };
     security
         .log_audit_tx(
             &mut tx,
@@ -468,7 +512,7 @@ pub async fn create_user(
             "user",
             Some(&id.to_string()),
             None,
-            Some(&serde_json::json!({ "username": username, "role": role })),
+            Some(&serde_json::json!({ "role": new.role })),
             None,
         )
         .await?;

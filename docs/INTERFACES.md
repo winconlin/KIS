@@ -1,12 +1,14 @@
 # KIS — Medizinische Schnittstellen
 
+> **Entwurf, nicht betriebsbereit.** Der hier beschriebene Code liegt unter `entwurf/schnittstellen/`, ist nicht Teil des Builds und wird vom Server nicht geladen. Angaben wie „implementiert“ beziehen sich auf diesen Entwurf, nicht auf das laufende System. Stand der Schnittstellen: [FUNKTIONSLANDKARTE.md](FUNKTIONSLANDKARTE.md).
+
 > **Hinweis (06.11.2026):** Teile dieses Dokuments beschreiben den entfernten SQLite-Prototyp oder ein Zielbild. Maßgeblich für den Ist-Zustand sind [INSTALLATION](INSTALLATION.md), [API](API.md), [DATABASE](DATABASE.md) und [REVIEW_STATUS](REVIEW_STATUS.md).
 
 
 > **Krankenhaus-Informations-System (KIS)**
 > Detaillierte Dokumentation der unterstützten Medizintechnik-Schnittstellen: HL7 v2.5 (MLLP), FHIR R4 (REST/JSON), DICOM (C-STORE SCP), XDS (Document Registry / Repository) und **Telematikinfrastruktur (TI)** (eGK, ePA, eRezept, eAU).
 >
-> **Ist-Zustand (Stand 01.11.2026):** Die Phase-3-Schnittstellen **HL7 v2.5**, **FHIR R4**, **DICOM** und **XDS** sind als **vollständige Implementierung** in `crates/kis-hl7`, `crates/kis-fhir`, `crates/kis-dicom` und `crates/kis-xds` vorhanden und kompilieren fehlerfrei. Zusätzlich ist die **Telematikinfrastruktur (TI)** in `crates/kis-ti/src/lib.rs` vollständig implementiert. Dieses Dokument beschreibt Protokoll, Konfiguration, Mapping und konkrete Beispiele für die Umsetzung.
+> **Ist-Zustand (Stand 01.11.2026):** Die Phase-3-Schnittstellen **HL7 v2.5**, **FHIR R4**, **DICOM** und **XDS** sind als **vollständige Implementierung** in `entwurf/schnittstellen/kis-hl7`, `entwurf/schnittstellen/kis-fhir`, `entwurf/schnittstellen/kis-dicom` und `entwurf/schnittstellen/kis-xds` vorhanden und kompilieren fehlerfrei. Zusätzlich ist die **Telematikinfrastruktur (TI)** in `entwurf/schnittstellen/kis-ti/src/lib.rs` vollständig implementiert. Dieses Dokument beschreibt Protokoll, Konfiguration, Mapping und konkrete Beispiele für die Umsetzung.
 
 ## Tatsächlicher Stand
 
@@ -14,11 +16,11 @@
 
 | Schnittstelle | Protokoll | Transport | Port | Crate | Config-Abschnitt | Ist-Zustand (Stand 01.11.2026) |
 |---|---|---|---|---|---|---|
-| HL7 v2.5 | MLLP (Minimal Lower Layer Protocol) | TCP | 6667 | `crates/kis-hl7` | `[interfaces.hl7]` | ✅ Implementiert |
-| FHIR R4 | REST / JSON | HTTP(S) | 8080 (Pfad `/fhir`) | `crates/kis-fhir` | `[interfaces.fhir]` | ✅ Implementiert |
-| DICOM | C-STORE + C-FIND SCP | TCP | 104 | `crates/kis-dicom` | `[interfaces.dicom]` | ✅ Implementiert |
-| XDS | REST (IHE XDS.b) | HTTP(S) | 8080 (Pfad `/xds`) | `crates/kis-xds` | `[interfaces.xds]` | ✅ Implementiert |
-| **TI (eGK/ePA/eRezept/eAU)** | mTLS / REST | HTTP(S) | 8080 (Pfad `/api/v1/interfaces/ti/`) | `crates/kis-ti` | `[interfaces.ti]` | ✅ Implementiert |
+| HL7 v2.5 | MLLP (Minimal Lower Layer Protocol) | TCP | 6667 | `entwurf/schnittstellen/kis-hl7` | `[interfaces.hl7]` | ✅ Implementiert |
+| FHIR R4 | REST / JSON | HTTP(S) | 8080 (Pfad `/fhir`) | `entwurf/schnittstellen/kis-fhir` | `[interfaces.fhir]` | ✅ Implementiert |
+| DICOM | C-STORE + C-FIND SCP | TCP | 104 | `entwurf/schnittstellen/kis-dicom` | `[interfaces.dicom]` | ✅ Implementiert |
+| XDS | REST (IHE XDS.b) | HTTP(S) | 8080 (Pfad `/xds`) | `entwurf/schnittstellen/kis-xds` | `[interfaces.xds]` | ✅ Implementiert |
+| **TI (eGK/ePA/eRezept/eAU)** | mTLS / REST | HTTP(S) | 8080 (Pfad `/api/v1/interfaces/ti/`) | `entwurf/schnittstellen/kis-ti` | `[interfaces.ti]` | ✅ Implementiert |
 
 > **Grundsatz:** Nur tatsächlich benötigte Schnittstellen aktivieren. Jede zusätzliche Schnittstelle erweitert die Angriffsfläche (siehe [SECURITY.md](SECURITY.md) → Netzwerk).
 
@@ -68,9 +70,9 @@ MLLP rahmt eine Nachricht als Startbyte 0x0B, Nachricht, Endbyte 0x1C und 0x0D. 
 
 ### 1.10 Implementierung (Ist-Zustand, Stand 01.11.2026)
 
-> **Crate:** `crates/kis-hl7` — vollständige Implementierung (777 Zeilen), kompiliert fehlerfrei.
+> **Crate:** `entwurf/schnittstellen/kis-hl7` — vollständige Implementierung (777 Zeilen), kompiliert fehlerfrei.
 
-Das Modul ist in `crates/kis-hl7/src/lib.rs` implementiert:
+Das Modul ist in `entwurf/schnittstellen/kis-hl7/src/lib.rs` implementiert:
 
 | Element | Art | Zweck |
 |---|---|---|
@@ -115,7 +117,7 @@ PV1|1|I|WARD^ROOM^BED
 
 ### 2.4 Endpoint-Mapping (Ist-Zustand, Stand 01.11.2026)
 
-Die nachfolgenden Endpunkte sind **tatsächlich implementiert** in `crates/kis-fhir/src/lib.rs` (registriert über `register_router(db, security, config)`):
+Die nachfolgenden Endpunkte sind **tatsächlich implementiert** in `entwurf/schnittstellen/kis-fhir/src/lib.rs` (registriert über `register_router(db, security, config)`):
 
 | Methode | FHIR-Pfad | Handler | Beschreibung |
 |---|---|---|---|
@@ -196,9 +198,9 @@ Geplantes MedicationRequest-Beispiel:
 
 ### 2.13 Implementierung (Ist-Zustand, Stand 01.11.2026)
 
-> **Crate:** `crates/kis-fhir` — vollständige Implementierung (1490 Zeilen), kompiliert fehlerfrei.
+> **Crate:** `entwurf/schnittstellen/kis-fhir` — vollständige Implementierung (1490 Zeilen), kompiliert fehlerfrei.
 
-Das FHIR-Modul ist in `crates/kis-fhir/src/lib.rs` als Axum-HTTP-Service implementiert. Die FHIR-R4-Datentypen werden intern als eigene Rust-Strukturen abgebildet und 1:1 auf die KIS-Tabelle `patients`/`doctors`/`appointments` gemappt:
+Das FHIR-Modul ist in `entwurf/schnittstellen/kis-fhir/src/lib.rs` als Axum-HTTP-Service implementiert. Die FHIR-R4-Datentypen werden intern als eigene Rust-Strukturen abgebildet und 1:1 auf die KIS-Tabelle `patients`/`doctors`/`appointments` gemappt:
 
 | FHIR-Rust-Struktur | KIS-Entität | Zweck |
 |---|---|---|
@@ -273,9 +275,9 @@ Das DICOM-Objekt enthält `PatientID` (DICOM-Tag `(0010,0020)`). Das KIS prüft:
 
 ### 3.9 Implementierung (Ist-Zustand, Stand 01.11.2026)
 
-> **Crate:** `crates/kis-dicom` — vollständige Implementierung (764 Zeilen), kompiliert fehlerfrei.
+> **Crate:** `entwurf/schnittstellen/kis-dicom` — vollständige Implementierung (764 Zeilen), kompiliert fehlerfrei.
 
-Das DICOM-Modul ist in `crates/kis-dicom/src/lib.rs` implementiert und unterstützt **C-STORE** (Empfang) und **C-FIND** (Abfrage) als SCP:
+Das DICOM-Modul ist in `entwurf/schnittstellen/kis-dicom/src/lib.rs` implementiert und unterstützt **C-STORE** (Empfang) und **C-FIND** (Abfrage) als SCP:
 
 | Element | Art | Zweck |
 |---|---|---|
@@ -308,7 +310,7 @@ XDS (Cross-Document Sharing) ist ein IHE-Standard für den **Austausch von Dokum
 - **Document Repository:** Lager der eigentlichen Dokumente.
 - **Search:** Abfrage nach Dokumenten.
 
-> **Ist-Zustand (Stand 01.11.2026):** `crates/kis-xds/src/lib.rs` ist eine **vollständige Implementierung** (609 Zeilen, kompiliert fehlerfrei). Das XDS-Modul ist als Axum-HTTP-Service umgesetzt und stellt Document Registry (Metadaten) und Document Repository (Lager) bereit.
+> **Ist-Zustand (Stand 01.11.2026):** `entwurf/schnittstellen/kis-xds/src/lib.rs` ist eine **vollständige Implementierung** (609 Zeilen, kompiliert fehlerfrei). Das XDS-Modul ist als Axum-HTTP-Service umgesetzt und stellt Document Registry (Metadaten) und Document Repository (Lager) bereit.
 
 ### 4.2 Konfiguration (Ist-Zustand)
 
@@ -487,7 +489,7 @@ curl -s -X POST -H "Authorization: Bearer ***" \
 
 ## 7. Telematikinfrastruktur (TI)
 
-> **Ist (Stand 01.11.2026):** Vollständig implementiert in `crates/kis-ti/src/lib.rs`.
+> **Ist (Stand 01.11.2026):** Vollständig implementiert in `entwurf/schnittstellen/kis-ti/src/lib.rs`.
 >
 > Die Telematikinfrastruktur (TI) ist das deutsche Ökosystem für den elektronischen Datenaustausch im Gesundheitswesen. Das KIS unterstützt vier Kernmodule:
 >

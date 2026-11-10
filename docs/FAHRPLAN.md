@@ -1,5 +1,7 @@
 # KIS — Fahrplan für die Entwicklung
 
+> **Älterer Planungsstand.** Dieser Fahrplan stammt aus der Zeit vor dem 10.11.2026 und beschreibt ein früheres Zielbild; Statusangaben darin sind nicht maßgeblich. Maßgeblich sind [FUNKTIONSLANDKARTE.md](FUNKTIONSLANDKARTE.md) (Stand) und [ARBEITSPAKETE.md](ARBEITSPAKETE.md) (offene Arbeit).
+
 > **Hinweis (06.11.2026):** Teile dieses Dokuments beschreiben den entfernten SQLite-Prototyp oder ein Zielbild. Maßgeblich für den Ist-Zustand sind [INSTALLATION](INSTALLATION.md), [API](API.md), [DATABASE](DATABASE.md) und [REVIEW_STATUS](REVIEW_STATUS.md).
 
 

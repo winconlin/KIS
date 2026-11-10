@@ -1,0 +1,87 @@
+# ============================================================
+# Wem gehört welche Tabelle?
+#
+# Geprüft von scripts/check_modules.py (Teil von scripts/check.sh und CI):
+#   1. Jede Tabelle aus migrations/ steht hier genau einmal.
+#   2. Ein Fachmodul greift nur auf eigene Tabellen und (lesend) auf
+#      Kern-Tabellen zu. Tabellen anderer Module sind tabu, außer sie
+#      stehen ausdrücklich unter `reads` (begründete, sichtbare Ausnahme).
+#   3. Ein Fachmodul schreibt nie in Kern-Tabellen. Dafür gibt es
+#      Kernfunktionen (kis_core::treatment, kis_core::facility,
+#      kis_core::http::audit, kis_core::events).
+#   4. Ein Fachmodul hängt nur von kis-core ab, nie von anderen Modulen.
+#   5. Jede Modul-Crate ist hier und in kis-app/src/modules.rs eingetragen.
+#
+# Neues Modul: scripts/new_module.py <name> legt den Eintrag an.
+# Neue Tabelle: in der Migration anlegen und hier dem Modul zuordnen.
+# ============================================================
+
+[kernel]
+# Crates, die Kern-Tabellen schreiben dürfen.
+crates = ["kis-core", "kis-app", "kis-org", "kis-patients", "kis-cases"]
+tables = [
+    # Konten, Sitzungen, Rechte, Einstellungen
+    "users", "sessions", "roles", "role_permissions", "user_roles", "settings", "platform_state",
+    # Protokoll und Datenschutz
+    "audit_log", "audit_logs", "consents", "anonymization_keys",
+    # Organisation
+    "org_units", "rooms", "beds", "user_org_units",
+    # Ereignisse
+    "domain_events", "event_consumers", "event_failures",
+    # Patienten und Fälle
+    "patients", "patient_alerts", "cases", "case_stays", "case_participants",
+    "emergency_access_grants",
+]
+
+[modules.clinical]
+crate = "kis-clinical"
+tables = ["case_diagnoses", "case_procedures", "clinical_notes", "case_tasks"]
+
+[modules.orders]
+crate = "kis-orders"
+tables = ["service_catalog", "orders", "automation_rules"]
+
+[modules.lab]
+crate = "kis-lab"
+tables = ["lab_specimens", "lab_results"]
+
+[modules.nursing]
+crate = "kis-nursing"
+tables = ["vital_signs", "fluid_balance_entries"]
+
+[modules.prescriptions]
+crate = "kis-prescriptions"
+tables = ["prescriptions", "medication_administrations"]
+
+[modules.meals]
+crate = "kis-meals"
+tables = ["diets", "case_diets"]
+
+[modules.roster]
+crate = "kis-roster"
+tables = [
+    "staff_members", "duty_types", "duty_assignments", "absences", "public_holidays",
+    "staffing_positions", "staffing_assignments",
+]
+
+[modules.doctors]
+crate = "kis-doctors"
+tables = ["doctors"]
+# ALTLAST: `GET /api/v1/doctors/:id/schedule` liest Termine. Die Route
+# gehört fachlich ins Terminmodul (docs/ARBEITSPAKETE.md, AP-01). Mit der
+# Verlagerung entfällt diese Ausnahme.
+reads = ["appointments"]
+
+[modules.appointments]
+crate = "kis-appointments"
+tables = ["appointments"]
+# Termine zeigen den Behandler an und prüfen seine Verfügbarkeit.
+reads = ["doctors"]
+
+[modules.medications]
+crate = "kis-medications"
+tables = ["medications"]
+
+[modules.ui]
+crate = "kis-ui"
+tables = []

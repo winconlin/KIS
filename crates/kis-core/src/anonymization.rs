@@ -173,7 +173,7 @@ impl AnonymizationService {
         actor: &AuthUser,
     ) -> Result<(), AnonymizationError> {
         // 1) RBAC: nur Admin
-        if !actor.role.has_permission(&Permission::Admin) {
+        if !actor.can(&Permission::Admin) {
             return Err(AnonymizationError::Permission(
                 "Anonymisierung erfordert die Rolle Admin".into(),
             ));
@@ -309,7 +309,7 @@ impl AnonymizationService {
         actor: &AuthUser,
     ) -> Result<String, AnonymizationError> {
         // 1) RBAC: nur Admin
-        if !actor.role.has_permission(&Permission::Admin) {
+        if !actor.can(&Permission::Admin) {
             return Err(AnonymizationError::Permission(
                 "Pseudonymisierung erfordert die Rolle Admin".into(),
             ));
@@ -429,7 +429,7 @@ impl AnonymizationService {
         patient_id: Uuid,
         actor: &AuthUser,
     ) -> Result<(), AnonymizationError> {
-        if !actor.role.has_permission(&Permission::Admin) {
+        if !actor.can(&Permission::Admin) {
             return Err(AnonymizationError::Permission(
                 "De-Pseudonymisierung erfordert die Rolle Admin".into(),
             ));
@@ -540,7 +540,7 @@ impl AnonymizationService {
         &self,
         actor: &AuthUser,
     ) -> Result<RetentionAnonymizationResult, AnonymizationError> {
-        if !actor.role.has_permission(&Permission::Admin) {
+        if !actor.can(&Permission::Admin) {
             return Err(AnonymizationError::Permission(
                 "Retention-Anonymisierung erfordert die Rolle Admin".into(),
             ));

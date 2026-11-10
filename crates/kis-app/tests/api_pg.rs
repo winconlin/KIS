@@ -1,13 +1,10 @@
-//! Integrationstests gegen eine echte PostgreSQL-Datenbank.
+//! Integrationstests des Kerns gegen eine echte PostgreSQL-Datenbank:
+//! Anmeldung und Sitzungen, Kontosperre, Rechte, DSGVO-Funktionen,
+//! Audit-Kette, Start-Prüfungen, Terminüberschneidung.
 //!
-//! Voraussetzung: `KIS_TEST_DATABASE_URL` zeigt auf einen PostgreSQL-Server,
-//! auf dem der Benutzer Datenbanken anlegen darf, z. B.
-//! `postgres://postgres@127.0.0.1:5432/postgres`. Jeder Test legt eine
-//! eigene, frische Datenbank an und entfernt sie danach.
-//!
-//! Ohne die Variable werden die Tests mit deutlichem Hinweis übersprungen;
-//! mit `KIS_REQUIRE_PG_TESTS=1` (CI) schlagen sie stattdessen fehl.
-//! Übersprungene Tests gelten nicht als bestanden.
+//! Testgerüst und Voraussetzungen: `tests/common/mod.rs`.
+
+mod common;
 
 use std::sync::Arc;
 
@@ -17,214 +14,14 @@ use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use kis_app::api::{build_router, AppState};
+use common::{config, patient_body, App, TestDb, JWT_SECRET, MASTER_KEY, PASSWORD};
 use kis_core::config::AppConfig;
-use kis_core::db::Database;
-use kis_core::security::{Role, Security};
-
-const JWT_SECRET: &str = "integration-test-secret-0123456789abcdef";
-// 32 Bytes, Base64 (synthetischer Testschlüssel)
-const MASTER_KEY: &str = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=";
-const PASSWORD: &str = "correct-horse-battery";
-
-struct TestDb {
-    admin_url: String,
-    name: String,
-    db: Arc<Database>,
-}
-
-impl TestDb {
-    async fn new() -> Option<Self> {
-        let admin_url = match std::env::var("KIS_TEST_DATABASE_URL") {
-            Ok(u) => u,
-            Err(_) => {
-                if std::env::var("KIS_REQUIRE_PG_TESTS").as_deref() == Ok("1") {
-                    panic!("KIS_TEST_DATABASE_URL fehlt, PostgreSQL-Tests sind verpflichtend");
-                }
-                eprintln!("ÜBERSPRUNGEN: KIS_TEST_DATABASE_URL nicht gesetzt");
-                return None;
-            }
-        };
-        let name = format!("kis_it_{}", uuid::Uuid::new_v4().simple());
-        let admin = sqlx::PgPool::connect(&admin_url)
-            .await
-            .expect("Admin-Verbindung");
-        sqlx::query(&format!("CREATE DATABASE {name}"))
-            .execute(&admin)
-            .await
-            .expect("CREATE DATABASE");
-        admin.close().await;
-        let url = replace_db(&admin_url, &name);
-        let db = Database::connect_pools(&url, None, 8, None)
-            .await
-            .expect("Verbindung + Migrationen");
-        Some(Self {
-            admin_url,
-            name,
-            db: Arc::new(db),
-        })
-    }
-
-    async fn drop(self) {
-        self.db.write_pool.close().await;
-        if let Ok(admin) = sqlx::PgPool::connect(&self.admin_url).await {
-            let _ = sqlx::query(&format!(
-                "DROP DATABASE IF EXISTS {} WITH (FORCE)",
-                self.name
-            ))
-            .execute(&admin)
-            .await;
-        }
-    }
-}
-
-fn replace_db(url: &str, name: &str) -> String {
-    let (base, query) = match url.split_once('?') {
-        Some((b, q)) => (b, Some(q)),
-        None => (url, None),
-    };
-    let idx = base.rfind('/').expect("URL mit Datenbankpfad");
-    let mut out = format!("{}/{}", &base[..idx], name);
-    if let Some(q) = query {
-        out.push('?');
-        out.push_str(q);
-    }
-    out
-}
-
-fn config() -> AppConfig {
-    let mut cfg = AppConfig::default();
-    cfg.security.jwt_secret_env = "KIS_IT_JWT_SECRET".into();
-    cfg.security.encryption.master_key_env = "KIS_IT_MASTER_KEY".into();
-    cfg.security.max_login_attempts = 3;
-    cfg.security.lockout_duration = 600;
-    // Hohe Limits: Tests prüfen Auth, nicht das Rate-Limit
-    cfg.security.rate_limit.normal_per_min = 100_000;
-    cfg.security.rate_limit.auth_per_min = 100_000;
-    std::env::set_var("KIS_IT_JWT_SECRET", JWT_SECRET);
-    std::env::set_var("KIS_IT_MASTER_KEY", MASTER_KEY);
-    cfg
-}
-
-struct App {
-    router: axum::Router,
-    security: Arc<Security>,
-    tdb: TestDb,
-}
-
-impl App {
-    async fn new() -> Option<Self> {
-        let tdb = TestDb::new().await?;
-        let cfg = config();
-        let security = Arc::new(Security::new(&cfg.security).unwrap());
-        let rl = Arc::new(kis_core::rate_limit::SlidingWindowRateLimiter::new(
-            &cfg.security.rate_limit,
-        ));
-        let cache = Arc::new(kis_core::cache::EntityCache::new(&cfg.cache));
-        let state = AppState::new(cfg, tdb.db.clone(), security.clone(), rl, cache).unwrap();
-        Some(Self {
-            router: build_router(state),
-            security,
-            tdb,
-        })
-    }
-
-    fn pool(&self) -> &sqlx::PgPool {
-        self.tdb.db.write()
-    }
-
-    async fn user(&self, name: &str, role: Role) -> uuid::Uuid {
-        kis_core::auth::create_user(
-            self.pool(),
-            &self.security,
-            name,
-            &format!("{name}@example.test"),
-            name,
-            role,
-            PASSWORD,
-            "test",
-        )
-        .await
-        .unwrap()
-    }
-
-    async fn call(
-        &self,
-        method: &str,
-        path: &str,
-        token: Option<&str>,
-        body: Option<Value>,
-    ) -> (StatusCode, Value) {
-        let mut req = Request::builder().method(method).uri(path);
-        if let Some(t) = token {
-            req = req.header("Authorization", format!("Bearer {t}"));
-        }
-        let req = match body {
-            Some(b) => req
-                .header("content-type", "application/json")
-                .body(Body::from(b.to_string()))
-                .unwrap(),
-            None => req.body(Body::empty()).unwrap(),
-        };
-        let res = self.router.clone().oneshot(req).await.unwrap();
-        let status = res.status();
-        let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        let v = serde_json::from_slice(&bytes)
-            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
-        (status, v)
-    }
-
-    async fn login(&self, login: &str, password: &str) -> (StatusCode, Value) {
-        self.call(
-            "POST",
-            "/api/v1/auth/login",
-            None,
-            Some(json!({ "email": login, "password": password })),
-        )
-        .await
-    }
-
-    async fn token(&self, login: &str) -> (String, String) {
-        let (s, v) = self.login(login, PASSWORD).await;
-        assert_eq!(s, StatusCode::OK, "Login {login}: {v}");
-        (
-            v["access_token"].as_str().unwrap().to_string(),
-            v["refresh_token"].as_str().unwrap().to_string(),
-        )
-    }
-
-    async fn audit_ok(&self) -> bool {
-        self.security
-            .verify_audit_chain(self.pool())
-            .await
-            .unwrap()
-            .0
-    }
-}
-
-macro_rules! app {
-    () => {
-        match App::new().await {
-            Some(a) => a,
-            None => return,
-        }
-    };
-}
-
-fn patient_body() -> Value {
-    json!({
-        "nameFamily": "Testfrau",
-        "nameGiven": "Erika",
-        "birthDate": "1970-05-01",
-        "addressZip": "83022",
-        "allergies": ["Penizillin"]
-    })
-}
+use kis_core::security::Security;
 
 #[tokio::test]
 async fn authentication_and_session_lifecycle() {
     let app = app!();
-    app.user("admin1", Role::Admin).await;
+    app.user("admin1", "admin").await;
 
     // Ohne Token kein Zugriff
     let (s, _) = app.call("GET", "/api/v1/patients", None, None).await;
@@ -346,7 +143,7 @@ async fn authentication_and_session_lifecycle() {
 #[tokio::test]
 async fn lockout_and_account_status() {
     let app = app!();
-    let uid = app.user("arzt1", Role::Arzt).await;
+    let uid = app.user("arzt1", "arzt").await;
 
     for _ in 0..3 {
         let (s, _) = app.login("arzt1", "wrong-password-xyz").await;
@@ -390,7 +187,7 @@ async fn lockout_and_account_status() {
     assert_eq!(s, StatusCode::UNAUTHORIZED);
 
     // Inaktivität > 30 min: Auto-Logout
-    app.user("pflege1", Role::Pflege).await;
+    app.user("pflege1", "pflege").await;
     let (access, refresh) = app.token("pflege1").await;
     sqlx::query("UPDATE sessions SET last_seen_at = now() - interval '31 minutes', issued_at = now() - interval '31 minutes'")
         .execute(app.pool())
@@ -416,10 +213,10 @@ async fn lockout_and_account_status() {
 #[tokio::test]
 async fn rbac_on_module_routes() {
     let app = app!();
-    app.user("admin1", Role::Admin).await;
-    app.user("pflege1", Role::Pflege).await;
-    app.user("rez1", Role::Rezeption).await;
-    app.user("arzt1", Role::Arzt).await;
+    app.user("admin1", "admin").await;
+    app.user("pflege1", "pflege").await;
+    app.user("rez1", "rezeption").await;
+    app.user("arzt1", "arzt").await;
     let (admin, _) = app.token("admin1").await;
     let (pflege, _) = app.token("pflege1").await;
     let (rez, _) = app.token("rez1").await;
@@ -549,7 +346,7 @@ async fn rbac_on_module_routes() {
 #[tokio::test]
 async fn gdpr_export_delete_anonymize() {
     let app = app!();
-    app.user("admin1", Role::Admin).await;
+    app.user("admin1", "admin").await;
     let (admin, _) = app.token("admin1").await;
 
     let mk = |app: &App, admin: &str| {
@@ -667,11 +464,7 @@ async fn gdpr_export_delete_anonymize() {
         MASTER_KEY,
     )
     .unwrap();
-    let actor = kis_core::security::AuthUser {
-        user_id: "admin1".into(),
-        role: Role::Admin,
-        session_id: None,
-    };
+    let actor = kis_core::security::AuthUser::with_builtin_role("admin1", "admin");
     svc.depseudonymize_patient(p3.parse().unwrap(), &actor)
         .await
         .unwrap();
@@ -781,7 +574,7 @@ async fn startup_rejects_missing_or_weak_secrets() {
 #[tokio::test]
 async fn appointments_reject_double_booking_even_in_parallel() {
     let app = app!();
-    app.user("admin1", Role::Admin).await;
+    app.user("admin1", "admin").await;
     let (admin, _) = app.token("admin1").await;
 
     let (s, d) = app
@@ -866,8 +659,8 @@ async fn appointments_reject_double_booking_even_in_parallel() {
 #[tokio::test]
 async fn soft_deleted_patients_hidden_from_non_admins() {
     let app = app!();
-    app.user("admin1", Role::Admin).await;
-    app.user("viewer1", Role::Viewer).await;
+    app.user("admin1", "admin").await;
+    app.user("viewer1", "viewer").await;
     let (admin, _) = app.token("admin1").await;
     let (viewer, _) = app.token("viewer1").await;
     let (_, p) = app

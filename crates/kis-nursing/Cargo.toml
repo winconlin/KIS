@@ -1,0 +1,19 @@
+[package]
+name = "kis-nursing"
+version = "0.1.0"
+edition = "2021"
+description = "KIS-Fachmodul nursing"
+license = "MIT"
+
+[dependencies]
+kis-core = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+
+[lints]
+workspace = true

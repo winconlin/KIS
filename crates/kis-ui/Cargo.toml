@@ -8,6 +8,7 @@ license = "MIT"
 [lib]
 
 [dependencies]
+kis-core = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
