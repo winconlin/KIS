@@ -21,8 +21,52 @@ Migrationen sind in das Binary eingebettet und werden über `_sqlx_migrations` m
 
 - `audit_logs`: Trigger verweigern UPDATE, DELETE und TRUNCATE. Der Laufzeitrolle sind diese Rechte zusätzlich entzogen. Ein Superuser oder der Eigentümer kann Trigger abschalten. Die Hash-Kette ist ohne externen Prüfanker daher manipulationserkennend, aber nicht fälschungssicher.
 - `appointments`: `appointments_no_overlap` (GiST-Exclusion) verhindert überlappende aktive Termine je Arzt, auch bei parallelen Buchungen. `appointments_time_order` erzwingt `start_time < end_time`.
-- `users.role`: nur Werte der serverseitigen Rollenliste.
+- `users.role`: Fremdschlüssel auf `roles.key`; Rollen sind Daten des Hauses.
 - `anonymization_keys.encrypted_key` ist genau bei Pseudonymisierung gesetzt.
+
+## Organisation, Fälle und Fachmodule (Migrationen 005–011)
+
+Die Spalten stehen mit Kommentaren in den Migrationen; welches Modul
+welche Tabelle besitzt, in
+[`config/module_tables.toml`](../config/module_tables.toml).
+
+| Migration | Tabellen | Eigentümer |
+|---|---|---|
+| 005 | `roles`, `role_permissions`, `user_roles`, `settings`, `platform_state`, `org_units`, `rooms`, `beds`, `user_org_units`, `domain_events`, `event_consumers`, `event_failures` | Kern |
+| 006 | `cases`, `case_stays`, `case_participants`, `patient_alerts`, `emergency_access_grants` | Kern |
+| 007 | `case_diagnoses`, `case_procedures`, `clinical_notes`, `case_tasks` | `clinical` |
+| 008 | `service_catalog`, `orders`, `automation_rules`, `lab_specimens`, `lab_results` | `orders`, `lab` |
+| 009 | `vital_signs`, `fluid_balance_entries`, `prescriptions`, `medication_administrations` | `nursing`, `prescriptions` |
+| 010 | `diets`, `case_diets` | `meals` |
+| 011 | `staff_members`, `duty_types`, `duty_assignments`, `absences`, `public_holidays`, `staffing_positions`, `staffing_assignments` | `roster` |
+
+Regeln, die die Datenbank selbst durchsetzt — auch bei parallelen
+Zugriffen und unabhängig vom Anwendungscode:
+
+- Ein Fall ist zu jedem Zeitpunkt an genau einem Ort; ein Bett trägt zu
+  jedem Zeitpunkt höchstens einen Fall (Exclusion-Constraints auf
+  `case_stays`).
+- Ein Patient hat höchstens einen offenen stationären oder teilstationären
+  Fall.
+- Fachabteilung und Station eines Falls sind Einheiten der passenden Art
+  (zusammengesetzte Fremdschlüssel auf `org_units(id, kind)`).
+- Je Fall höchstens eine Hauptdiagnose; ICD- und OPS-Kodes haben das
+  richtige Format.
+- Freigegebene Dokumentation ist unveränderlich und nicht löschbar
+  (Trigger); einzige Ausnahme ist die Löschung des ganzen Falls mit dem
+  Patienten (Art. 17 DSGVO).
+- Vitalwerte liegen in plausiblen Bereichen, Blutdruck nur paarweise, eine
+  Messung enthält mindestens einen Wert.
+- Ein erledigter Auftrag hat Zeitpunkt und Bearbeiter, ein stornierter
+  einen Grund; nicht gegebene Medikamente haben eine Begründung.
+- Je Fall gilt zu jedem Zeitpunkt höchstens eine Kostanordnung; es gibt
+  höchstens eine Standardkost.
+- `domain_events` ist append-only.
+- Löschen eines Patienten entfernt alle seine Fälle mit allen abhängigen
+  Daten (`ON DELETE CASCADE`).
+
+Aufgenommene Migrationen sind unveränderlich (`migrations/CHECKSUMS`,
+geprüft von `scripts/check_guardrails.py`).
 
 ## Audit-Hash-Kette
 

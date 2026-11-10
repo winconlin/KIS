@@ -1,5 +1,6 @@
 # KIS CI — Format, Lint, Tests (inkl. echter PostgreSQL-Integration),
-# SQL-Schema-Abgleich, Dependency-Audit, Dokumentation, Container-Build.
+# SQL-Schema-Abgleich, Leitplanken, Modulgrenzen, Dependency-Audit,
+# Dokumentation, Container-Build. Lokal dasselbe mit scripts/check.sh.
 #
 # Keine Prüfung ist mit continue-on-error oder "|| echo" abgeschwächt.
 
@@ -68,10 +69,9 @@ jobs:
             -v owner_pw="'ci-owner'" -v app_pw="'ci-app'" -f config/postgres/roles.sql
           export KIS_DATABASE__MIGRATION_URL=postgres://kis_owner:ci-owner@localhost:5432/kis
           ./target/debug/kis-admin migrate
+          # alle Crates; neue Module werden ohne weitere Pflege mitgeprüft
           python3 scripts/check_sql.py \
-            --database-url postgres://kis_app:ci-app@localhost:5432/kis \
-            --crate kis-core --crate kis-app --crate kis-patients --crate kis-doctors \
-            --crate kis-appointments --crate kis-medications --crate kis-ui
+            --database-url postgres://kis_app:ci-app@localhost:5432/kis
 
   audit:
     runs-on: ubuntu-latest
@@ -89,6 +89,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Dokumentations-Check
         run: python3 scripts/check_docs.py
+      - name: Leitplanken (Migrationen unverändert, kein unfertiger Code)
+        run: python3 scripts/check_guardrails.py
+      - name: Modulgrenzen (Tabellen-Eigentum, Abhängigkeiten)
+        run: python3 scripts/check_modules.py
 
   container:
     runs-on: ubuntu-latest

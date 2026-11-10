@@ -1,22 +1,55 @@
 # KIS — Krankenhaus-Informations-System
 
-KIS ist ein Rust-Prototyp für ein Krankenhaus-Informations-System auf PostgreSQL. Langfristiges Ziel ist ein eigenständiges System, das eine Migration von CGM MEDICO ermöglicht.
+Ein modulares Krankenhaus-Informations-System in Rust auf PostgreSQL. Ziel:
+Alle Beschäftigten eines Hauses — ärztlicher Dienst, Pflege,
+Patientenservice, Funktionsdienste, Verwaltung, Küche, Hauswirtschaft,
+Technik — erledigen ihre tägliche Arbeit in einem System, und alle Daten
+greifen ineinander. Ausgelegt für kleine Kliniken bis Maximalversorger.
 
-**Stand: Entwicklungsprototyp, nur für Test- und Entwicklungsinstallationen mit synthetischen Daten.** Keine klinische Freigabe, keine Zertifizierung, kein unabhängiges Sicherheitsreview.
+**Stand: in Entwicklung, nicht für den Echtbetrieb freigegeben.** Nur für
+Test- und Entwicklungsinstallationen mit synthetischen Daten. Was vorhanden
+ist und was fehlt, steht ohne Beschönigung in der
+[Funktionslandkarte](docs/FUNKTIONSLANDKARTE.md).
 
-## Was tatsächlich läuft
+## Grundsätze
 
-Der Server `kis` (Crate `kis-app`) registriert:
+- **Modular.** Ein kleiner Kern und je Fachgebiet ein Modul in einer
+  eigenen Crate. Module kennen einander nicht; sie arbeiten über
+  Ereignisse zusammen. Jedes Modul kann geändert, ersetzt oder
+  abgeschaltet werden, ohne den Ablauf im Haus zu stören — fällt eine
+  Folgeaktion aus, läuft der auslösende Vorgang weiter
+  ([Module](docs/MODULE.md)).
+- **Daten greifen ineinander.** Eine Allergie wird einmal erfasst und
+  wirkt bei der Verordnung und in der Küche; eine Entlassung sperrt das
+  Bett und beauftragt die Aufbereitung; ein Auftrag gibt der erbringenden
+  Einheit für seine Dauer Zugriff auf den Fall.
+- **Datenschutz ist eingebaut und einstellbar.** Jede Route verlangt ein
+  Recht; Falldaten verlangen zusätzlich den Behandlungszusammenhang;
+  Notfallzugriff ist möglich, begründungspflichtig und wird geprüft. Rollen,
+  Rechte und Richtlinien sind Daten des Hauses und zur Laufzeit änderbar.
+  Jede Änderung steht im Audit-Trail (Hash-Kette), ohne Personendaten.
+- **Sparsam.** Ein Programm, eine Datenbank, keine weiteren Dienste. Nach
+  dem Start rund 14 MB Arbeitsspeicher, im Leerlauf keine offene
+  Datenbankverbindung; Programmdatei rund 14 MB
+  ([Messwerte und ihre Grenzen](docs/SCALING.md)).
 
-- **Authentifizierung** mit persistenten Sitzungen in PostgreSQL: Login (Argon2id, Kontosperre, optional TOTP), Refresh mit atomarer Rotation, Logout/Widerruf, 30-Minuten-Inaktivitäts-Logout. Rolle und Kontostatus werden bei jeder Anfrage aus der Datenbank gelesen.
-- **Zentrale Autorisierung** (deny-by-default) für alle Routen über eine serverseitige Route→Berechtigung-Tabelle ([`access_policy.rs`](crates/kis-core/src/access_policy.rs)).
-- **Fachmodule** Patienten, Ärzte, Termine und Medikation (CRUD, Optimistic Locking, Soft-Delete). Doppelbuchungen verhindert eine Exclusion-Constraint in der Datenbank.
-- **Audit-Trail** als Hash-Kette: jede Änderung wird in derselben Transaktion protokolliert, Schreiber sind per Advisory-Lock serialisiert, die Tabelle ist per Trigger und Rechtevergabe append-only. Personendaten stehen nicht im Audit.
-- **DSGVO-Werkzeuge**: Export (JSON/CSV/FHIR-Bundle), Hard-Delete mit Namensbestätigung, Anonymisierung (zufällige Ersatzwerte) und Pseudonymisierung (AES-256-GCM).
-- **Web-GUI** als statische Dateien unter `/` (strikte Content-Security-Policy).
-- **TLS 1.3** direkt (rustls, optional mTLS) oder HTTP hinter einem TLS-Proxy.
+## Was läuft
 
-Nicht eingebunden und nicht lauffähig sind die Schnittstellen-Crates `kis-hl7`, `kis-fhir`, `kis-dicom`, `kis-xds`, `kis-gdt`, `kis-medico` und `kis-ti`. Sie kompilieren, verweisen aber teils auf nicht existierende Tabellen und sind im Router nicht registriert (Details in [REVIEW_STATUS.md](docs/REVIEW_STATUS.md)).
+| Bereich | Module |
+|---|---|
+| Aufbau des Hauses, Zimmer, Betten | `org` |
+| Patientenstamm, Warnhinweise | `patients` |
+| Aufnahme, Verlegung, Entlassung, Stationsliste, Bettenübersicht | `cases` |
+| Diagnosen, Prozeduren, Dokumentation, Aufgaben, Übergabe | `clinical` |
+| Leistungskatalog, Anforderungen, Arbeitslisten, Automatik | `orders` |
+| Laborbefunde, Verlauf, kritische Werte | `lab` |
+| Vitalwerte, Flüssigkeitsbilanz | `nursing` |
+| Verordnung, Antiinfektiva-Kurse, Gabedokumentation | `prescriptions` |
+| Kostformen, Produktionsliste der Küche | `meals` |
+| Dienstplan, Prüfung, Wochenbesetzung, Export | `roster` |
+| Termine, Behandler, Dauermedikation | `appointments`, `doctors`, `medications` |
+| Weboberfläche | `ui` |
+| Anmeldung, Rollen, Einstellungen, Audit, Auskunft, Löschung | Kern |
 
 ## Schnellstart (Entwicklung)
 
@@ -30,25 +63,29 @@ curl -fsS http://127.0.0.1:8080/health
 ```
 
 Ohne Docker und alle Details: [Installation](docs/INSTALLATION.md).
+Oberfläche: `http://127.0.0.1:8080/`, tägliche Arbeitsansicht unter
+„Arbeitsplatz“.
 
-## Prüfungen
+## Prüfen
+
+Ein Befehl prüft alles (Format, Leitplanken, Modulgrenzen, Dokumentation,
+Clippy, Tests gegen echtes PostgreSQL, SQL gegen das Schema):
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --locked --workspace --all-targets -- -D warnings
-KIS_TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres KIS_REQUIRE_PG_TESTS=1 \
-  cargo test --locked --workspace
-python3 scripts/check_docs.py
+KIS_TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres scripts/check.sh
 ```
-
-Weitere Prüfungen (SQL-Schema-Abgleich, Backup/Restore, Container) stehen in [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Dokumentation
 
-- [Dokumentationsübersicht](docs/README.md)
-- [Prüfstatus und offene Punkte](docs/REVIEW_STATUS.md)
-- [Agentenregeln](AGENTS.md)
+| Für | Dokument |
+|---|---|
+| Überblick über den Stand | [Funktionslandkarte](docs/FUNKTIONSLANDKARTE.md), [Prüfstatus](docs/REVIEW_STATUS.md) |
+| Weiterentwicklung | [Module](docs/MODULE.md), [Arbeitspakete](docs/ARBEITSPAKETE.md), [Agentenregeln](AGENTS.md) |
+| Technik | [Architektur](docs/ARCHITECTURE.md), [API](docs/API.md), [Datenbank](docs/DATABASE.md), [Sicherheit](docs/SECURITY.md) |
+| Betrieb | [Installation](docs/INSTALLATION.md), [Konfiguration](docs/CONFIGURATION.md), [Betrieb](docs/OPERATION.md), [Skalierung](docs/SCALING.md) |
+| Alles | [Dokumentationsübersicht](docs/README.md) |
 
 ## Lizenzangabe
 
-`Cargo.toml` nennt MIT. Eine vollständige `LICENSE`-Datei mit den vom Rechteinhaber festgelegten Angaben ist noch zu ergänzen; siehe Fahrplan 7.8.
+`Cargo.toml` nennt MIT. Eine vollständige `LICENSE`-Datei mit den vom
+Rechteinhaber festgelegten Angaben ist noch zu ergänzen.

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark light">
+    <title>KIS — Arbeitsplatz</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/arbeitsplatz.css">
+</head>
+<body>
+    <header class="ap-header">
+        <a class="ap-brand" href="/">KIS</a>
+        <label class="ap-unit">Einheit
+            <select id="unit" aria-label="Einheit wählen"></select>
+        </label>
+        <nav id="tabs" class="ap-tabs" aria-label="Ansichten"></nav>
+        <span id="who" class="ap-who"></span>
+    </header>
+    <p id="message" class="ap-message" role="status" hidden></p>
+    <main class="ap-main">
+        <section id="list" class="ap-list" aria-live="polite"></section>
+        <aside id="detail" class="ap-detail" hidden></aside>
+    </main>
+    <script src="/static/js/arbeitsplatz.js"></script>
+</body>
+</html>

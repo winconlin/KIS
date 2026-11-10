@@ -98,6 +98,12 @@ pub struct PatientExport {
     /// Audit-Einträge, die sich auf den Patienten beziehen
     /// (entity_type='patient' AND entity_id=<patient>)
     pub audit_log: Vec<AuditRecord>,
+    /// Warnhinweise (Allergien, CAVE, Isolation) inklusive beendeter
+    pub alerts: serde_json::Value,
+    /// Alle Behandlungsfälle mit Aufenthalten, Diagnosen, Prozeduren,
+    /// freigegebener Dokumentation, Aufträgen, Labor, Pflege, Verordnungen
+    /// und Kost. Nur im JSON-Export enthalten.
+    pub cases: serde_json::Value,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -163,6 +169,83 @@ pub struct AuditRecord {
     pub timestamp: DateTime<Utc>,
     pub user_id: Option<String>,
 }
+
+/// Alle Fälle eines Patienten als JSON-Array. Die Auskunft muss
+/// vollständig sein, deshalb liest der Kern hier ausnahmsweise die
+/// Tabellen der Fachmodule (sie existieren auch bei abgeschaltetem Modul).
+/// Neue patientenbezogene Tabellen eines Moduls gehören hier ergänzt; der
+/// Test `export_covers_all_case_tables` erinnert daran.
+const CASES_EXPORT_SQL: &str = "
+SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.admission_at), '[]') FROM (
+  SELECT c.case_number, c.kind, c.status, c.admission_at, c.admission_type, c.admission_reason,
+         c.discharge_at, c.discharge_type, c.stability, c.fasting, c.dnr, c.dni, c.contingency,
+    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                'from', s.started_at, 'until', s.ended_at, 'reason', s.reason,
+                'department', d.name, 'ward', w.name, 'bed', b.label) ORDER BY s.started_at), '[]')
+       FROM case_stays s
+       JOIN org_units d ON d.id = s.department_id
+       LEFT JOIN org_units w ON w.id = s.ward_id
+       LEFT JOIN beds b ON b.id = s.bed_id
+      WHERE s.case_id = c.id) AS stays,
+    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                'kind', kind, 'icdCode', icd_code, 'text', text, 'certainty', certainty,
+                'recordedAt', recorded_at, 'removedAt', removed_at) ORDER BY recorded_at), '[]')
+       FROM case_diagnoses WHERE case_id = c.id) AS diagnoses,
+    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                'opsCode', ops_code, 'text', text, 'performedAt', performed_at,
+                'removedAt', removed_at) ORDER BY performed_at), '[]')
+       FROM case_procedures WHERE case_id = c.id) AS procedures,
+    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                'kind', kind, 'title', title, 'body', body, 'status', status,
+                'signedAt', signed_at) ORDER BY created_at), '[]')
+       FROM clinical_notes WHERE case_id = c.id AND status <> 'entwurf') AS notes,
+    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                'text', text, 'dueDate', due_date, 'doneAt', done_at) ORDER BY created_at), '[]')
+       FROM case_tasks WHERE case_id = c.id) AS tasks,
+    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                'service', sc.name, 'details', o.details, 'priority', o.priority, 'status', o.status,
+                'requestedAt', o.requested_at, 'completedAt', o.completed_at,
+                'result', o.result_text) ORDER BY o.requested_at), '[]')
+       FROM orders o JOIN service_catalog sc ON sc.id = o.service_id
+      WHERE o.case_id = c.id) AS orders,
+    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                'kind', ls.kind, 'material', ls.material, 'collectedAt', ls.collected_at,
+                'results', (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                                'analyte', r.analyte_code, 'name', r.name, 'valueNum', r.value_num,
+                                'valueText', r.value_text, 'unit', r.unit, 'refLow', r.ref_low,
+                                'refHigh', r.ref_high, 'flag', r.flag, 'status', r.status)
+                              ORDER BY r.analyte_code), '[]')
+                             FROM lab_results r WHERE r.specimen_id = ls.id))
+              ORDER BY ls.collected_at), '[]')
+       FROM lab_specimens ls WHERE ls.case_id = c.id) AS lab,
+    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                'measuredAt', measured_at, 'systolic', systolic, 'diastolic', diastolic,
+                'heartRate', heart_rate, 'temperature', temperature, 'spo2', spo2,
+                'respRate', resp_rate, 'weightKg', weight_kg, 'painNrs', pain_nrs, 'note', note,
+                'voidedAt', voided_at) ORDER BY measured_at), '[]')
+       FROM vital_signs WHERE case_id = c.id) AS vitals,
+    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                'recordedAt', recorded_at, 'direction', direction, 'category', category,
+                'volumeMl', volume_ml, 'voidedAt', voided_at) ORDER BY recorded_at), '[]')
+       FROM fluid_balance_entries WHERE case_id = c.id) AS fluid_balance,
+    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                'drugName', p.drug_name, 'substance', p.substance, 'dose', p.dose,
+                'schedule', p.schedule, 'route', p.route, 'status', p.status,
+                'indication', p.indication, 'startDate', p.start_date, 'endDate', p.end_date,
+                'administrations', (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                                        'givenAt', m.given_at, 'outcome', m.outcome, 'dose', m.dose,
+                                        'note', m.note) ORDER BY m.given_at), '[]')
+                                      FROM medication_administrations m
+                                     WHERE m.prescription_id = p.id))
+              ORDER BY p.start_date), '[]')
+       FROM prescriptions p WHERE p.case_id = c.id) AS prescriptions,
+    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                'diet', di.name, 'note', cd.note, 'from', cd.valid_from, 'until', cd.valid_until)
+              ORDER BY cd.valid_from), '[]')
+       FROM case_diets cd JOIN diets di ON di.id = cd.diet_id
+      WHERE cd.case_id = c.id) AS diets
+  FROM cases c WHERE c.patient_id = $1
+) x";
 
 /// Service für DSGVO-Datenportabilität (Art. 15 Auskunft, Art. 20
 /// Datenübertragbarkeit).
@@ -297,6 +380,20 @@ impl DataPortabilityService {
             })
             .collect();
 
+        let alerts: serde_json::Value = sqlx::query_scalar(
+            "SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                        'kind', kind, 'text', text, 'recordedAt', recorded_at, 'endedAt', ended_at)
+                      ORDER BY recorded_at), '[]')
+             FROM patient_alerts WHERE patient_id = $1",
+        )
+        .bind(patient_id)
+        .fetch_one(self.db.read())
+        .await?;
+        let cases: serde_json::Value = sqlx::query_scalar(CASES_EXPORT_SQL)
+            .bind(patient_id)
+            .fetch_one(self.db.read())
+            .await?;
+
         Ok(PatientExport {
             exported_at: Utc::now(),
             patient,
@@ -304,6 +401,8 @@ impl DataPortabilityService {
             medications,
             consents,
             audit_log,
+            alerts,
+            cases,
         })
     }
 
@@ -380,7 +479,7 @@ impl DataPortabilityService {
         actor: &AuthUser,
     ) -> Result<serde_json::Value, ExportError> {
         // RBAC-Check (Export-Berechtigung)
-        if !actor.role.has_permission(&Permission::Export) {
+        if !actor.can(&Permission::Export) {
             return Err(ExportError::Permission(format!(
                 "Rolle {} hat kein Export-Recht",
                 actor.role
@@ -832,7 +931,39 @@ mod tests {
                 timestamp: Utc::now(),
                 user_id: Some(Uuid::new_v4().to_string()),
             }],
+            alerts: serde_json::json!([]),
+            cases: serde_json::json!([]),
         }
+    }
+
+    /// Jede Tabelle, die an einem Fall hängt, muss in der Auskunft
+    /// vorkommen. Schlägt fehl, sobald eine Migration eine neue
+    /// fallbezogene Tabelle anlegt, die im Export fehlt.
+    #[test]
+    fn export_covers_all_case_tables() {
+        // Zugriffssteuerung, keine Behandlungsdaten des Patienten
+        const NOT_PART_OF_RECORD: &[&str] = &["case_participants", "emergency_access_grants"];
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("sql") {
+                continue;
+            }
+            let sql = std::fs::read_to_string(&path).unwrap();
+            for block in sql.split("CREATE TABLE ").skip(1) {
+                let table = block.split_whitespace().next().unwrap();
+                let body = block.split(");").next().unwrap();
+                if body.contains("REFERENCES cases(id)") && !NOT_PART_OF_RECORD.contains(&table) {
+                    checked += 1;
+                    assert!(
+                        CASES_EXPORT_SQL.contains(&format!(" {table} ")),
+                        "Tabelle {table} fehlt in der Auskunft (CASES_EXPORT_SQL)"
+                    );
+                }
+            }
+        }
+        assert!(checked >= 11, "fallbezogene Tabellen gefunden: {checked}");
     }
 
     /// Format-Parsing aus Query-Parameter.

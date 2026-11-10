@@ -15,8 +15,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    routing::get,
-    Json, Router,
+    Json,
 };
 use chrono::{DateTime, Utc};
 use kis_core::security::{append_audit, RequireRole};
@@ -25,6 +24,9 @@ use sqlx::postgres::PgPool;
 use std::sync::Arc;
 use tracing::{info, warn};
 use uuid::Uuid;
+
+use kis_core::module::{Access, Maturity, Module, ModuleContext, ModuleInfo, ModuleRoutes};
+use kis_core::rbac::Permission as P;
 
 // ===========================================================================
 // Modelle
@@ -177,15 +179,34 @@ impl From<DoctorError> for axum::response::Response {
 // Router
 // ===========================================================================
 
-pub fn register_router(db: Arc<PgPool>) -> Router {
-    Router::new()
-        .route("/api/v1/doctors", get(list_doctors).post(create_doctor))
-        .route(
-            "/api/v1/doctors/:id",
-            get(get_doctor).put(update_doctor).delete(delete_doctor),
-        )
-        .route("/api/v1/doctors/:id/schedule", get(doctor_schedule))
-        .with_state(db)
+/// Modul-Deskriptor; registriert in `kis-app/src/modules.rs`.
+pub struct DoctorsModule;
+
+impl Module for DoctorsModule {
+    fn info(&self) -> ModuleInfo {
+        ModuleInfo {
+            id: "doctors",
+            title: "Ärzte-Stammdaten",
+            description: "Behandler für die Terminplanung, Fachrichtungen, Wochenplan",
+            depends_on: &[],
+            kernel: false,
+            version: env!("CARGO_PKG_VERSION"),
+            maturity: Maturity::Stable,
+        }
+    }
+
+    fn routes(&self, ctx: &ModuleContext) -> ModuleRoutes {
+        let read = Access::Permission(P::DoctorRead);
+        let write = Access::Permission(P::DoctorWrite);
+        ModuleRoutes::new()
+            .get("/api/v1/doctors", read, list_doctors)
+            .post("/api/v1/doctors", write, create_doctor)
+            .get("/api/v1/doctors/:id", read, get_doctor)
+            .put("/api/v1/doctors/:id", write, update_doctor)
+            .delete("/api/v1/doctors/:id", write, delete_doctor)
+            .get("/api/v1/doctors/:id/schedule", read, doctor_schedule)
+            .with_state(Arc::new(ctx.pool().clone()))
+    }
 }
 
 // ===========================================================================

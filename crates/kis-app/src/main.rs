@@ -1,13 +1,14 @@
-//! KIS — Krankenhaus-Informations-System: API-Server.
+//! KIS — Krankenhaus-Informations-System: Server.
 //!
 //! Startreihenfolge: Konfiguration → Logging → Secrets prüfen →
-//! PostgreSQL verbinden und migrieren → Router → HTTP/TLS-Server.
-//! Jeder Fehler bricht den Start ab (kein stiller Fallback).
+//! PostgreSQL verbinden und migrieren → Module zusammenbauen →
+//! HTTP/TLS-Server. Jeder Fehler bricht den Start ab (kein stiller
+//! Teilbetrieb).
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use kis_app::{api, graceful_shutdown::GracefulShutdown, tls};
+use kis_app::tls;
 use tracing::{info, warn};
 
 #[tokio::main]
@@ -40,33 +41,25 @@ async fn main() -> anyhow::Result<()> {
             false
         }
     };
-    let db = Arc::new(
-        kis_core::db::Database::connect_pools_opts(
-            &config.database.write_url,
-            config.database.read_url.as_deref(),
-            config.database.pool_size,
-            config.database.read_max_connections,
-            !migrate_separately,
-        )
-        .await?,
-    );
+    let db =
+        Arc::new(kis_core::db::Database::connect(&config.database, !migrate_separately).await?);
     info!("PostgreSQL verbunden");
 
-    let rate_limiter = Arc::new(kis_core::rate_limit::SlidingWindowRateLimiter::new(
-        &config.security.rate_limit,
-    ));
-    let cache = Arc::new(kis_core::cache::EntityCache::new(&config.cache));
-
-    let shutdown = Arc::new(GracefulShutdown::new(
-        config.server.shutdown_timeout_seconds,
-    ));
-    let state = api::AppState::new(config.clone(), db.clone(), security, rate_limiter, cache)?;
-    let mut app = api::build_router(state);
-    app = kis_app::graceful_shutdown::router_with_shutdown(app, &shutdown);
-
+    let shutdown_timeout = Duration::from_secs(config.server.shutdown_timeout_seconds);
+    let addr: std::net::SocketAddr =
+        format!("{}:{}", config.server.host, config.server.port).parse()?;
     let tls_config = tls::build_server_config(&config.security.tls)?;
-    if tls_config.is_some() {
-        let hsts = axum::http::HeaderValue::from_str(&tls::hsts_header(&config.security.tls))?;
+    let hsts = match &tls_config {
+        Some(_) => Some(axum::http::HeaderValue::from_str(&tls::hsts_header(
+            &config.security.tls,
+        ))?),
+        None => None,
+    };
+
+    let mut app = kis_app::build_app(config, db.clone(), security)
+        .await?
+        .router;
+    if let Some(hsts) = hsts {
         app = app.layer(axum::middleware::from_fn(
             move |req: axum::extract::Request, next: axum::middleware::Next| {
                 let hsts = hsts.clone();
@@ -79,19 +72,14 @@ async fn main() -> anyhow::Result<()> {
         ));
     }
 
-    let addr: std::net::SocketAddr =
-        format!("{}:{}", config.server.host, config.server.port).parse()?;
+    // SIGINT/SIGTERM: keine neuen Verbindungen, laufende Anfragen dürfen
+    // bis zum Zeitlimit zu Ende laufen.
     let handle = axum_server::Handle::new();
-
-    // SIGINT/SIGTERM → 503 für neue Requests, dann geordnetes Beenden.
     {
         let handle = handle.clone();
-        let shutdown = shutdown.clone();
         tokio::spawn(async move {
             wait_for_signal().await;
-            shutdown.trigger();
-            shutdown.notify_axum_shutdown();
-            handle.graceful_shutdown(Some(shutdown.timeout()));
+            handle.graceful_shutdown(Some(shutdown_timeout));
         });
     }
 
@@ -114,8 +102,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let close = shutdown.close_pools(&db);
-    if tokio::time::timeout(Duration::from_secs(10), close)
+    if tokio::time::timeout(Duration::from_secs(10), db.close())
         .await
         .is_err()
     {
@@ -127,7 +114,9 @@ async fn main() -> anyhow::Result<()> {
 
 async fn wait_for_signal() {
     let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
+        if tokio::signal::ctrl_c().await.is_err() {
+            std::future::pending::<()>().await;
+        }
     };
     #[cfg(unix)]
     let term = async {

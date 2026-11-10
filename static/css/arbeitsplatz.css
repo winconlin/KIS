@@ -1,0 +1,27 @@
+/* Arbeitsplatz: Stationsliste, Übergabe, Aufgaben, Arbeitsliste, Betten, Küche */
+.ap-header { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; padding: .6rem 1rem; border-bottom: 1px solid var(--border, #334); }
+.ap-brand { font-weight: 700; text-decoration: none; color: inherit; }
+.ap-unit select { margin-left: .4rem; padding: .3rem; }
+.ap-tabs { display: flex; gap: .3rem; flex-wrap: wrap; flex: 1; }
+.ap-tabs button { padding: .35rem .7rem; border: 1px solid var(--border, #334); background: transparent; color: inherit; border-radius: 4px; cursor: pointer; }
+.ap-tabs button[aria-current="true"] { background: var(--accent, #2563eb); color: #fff; border-color: transparent; }
+.ap-who { opacity: .7; font-size: .85rem; }
+.ap-message { margin: .6rem 1rem; padding: .5rem .8rem; border-left: 4px solid #d97706; background: rgba(217, 119, 6, .12); }
+.ap-main { display: flex; gap: 1rem; padding: 1rem; align-items: flex-start; }
+.ap-list { flex: 2; min-width: 0; overflow-x: auto; }
+.ap-detail { flex: 1; min-width: 18rem; border: 1px solid var(--border, #334); border-radius: 6px; padding: .8rem; }
+.ap-list table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.ap-list th, .ap-list td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--border, #334); vertical-align: top; }
+.ap-list tr.ap-click { cursor: pointer; }
+.ap-list tr.ap-click:hover { background: rgba(127, 127, 127, .12); }
+.ap-tag { display: inline-block; padding: 0 .4rem; margin-right: .25rem; border-radius: 3px; font-size: .75rem; border: 1px solid currentColor; }
+.ap-warn { color: #dc2626; }
+.ap-note { color: #d97706; }
+.ap-ok { color: #16a34a; }
+.ap-detail h2 { font-size: 1.05rem; margin: 0 0 .4rem; }
+.ap-detail h3 { font-size: .9rem; margin: .9rem 0 .3rem; opacity: .8; }
+.ap-detail ul { margin: 0; padding-left: 1.1rem; }
+.ap-detail form { display: flex; gap: .3rem; margin-top: .4rem; flex-wrap: wrap; }
+.ap-detail input { flex: 1; min-width: 4rem; padding: .25rem; }
+.ap-detail button, .ap-list button { padding: .25rem .6rem; cursor: pointer; }
+@media (max-width: 60rem) { .ap-main { flex-direction: column; } .ap-detail { width: 100%; } }

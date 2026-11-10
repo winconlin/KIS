@@ -15,9 +15,8 @@ use axum::{
     extract::Path as AxPath,
     http::{header, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
-    Router,
 };
+use kis_core::module::{Access, Maturity, Module, ModuleContext, ModuleInfo, ModuleRoutes};
 use serde::Serialize;
 
 pub const MODULE_NAME: &str = "kis-ui";
@@ -31,11 +30,27 @@ fn static_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("static"))
 }
 
-/// Registriert den UI-Router.
-pub fn register_router() -> Router {
-    Router::new()
-        .route("/", get(serve_index))
-        .route("/static/*path", get(serve_static))
+/// Modul-Deskriptor; registriert in `kis-app/src/modules.rs`.
+pub struct UiModule;
+
+impl Module for UiModule {
+    fn info(&self) -> ModuleInfo {
+        ModuleInfo {
+            id: "ui",
+            title: "Weboberfläche",
+            description: "Liefert die statische Oberfläche aus (ohne eigene Daten)",
+            version: env!("CARGO_PKG_VERSION"),
+            depends_on: &[],
+            maturity: Maturity::Stable,
+            kernel: false,
+        }
+    }
+
+    fn routes(&self, _ctx: &ModuleContext) -> ModuleRoutes {
+        ModuleRoutes::new()
+            .get("/", Access::Public, serve_index)
+            .get("/static/*path", Access::Public, serve_static)
+    }
 }
 
 /// Content-Type anhand der Dateiendung.

@@ -1,90 +1,112 @@
 # KIS — Konfiguration
 
-> **Hinweis (06.11.2026):** Teile dieses Dokuments beschreiben den entfernten SQLite-Prototyp oder ein Zielbild. Maßgeblich für den Ist-Zustand sind [INSTALLATION](INSTALLATION.md), [API](API.md), [DATABASE](DATABASE.md) und [REVIEW_STATUS](REVIEW_STATUS.md).
+Es gibt zwei Ebenen:
 
+| Ebene | Wo | Wer ändert | Wirkt |
+|---|---|---|---|
+| **Infrastruktur** | Datei `config/kis.toml` und Umgebungsvariablen | Betrieb | nach Neustart |
+| **Richtlinien des Hauses** | Datenbank, über `/api/v1/admin/…` | Administration | sofort, auf allen Instanzen |
 
-Stand: 02.11.2026 · Referenz des aktiven `src/config/mod.rs`
+## Infrastruktur
 
-## Quellen und Priorität
-
-Der Loader liest `KIS_CONFIG_PATH`, ansonsten `config/kis.toml` relativ zum Arbeitsverzeichnis. Anschließend überschreibt Figment Werte aus der Umgebung. Serde-Defaults gelten für fehlende Abschnitte und Felder. Ein vorhandener, aber nicht lesbarer oder syntaktisch fehlerhafter TOML-Inhalt ist ein Fehler.
-
-Für verschachtelte Felder trennt `__` die Abschnitte:
-
-| Feld | Variable | Beispiel |
-|---|---|---|
-| server.host | KIS_SERVER__HOST | 127.0.0.1 |
-| server.port | KIS_SERVER__PORT | 9090 |
-| server.workers | KIS_SERVER__WORKERS | 2 |
-| database.path | KIS_DATABASE__PATH | /var/lib/kis/kis.db |
-| database.pool_size | KIS_DATABASE__POOL_SIZE | 10 |
-| database.journal_mode | KIS_DATABASE__JOURNAL_MODE | wal |
-| security.token_expiry | KIS_SECURITY__TOKEN_EXPIRY | 900 |
-| security.refresh_expiry | KIS_SECURITY__REFRESH_EXPIRY | 86400 |
-| security.audit.log_file | KIS_SECURITY__AUDIT__LOG_FILE | /var/log/kis/audit.log |
-
-Einfache Unterstriche sind Teil eines Feldnamens. `KIS_SERVER_PORT` ist deshalb kein Alias für `KIS_SERVER__PORT`. Eine `.env`-Datei wird vom Rust-Binärprogramm nicht eingelesen. Compose liest sie für die im Compose-Dokument referenzierten Variablen; systemd benötigt eine EnvironmentFile.
-
-## Verwendete Einstellungen
-
-| Abschnitt/Feld | Rust-Default | Wirkung |
-|---|---|---|
-| server.host | 127.0.0.1 | Bind-Adresse; das eingecheckte TOML nutzt ebenfalls Loopback |
-| server.port | 8080 | HTTP-Port, größer 0 |
-| server.workers | 4 | Worker der Tokio-Runtime, größer 0 |
-| database.path | data/kis.db | SQLite-Datei, relativ zum Arbeitsverzeichnis oder absolut |
-| database.pool_size | 8 | Maximale Verbindungen, größer 0; TOML setzt 10 |
-| database.journal_mode | wal | Unterstützt: wal, delete |
-| security.jwt_secret_env | KIS_JWT_SECRET | Name der Variablen mit JWT-Schlüssel |
-| security.token_expiry | 900 | Access-Laufzeit in Sekunden |
-| security.refresh_expiry | 86400 | Refresh-Laufzeit, mindestens Access-Laufzeit |
-| security.max_login_attempts | 5 | Fehlversuche vor Kontosperre |
-| security.lockout_duration | 900 | Sperrdauer in Sekunden |
-| security.audit.log_file | logs/audit.log | Zusätzliche JSONL-Kopie des DB-Audits |
-| security.rate_limit.requests_per_minute | 100 | API-Limit je TCP-IP |
-| security.rate_limit.auth_requests_per_minute | 10 | Auth-Limit je TCP-IP |
-| security.encryption.master_key_env | KIS_MASTER_KEY | Name der Variablen mit 32 Byte Base64-Key |
-
-`security.audit.retention_days` hat den Default 3650, ist jedoch nur eine Konfigurationsvorgabe für ein betrieblich festzulegendes Archivkonzept. Der Server löscht oder archiviert nicht automatisch. Daraus folgt keine gesetzliche Zehnjahrespflicht.
-
-SQLite verwendet zusätzlich Foreign Keys, fünf Sekunden Busy-Timeout und `synchronous=FULL`. WAL ist ein Journalverfahren, keine Datenbankverschlüsselung.
-
-## Minimales Konfigurationsbeispiel
-
-Durch Defaults genügt ein bewusst kleines TOML; Secrets stehen in der Prozessumgebung:
+Der Server liest `KIS_CONFIG_PATH`, sonst `config/kis.toml` relativ zum
+Arbeitsverzeichnis. Umgebungsvariablen überschreiben die Datei; `__`
+trennt die Ebenen (`KIS_DATABASE__WRITE_URL`, `KIS_SERVER__PORT`).
+Unbekannte Schlüssel in der Datei sind ein Fehler — ein Tippfehler bleibt
+nicht unbemerkt.
 
 ```toml
 [server]
 host = "127.0.0.1"
 port = 8080
-workers = 4
+shutdown_timeout_seconds = 30     # laufende Anfragen dürfen so lange zu Ende laufen
+request_timeout_seconds = 30
+max_body_bytes = 1048576
 
 [database]
-path = "data/kis.db"
-pool_size = 10
-journal_mode = "wal"
+write_url = "postgres://kis_app@localhost:5432/kis"   # Laufzeitrolle ohne DDL-Rechte
+migration_url = ""                # Eigentümerrolle; leer = Migration über write_url (nur Entwicklung)
+read_url = ""                     # optionale Replica für Auswertungen
+pool_size = 10                    # Obergrenze; Verbindungen entstehen erst bei Bedarf
+min_connections = 0               # 0 = im Leerlauf keine offene Verbindung
+acquire_timeout_seconds = 10
+idle_timeout_seconds = 300
 
-[security.audit]
-log_file = "logs/audit.log"
+[security]
+jwt_secret_env = "KIS_JWT_SECRET"
+token_expiry = 900
+refresh_expiry = 86400
+max_login_attempts = 5            # Startwert; zur Laufzeit änderbar
+lockout_duration = 900            # Startwert; zur Laufzeit änderbar
+
+[security.rate_limit]
+requests_per_minute = 600         # je Client-IP und Instanz
+auth_requests_per_minute = 10
+
+[security.encryption]
+master_key_env = "KIS_MASTER_KEY"
+
+[logging]
+level = "info"
+format = "json"                   # oder "text"
+
+[modules]
+disabled = []                     # z. B. ["roster", "meals"]
+experimental = []                 # experimentelle Module ausdrücklich einschalten
 ```
 
-Das vollständige eingecheckte Beispiel ist [config/kis.toml](../config/kis.toml). Es enthält zusätzlich Ausbauoptionen, die noch keine Dienste aktivieren.
+TLS: Sind die Variablen `KIS_TLS_CERT` und `KIS_TLS_KEY` gesetzt (PEM),
+lauscht der Server mit TLS 1.3; mit `KIS_TLS_CA` verlangt er
+Client-Zertifikate. Ohne sie spricht er HTTP und gehört hinter einen
+TLS-Proxy.
 
-## Secrets und separate Variablen
+### Secrets
 
-| Variable | Verwendung |
+| Variable | Inhalt |
 |---|---|
-| KIS_JWT_SECRET | Mindestens 32 Byte langer zufälliger Schlüssel für HS256 |
-| KIS_MASTER_KEY | Base64-kodierter Schlüssel mit genau 32 dekodierten Bytes |
-| KIS_CONFIG_PATH | Auswahl der TOML-Datei |
-| RUST_LOG | tracing-Filter, z. B. info oder kis=debug |
+| `KIS_JWT_SECRET` | mindestens 32 Zeichen, zufällig |
+| `KIS_MASTER_KEY` | 32 zufällige Bytes, Base64 |
 
-Die Secret-Namen können über die entsprechenden `*_env`-Felder geändert werden. Der Schlüsselwert gehört weder ins TOML noch in Versionskontrolle. Beide Standard-Secrets sind für den Serverstart erforderlich. Die Bootstrap-CLI benötigt sie nicht, da sie nur einen Passwort-Hash anlegt.
+Secrets stehen nie in der Konfigurationsdatei oder im Repository. Fehlt
+eines oder ist es zu schwach, startet der Server nicht.
 
-## Reservierte Ausbauoptionen
+### Module
 
-`ui.*`, `interfaces.*` und `llm.*` sind größtenteils Konfigurationsentwürfe. Sie aktivieren im Server weder GUI-Themes noch Auto-Refresh, Netzwerklistener oder OpenRouter-Rotation. `interfaces.fhir.enabled` ist standardmäßig false. XDS hat noch keinen aktiven Konfigurationsabschnitt.
+`kis-admin modules` listet die Module dieser Programmversion. Kernmodule
+(`org`, `patients`, `cases`) lassen sich nicht abschalten. Der Start bricht
+ab bei unbekannten Kennungen und wenn ein aktives Modul ein abgeschaltetes
+braucht. Abgeschaltete Module registrieren keine Routen und reagieren auf
+keine Ereignisse; ihre Tabellen bleiben unberührt.
 
-Der separat konstruierte MEDICO-Client kann über `MedicoClient::from_config` Basis-URL, Token-Endpunkt, Scope-Liste, Secret-Namen und Request-Timeout übernehmen. Polling-, Slot-, GDT- und HL7-Optionen ergeben noch keinen gestarteten Migrationsdienst; siehe [CGM_MEDICO.md](CGM_MEDICO.md).
+## Richtlinien des Hauses
 
-Unbekannte TOML-Felder werden derzeit nicht generell zurückgewiesen. Eine syntaktisch gültige zusätzliche Option ist daher kein Nachweis ihrer Unterstützung. Neue Einstellungen benötigen einen Verbraucher im Code und einen Test.
+### Rollen und Rechte
+
+Die Rechte sind im Programm festgelegt (`GET /api/v1/admin/permissions`),
+die Rollen gehören dem Haus: anlegen, Rechte zuordnen, löschen über
+`/api/v1/admin/roles`. Beim ersten Start entsteht eine Grundausstattung
+(`kis-admin roles`), die danach frei geändert werden kann. Ein Benutzer hat
+eine Hauptrolle und beliebig viele Zusatzrollen. Nur die Rolle `admin` ist
+fest: Sie hat immer alle Rechte, damit sich niemand aussperrt.
+
+### Einstellungen
+
+`GET /api/v1/admin/settings` zeigt alle Einstellungen mit Wertebereich,
+`PUT /api/v1/admin/settings/<schlüssel>` mit `{"value": …}` ändert eine.
+
+| Schlüssel | Standard | Bedeutung |
+|---|---|---|
+| `security.treatment_context.enforce` | `true` | Falldaten nur im Behandlungszusammenhang. `false` für sehr kleine Häuser, in denen jeder jeden Patienten behandelt. |
+| `security.treatment_context.grace_days` | `14` | Nachlauf des Zugriffs nach Verlegung, Entlassung oder Auftragsende |
+| `security.emergency_access.minutes` | `240` | Dauer eines Notfallzugriffs |
+| `security.session.inactivity_minutes` | `30` | automatische Abmeldung |
+| `security.login.max_attempts` | aus der Datei | Fehlversuche bis zur Kontosperre |
+| `security.login.lockout_minutes` | aus der Datei | Dauer der Kontosperre |
+| `security.password.min_length` | `12` | Mindestlänge neuer Passwörter |
+
+### Kataloge
+
+Ebenfalls Daten des Hauses und über die API gepflegt: Aufbau des Hauses
+(`/api/v1/org/…`), Leistungen und Automatik-Regeln (`/api/v1/catalog/…`),
+Kostformen (`/api/v1/meals/diets`), Dienstarten und Feiertage
+(`…/roster/…`).

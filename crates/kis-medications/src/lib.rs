@@ -17,8 +17,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    routing::get,
-    Json, Router,
+    Json,
 };
 use chrono::{DateTime, Utc};
 use kis_core::security::{append_audit, RequireRole};
@@ -27,6 +26,9 @@ use sqlx::postgres::PgPool;
 use std::sync::Arc;
 use tracing::{info, warn};
 use uuid::Uuid;
+
+use kis_core::module::{Access, Maturity, Module, ModuleContext, ModuleInfo, ModuleRoutes};
+use kis_core::rbac::Permission as P;
 
 // ===========================================================================
 // Modelle
@@ -184,26 +186,38 @@ impl From<MedicationError> for axum::response::Response {
 // Router
 // ===========================================================================
 
-/// Registriert den Medikations-Router
-pub fn register_router(db: Arc<PgPool>) -> Router {
-    Router::new()
-        .route(
-            "/api/v1/medications",
-            get(list_medications).post(create_medication),
-        )
-        // Eindeutiger Pfad: `/medications/:id` und `/medications/:patient_id`
-        // kollidierten (Panic beim Start).
-        .route(
-            "/api/v1/medications/patient/:patient_id",
-            get(medications_by_patient),
-        )
-        .route(
-            "/api/v1/medications/:id",
-            get(get_medication)
-                .put(update_medication)
-                .delete(delete_medication),
-        )
-        .with_state(db)
+/// Modul-Deskriptor; registriert in `kis-app/src/modules.rs`.
+pub struct MedicationsModule;
+
+impl Module for MedicationsModule {
+    fn info(&self) -> ModuleInfo {
+        ModuleInfo {
+            id: "medications",
+            title: "Dauermedikation",
+            description: "Medikationsplan des Patienten (fallübergreifend, z. B. Hausmedikation)",
+            depends_on: &["patients"],
+            kernel: false,
+            version: env!("CARGO_PKG_VERSION"),
+            maturity: Maturity::Stable,
+        }
+    }
+
+    fn routes(&self, ctx: &ModuleContext) -> ModuleRoutes {
+        let read = Access::Permission(P::MedicationRead);
+        let write = Access::Permission(P::MedicationWrite);
+        ModuleRoutes::new()
+            .get("/api/v1/medications", read, list_medications)
+            .post("/api/v1/medications", write, create_medication)
+            .get(
+                "/api/v1/medications/patient/:patient_id",
+                read,
+                medications_by_patient,
+            )
+            .get("/api/v1/medications/:id", read, get_medication)
+            .put("/api/v1/medications/:id", write, update_medication)
+            .delete("/api/v1/medications/:id", write, delete_medication)
+            .with_state(Arc::new(ctx.pool().clone()))
+    }
 }
 
 // ===========================================================================

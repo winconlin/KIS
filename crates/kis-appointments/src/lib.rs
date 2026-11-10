@@ -22,8 +22,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    routing::{get, post},
-    Json, Router,
+    Json,
 };
 use chrono::{DateTime, Utc};
 use kis_core::security::{append_audit, RequireRole};
@@ -32,6 +31,9 @@ use sqlx::postgres::PgPool;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 use uuid::Uuid;
+
+use kis_core::module::{Access, Maturity, Module, ModuleContext, ModuleInfo, ModuleRoutes};
+use kis_core::rbac::Permission as P;
 
 // ===========================================================================
 // Modelle
@@ -253,27 +255,50 @@ impl From<AppointmentError> for axum::response::Response {
 // Router
 // ===========================================================================
 
-/// Registriert den Termin-Router
-pub fn register_router(db: Arc<PgPool>) -> Router {
-    Router::new()
-        .route(
-            "/api/v1/appointments",
-            get(list_appointments).post(create_appointment),
-        )
-        .route("/api/v1/appointments/slots", get(list_slots))
-        .route(
-            "/api/v1/appointments/:doctor_id/calendar",
-            get(doctor_calendar),
-        )
-        .route(
-            "/api/v1/appointments/:id",
-            get(get_appointment)
-                .put(update_appointment)
-                .delete(delete_appointment),
-        )
-        .route("/api/v1/appointments/:id/book", post(book_appointment))
-        .route("/api/v1/appointments/:id/cancel", post(cancel_appointment))
-        .with_state(db)
+/// Modul-Deskriptor; registriert in `kis-app/src/modules.rs`.
+pub struct AppointmentsModule;
+
+impl Module for AppointmentsModule {
+    fn info(&self) -> ModuleInfo {
+        ModuleInfo {
+            id: "appointments",
+            title: "Terminplanung",
+            description: "Termine, freie Zeitfenster, Kalender je Behandler, Buchung und Absage",
+            depends_on: &["patients", "doctors"],
+            kernel: false,
+            version: env!("CARGO_PKG_VERSION"),
+            maturity: Maturity::Stable,
+        }
+    }
+
+    fn routes(&self, ctx: &ModuleContext) -> ModuleRoutes {
+        let read = Access::Permission(P::AppointmentRead);
+        let book = Access::Permission(P::AppointmentBook);
+        let cancel = Access::Permission(P::AppointmentCancel);
+        ModuleRoutes::new()
+            .get("/api/v1/appointments", read, list_appointments)
+            .post("/api/v1/appointments", book, create_appointment)
+            .get("/api/v1/appointments/slots", read, list_slots)
+            .get(
+                "/api/v1/appointments/:doctor_id/calendar",
+                read,
+                doctor_calendar,
+            )
+            .get("/api/v1/appointments/:id", read, get_appointment)
+            .put(
+                "/api/v1/appointments/:id",
+                Access::Permission(P::AppointmentWrite),
+                update_appointment,
+            )
+            .delete("/api/v1/appointments/:id", cancel, delete_appointment)
+            .post("/api/v1/appointments/:id/book", book, book_appointment)
+            .post(
+                "/api/v1/appointments/:id/cancel",
+                cancel,
+                cancel_appointment,
+            )
+            .with_state(Arc::new(ctx.pool().clone()))
+    }
 }
 
 // ===========================================================================

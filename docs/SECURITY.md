@@ -21,73 +21,68 @@ Ein Inaktivitäts-Timeout, ein Concurrent-Login-Limit, eine sichere browserseiti
 
 ## Autorisierung
 
-Rollenanforderungen kommen aus dem Servercode, nicht aus Queryparametern. Die aktuelle Matrix steht in [API.md](API.md). Ein authentifizierter Arzt kann beispielsweise keine Patientenanlage freischalten, indem er `?role=reception` sendet.
+Drei Ebenen, alle serverseitig und zentral in der Middleware geprüft — ein
+Fachmodul kann keine davon vergessen oder umgehen:
 
-Die Datenhandler sind Platzhalter. Vor ihrer fachlichen Umsetzung fehlen insbesondere Objektberechtigungen nach Behandlungsteam/Fall, Berechtigungen für besondere Datenkategorien und ein abgestimmter Notfallzugriff.
+1. **Recht der Route.** Jede Route wird zusammen mit dem verlangten Recht
+   registriert; ohne Recht lässt sich keine Route anlegen. Pfade unter
+   `/api/`, die kein Modul registriert hat, sind nur für `admin`
+   erreichbar. Die vollständige Tabelle steht in [API.md](API.md) und wird
+   aus dem laufenden System erzeugt.
+2. **Rollen.** Rechte sind im Programm festgelegt, Rollen sind Daten des
+   Hauses (`roles`, `role_permissions`, `user_roles`). Wirksam ist die
+   Vereinigung aus Hauptrolle und Zusatzrollen; sie wird bei jeder Anfrage
+   aus der Datenbank bestimmt. Änderungen wirken sofort, auch auf laufende
+   Sitzungen. Die Rolle `admin` hat immer alle Rechte; das letzte aktive
+   Admin-Konto lässt sich nicht deaktivieren.
+3. **Behandlungszusammenhang.** Für Routen mit `:case_id` muss zusätzlich
+   eine dieser Bedingungen gelten:
+   - der Fall liegt (oder lag innerhalb des Nachlaufs) in einer Einheit,
+     der der Benutzer zugeordnet ist — Zuordnung gilt auch für
+     untergeordnete Einheiten;
+   - eine Einheit des Benutzers behandelt mit (z. B. durch einen offenen
+     Auftrag);
+   - der Benutzer hat einen gültigen Notfallzugriff;
+   - der Benutzer hat das Recht `case.access_all` (Aufnahme, Kodierung,
+     Schnittstellenkonten).
 
-Cross-Origin-Anfragen erhalten keine permissiven CORS-Header. Der Server akzeptiert Forwarded-/X-Forwarded-For-Header nicht als Beleg einer Client-IP.
+   Für Routen mit `:unit_id` muss der Benutzer der Einheit oder einer
+   übergeordneten zugeordnet sein (oder `unit.access_all` haben).
 
-### RBAC: Vollständige Berechtigungs-Matrix (Task 5.4)
+**Notfallzugriff** (`POST /api/v1/emergency-access`, Recht `break_glass`):
+zeitlich begrenzt, Begründung von mindestens zehn Zeichen, Audit-Eintrag
+in derselben Transaktion, Warnung im Log. Jede Gewährung erscheint unter
+`/api/v1/admin/emergency-access` und wird von einer anderen Person mit dem
+Recht `audit.read` geprüft; niemand prüft den eigenen Zugriff.
 
-Die Matrix definiert Berechtigungen pro Rolle × Entität × Aktion. Jede Zelle: ✅ = erlaubt, ❌ = verweigert, ⚠️ = mit Einschränkung.
+**Einstellbar** zur Laufzeit ([CONFIGURATION.md](CONFIGURATION.md)): ob der
+Behandlungszusammenhang durchgesetzt wird, Nachlauf, Dauer des
+Notfallzugriffs, Abmeldung bei Inaktivität, Kontosperre, Passwortlänge.
+Jede Änderung an Rollen und Einstellungen wird auditiert.
 
-| Rolle | Patient | Appointment | Observation | Medication | Document | Doctor | Audit-Log | Config |
-|-------|---------|-------------|-------------|------------|----------|--------|-----------|--------|
-| **Admin** | ✅ (read, create, update, delete, export) | ✅ (read, create, update, delete, manage) | ✅ (read, create, update, delete) | ✅ (read, create, update, delete) | ✅ (read, write, delete) | ✅ (read, create, update, delete, manage) | ⚠️ (read only) | ✅ (read, write, manage) |
-| **Arzt (Physician)** | ✅ (read, create, update) | ✅ (read, create, update) | ✅ (read, create, update) | ✅ (read, create, update) | ✅ (read, write) | ⚠️ (read own) | ❌ | ❌ |
-| **Pflege (Nurse)** | ✅ (read, update) | ⚠️ (read, create own) | ✅ (read, create, update) | ⚠️ (read, update own) | ✅ (read, write own) | ⚠️ (read own team) | ❌ | ❌ |
-| **Rezeption** | ⚠️ (read, create, update admin data) | ✅ (read, create, update) | ❌ | ❌ | ❌ | ⚠️ (read, create) | ❌ | ❌ |
-| **Viewer** | ⚠️ (read only) | ⚠️ (read only) | ⚠️ (read only) | ⚠️ (read only) | ⚠️ (read only) | ⚠️ (read only) | ❌ | ❌ |
-| **Auditor** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ (read, export) | ⚠️ (read only) |
-| **LLM-Agent** | ⚠️ (read, create, update — no delete) | ⚠️ (read, create, update) | ⚠️ (read, create) | ⚠️ (read, create) | ⚠️ (read, write) | ⚠️ (read only) | ❌ | ❌ |
+**Datensparsamkeit zwischen Bereichen:** Die Produktionsliste der Küche
+und Aufträge an die Bettenaufbereitung enthalten Station, Zimmer und Bett,
+aber weder Namen noch Diagnosen. Ereignisse für Schnittstellen enthalten
+nur Schlüssel und Codes.
 
-**Erläuterungen:**
+Cross-Origin-Anfragen erhalten keine permissiven CORS-Header.
+`X-Forwarded-For` zählt nur, wenn die Verbindung von einem lokalen
+Reverse-Proxy kommt.
 
-- **Admin**: Vollzugriff auf alle Entitäten. Audit-Log nur lesbar (Unveränderbarkeit). Config vollständig verwaltbar.
-- **Arzt**: Vollzugriff auf Behandlungsdaten (Patient, Termin, Befund, Medikament, Dokumente). Kein Audit-Zugriff, keine Config.
-- **Pflege**: Behandlungsdaten mit Einschränkung auf eigene Patienten/Team. Kein Delete.
-- **Rezeption**: Verwaltungsfunktionen (Termin, Patient-Stammdaten). Kein Zugriff auf klinische Daten.
-- **Viewer**: Nur-Lese-Zugriff auf alle Entitäten, die die Rolle sehen darf.
-- **Auditor**: Exklusiv Audit-Log-Zugriff (read, export). Keine Zugriff auf Patientendaten.
-- **LLM-Agent**: Automatisierter Agent für Dokumentenverarbeitung. Kein Delete, kein Audit, keine Config.
+### Grenzen
 
-**Umsetzung in Code:**
-
-Die `has_permission()` Funktion in `crates/kis-core/src/security.rs` deckt diese Matrix ab. Die `Permission`-Enum umfasst:
-
-| Permission | Entität | Aktion |
-|------------|---------|--------|
-| `PatientRead` | Patient | read |
-| `PatientCreate` | Patient | create |
-| `PatientUpdate` | Patient | update |
-| `PatientDelete` | Patient | delete |
-| `AppointmentRead` | Appointment | read |
-| `AppointmentCreate` | Appointment | create |
-| `AppointmentUpdate` | Appointment | update |
-| `AppointmentDelete` | Appointment | delete |
-| `ObservationRead` | Observation | read |
-| `ObservationCreate` | Observation | create |
-| `ObservationUpdate` | Observation | update |
-| `ObservationDelete` | Observation | delete |
-| `MedicationRead` | Medication | read |
-| `MedicationCreate` | Medication | create |
-| `MedicationUpdate` | Medication | update |
-| `MedicationDelete` | Medication | delete |
-| `DocumentRead` | Document | read |
-| `DocumentWrite` | Document | create/update |
-| `DocumentDelete` | Document | delete |
-| `DoctorRead` | Doctor | read |
-| `DoctorCreate` | Doctor | create |
-| `DoctorUpdate` | Doctor | update |
-| `DoctorDelete` | Doctor | delete |
-| `DoctorManage` | Doctor | manage (Rollen, Rechte) |
-| `Export` | Global | export (DSGVO Art. 20) |
-| `Import` | Global | import (GDT, FHIR) |
-| `ConfigRead` | Config | read |
-| `ConfigWrite` | Config | write |
-| `ConfigManage` | Config | manage (Admin-Only) |
-| `AuditRead` | Audit-Log | read |
-| `AuditExport` | Audit-Log | export |
+- Der Behandlungszusammenhang schützt Routen mit `:case_id`. Der
+  Patientenstamm (`/api/v1/patients`) ist für alle mit `patient.read`
+  lesbar; eine Einschränkung auf „eigene“ Patienten gibt es dort nicht.
+- Wer `case.read` hat, sieht zu einem Patienten oder einer Fallnummer die
+  Verwaltungsdaten der Fälle (Nummer, Art, Status, Abteilung, Zeitraum)
+  auch ohne Behandlungszusammenhang; die Akte selbst nicht.
+- Innerhalb eines Falls gibt es keine feinere Stufung (etwa besonders
+  schutzwürdige Dokumentation).
+- Die Oberfläche hält Token im `localStorage`
+  ([ARBEITSPAKETE.md](ARBEITSPAKETE.md), AP-02).
+- Ob ein Handler eines neuen Moduls korrekt nach `case_id` filtert, prüft
+  kein Werkzeug; das ist Aufgabe des Reviews.
 
 ## Audit
 

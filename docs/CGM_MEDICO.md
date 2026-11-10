@@ -1,11 +1,13 @@
 # KIS — CGM MEDICO Integration
 
+> **Entwurf, nicht betriebsbereit.** Der MEDICO-Client liegt unter `entwurf/schnittstellen/kis-medico`, ist nicht Teil des Builds und wird vom Server nicht geladen.
+
 > **Krankenhaus-Informations-System (KIS)**
 > Vollständige Dokumentation der CGM MEDICO-Anbindung: Systemarchitektur, Datenmodell, Synchronisationslogik, Fehlerbehandlung und Betrieb.
 >
 > **Stand:** 01.11.2026
 >
-> **Ist-Zustand (06.11.2026): NICHT betriebsbereit.** `crates/kis-medico` kompiliert, sein Router ist aber **nicht** in `kis-app` registriert. Mehrere Abfragen verweisen auf Tabellen und Spalten, die es im Schema nicht gibt (`medico_conflicts`, `medico_migration_status`, `xds_document_entries`, `patients.first_name`, `medications.form`; Nachweis: `scripts/check_sql.py`). Die in diesem Dokument beschriebenen `/api/medico/*`-Endpunkte sind daher nicht erreichbar. Das Dokument beschreibt das **Zielbild**; Gegenstellen-Version, ISiK-Profile und Testumgebung sind weiterhin zu benennen (siehe [Prüfstatus](REVIEW_STATUS.md)).
+> **Ist-Zustand (06.11.2026): NICHT betriebsbereit.** `entwurf/schnittstellen/kis-medico` kompiliert, sein Router ist aber **nicht** in `kis-app` registriert. Mehrere Abfragen verweisen auf Tabellen und Spalten, die es im Schema nicht gibt (`medico_conflicts`, `medico_migration_status`, `xds_document_entries`, `patients.first_name`, `medications.form`; Nachweis: `scripts/check_sql.py`). Die in diesem Dokument beschriebenen `/api/medico/*`-Endpunkte sind daher nicht erreichbar. Das Dokument beschreibt das **Zielbild**; Gegenstellen-Version, ISiK-Profile und Testumgebung sind weiterhin zu benennen (siehe [Prüfstatus](REVIEW_STATUS.md)).
 >
 > Langfristiges Ziel bleibt, dass das KIS CGM MEDICO vollständig ersetzt.
 
