@@ -1,10 +1,17 @@
 # cargo-audit-Konfiguration. Ausnahmen nur mit konkreter Begründung.
+#
+# Beide Ausnahmen betreffen Crates, die nur im Cargo.lock stehen, aber
+# nicht gebaut werden: Die sqlx-Makros ziehen die Backends für MySQL und
+# SQLite in die Lock-Datei, auch wenn — wie hier — nur PostgreSQL
+# aktiviert ist. Dass das so bleibt, prüft
+# scripts/check_audit_exceptions.py (Teil von scripts/check.sh und CI)
+# anhand von config/audit_exceptions.toml. Wird eine der Crates Teil des
+# Builds, schlägt die Prüfung fehl und die Ausnahme gilt nicht mehr.
 [advisories]
 ignore = [
-    # RUSTSEC-2023-0071 (rsa, Marvin-Timing-Angriff): `rsa` steht nur über
-    # `sqlx-mysql` im Cargo.lock (bekanntes Lockfile-Artefakt der
-    # sqlx-Makros). KIS aktiviert ausschließlich das PostgreSQL-Backend;
-    # `cargo tree -i rsa --target all` zeigt keine Verwendung. Erneut
-    # prüfen bei jedem sqlx-Update.
+    # rsa (Marvin-Timing-Angriff), nur über sqlx-mysql im Cargo.lock
     "RUSTSEC-2023-0071",
+    # libsqlite3-sys (CVE in der mitgelieferten SQLite), nur über
+    # sqlx-sqlite im Cargo.lock
+    "RUSTSEC-2026-0459",
 ]

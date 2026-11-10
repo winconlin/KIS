@@ -40,8 +40,8 @@ unabhängig änderbar.
 - `scripts/check.sh` vollständig: Format, Leitplanken, Modulgrenzen,
   Dokumentation, Clippy (`-D warnings`, alle Targets), Tests, SQL-Abgleich
   (276 Anweisungen, 0 Fehler).
-- 98 Tests bestanden, davon 15 Integrationstests gegen PostgreSQL 16 mit
-  dem echten Router: die 8 bisherigen (Anmeldung, Sitzungen, Rechte,
+- 100 Tests bestanden, davon 17 Integrationstests gegen PostgreSQL 16
+  (15 mit dem echten Router, 2 mit dem Programm `kis-admin`): die 8 bisherigen (Anmeldung, Sitzungen, Rechte,
   Datenschutz, Audit-Kette) unverändert im Inhalt, dazu der Weg eines
   Patienten über alle Berufsgruppen, Ausfall einer Folgeaktion,
   abgeschaltete Module, Rollen und Richtlinien zur Laufzeit, Löschung mit
@@ -56,6 +56,24 @@ unabhängig änderbar.
   [SCALING.md](SCALING.md).
 - Das Modul-Gerüst (`scripts/new_module.py`) wurde probeweise ausgeführt:
   erzeugtes Modul baut, ist registriert, sein Test läuft.
+
+### Nachkorrektur nach dem ersten CI-Lauf (Pull Request #5)
+
+Zwei Jobs schlugen fehl; beide Ursachen waren lokal nicht aufgefallen:
+
+- **test:** `kis-admin migrate` öffnete nach der Migration zusätzlich die
+  Laufzeitverbindung, um die Rollen-Grundausstattung anzulegen. In der CI
+  (und bei jeder Ersteinrichtung) steht dafür kein Passwort bereit. Lokal
+  blieb das unbemerkt, weil die Testdatenbank ohne Passwort erreichbar
+  ist. Jetzt nutzt der Befehl nur die Migrationsverbindung; ein Test
+  startet das Programm mit unerreichbarer Laufzeitverbindung
+  (`tests/admin_tool.rs`).
+- **audit:** neue Meldung RUSTSEC-2026-0459 zu `libsqlite3-sys`. Die Crate
+  steht nur im `Cargo.lock` (Artefakt der sqlx-Makros) und wird nicht
+  gebaut — wie bereits `rsa`. Als begründete Ausnahme eingetragen; neu
+  ist, dass ein Skript bei jedem Lauf prüft, dass ausgenommene Crates
+  tatsächlich in keinem Build vorkommen
+  (`scripts/check_audit_exceptions.py`).
 
 ### Nicht geprüft / offen
 

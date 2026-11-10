@@ -71,6 +71,11 @@ impl TestDb {
         })
     }
 
+    /// Verbindungs-URL dieser Testdatenbank.
+    pub fn url(&self) -> String {
+        replace_db(&self.admin_url, &self.name)
+    }
+
     pub async fn drop(self) {
         self.db.close().await;
         if let Ok(admin) = sqlx::PgPool::connect(&self.admin_url).await {

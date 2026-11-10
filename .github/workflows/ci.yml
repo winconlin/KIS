@@ -82,6 +82,8 @@ jobs:
       - run: cargo install cargo-audit --locked
       # Begründete Ausnahmen stehen in .cargo/audit.toml
       - run: cargo audit
+      - name: Ausnahmen prüfen (ausgenommene Crates werden nicht gebaut)
+        run: python3 scripts/check_audit_exceptions.py
 
   docs:
     runs-on: ubuntu-latest

@@ -1,0 +1,14 @@
+# Begründung der Ausnahmen in .cargo/audit.toml: Diese Crates stehen im
+# Cargo.lock, werden aber nicht gebaut. scripts/check_audit_exceptions.py
+# prüft das bei jedem Lauf; jede Ausnahme in .cargo/audit.toml muss hier
+# stehen.
+
+[[not_built]]
+advisory = "RUSTSEC-2023-0071"
+crate = "rsa"
+reason = "nur über sqlx-mysql im Cargo.lock; KIS nutzt ausschließlich PostgreSQL"
+
+[[not_built]]
+advisory = "RUSTSEC-2026-0459"
+crate = "libsqlite3-sys"
+reason = "nur über sqlx-sqlite im Cargo.lock; KIS nutzt ausschließlich PostgreSQL"

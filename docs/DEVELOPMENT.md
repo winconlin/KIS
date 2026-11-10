@@ -37,9 +37,14 @@ Tests gelten nicht als bestanden.
 | Leitplanken | `python3 scripts/check_guardrails.py` |
 | Modulgrenzen | `python3 scripts/check_modules.py` |
 | Dokumentation | `python3 scripts/check_docs.py` |
+| Audit-Ausnahmen | `python3 scripts/check_audit_exceptions.py` |
 | Clippy | `cargo clippy --locked --workspace --all-targets -- -D warnings` |
 | Tests | `KIS_REQUIRE_PG_TESTS=1 cargo test --locked --workspace` |
 | SQL gegen Schema | `python3 scripts/check_sql.py --server-url "$KIS_TEST_DATABASE_URL"` |
+
+Ausnahmen des Abhängigkeits-Audits stehen in `.cargo/audit.toml` und sind
+nur zulässig, solange die betroffene Crate nicht gebaut wird
+(`config/audit_exceptions.toml`, bei jedem Lauf geprüft).
 
 Zusätzlich in der CI: Abhängigkeits-Audit (`cargo audit`), Backup- und
 Restore-Tests (`python3 -m unittest discover -s tests -p 'test_*.py'`),
@@ -53,6 +58,7 @@ Container-Bau mit Rauchtest (`scripts/check_container.py`).
 | `crates/kis-app/tests/hospital.rs` | Weg eines Patienten über alle Berufsgruppen; Ausfall einer Folgeaktion; abgeschaltete Module; Rollen und Richtlinien zur Laufzeit; Löschung |
 | `crates/kis-app/tests/roster.rs` | Dienstplan, Prüfung, Export |
 | `crates/kis-app/tests/api_doc.rs` | `docs/API.md` entspricht den registrierten Routen |
+| `crates/kis-app/tests/admin_tool.rs` | `kis-admin` als Programm: Migration nur mit der Eigentümerverbindung, Modulliste ohne Datenbank |
 | Unit-Tests in den Crates | Rechte, Zugriffsregeln, Einstellungen, Anfragebegrenzung, Exporte |
 
 Das Testgerüst steht in `crates/kis-app/tests/common/mod.rs`: echter

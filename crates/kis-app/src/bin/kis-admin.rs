@@ -61,14 +61,24 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig::load()?;
     match command.as_slice() {
         ["migrate"] => {
+            // Braucht nur die Migrationsverbindung (Eigentümerrolle): Die
+            // Laufzeitverbindung ist beim ersten Einrichten oft noch nicht
+            // erreichbar oder ihr Passwort nicht in der Umgebung.
             let url = config
                 .database
                 .migration_url
                 .clone()
                 .unwrap_or_else(|| config.database.write_url.clone());
-            Database::migrate(&url).await?;
-            let db = connect(&config).await?;
-            seed_roles(&db).await?;
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .acquire_timeout(std::time::Duration::from_secs(10))
+                .connect(&url)
+                .await?;
+            Database::run_migrations(&pool).await?;
+            let mut tx = pool.begin().await?;
+            kis_core::rbac::seed_builtin_roles(&mut tx).await?;
+            tx.commit().await?;
+            pool.close().await;
             out("Migrationen angewendet, Rollen-Grundausstattung vorhanden");
         }
         ["create-user", username, email, display_name, role] => {
