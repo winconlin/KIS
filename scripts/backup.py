@@ -71,7 +71,8 @@ def backup(database_url, destination, recipients, identity_for_check=None):
     with tempfile.TemporaryDirectory(prefix=".kis-backup-", dir=destination) as directory:
         encrypted = Path(directory) / "snapshot.age"
         dump = subprocess.Popen(
-            ["pg_dump", "--format=custom", "--dbname", database_url], stdout=subprocess.PIPE
+            ["pg_dump", "--format=custom", "--no-privileges", "--dbname", database_url],
+            stdout=subprocess.PIPE,
         )
         enc = subprocess.run(
             ["age", "--encrypt", "-R", str(recipients), "--output", str(encrypted)], stdin=dump.stdout
@@ -92,6 +93,7 @@ def verify(archive, identity, restore_into=None):
     require_tools("age", "pg_restore")
     archive = Path(archive).resolve(strict=True)
     identity = Path(identity).resolve(strict=True)
+    pg_restore_bin = os.environ.get("KIS_PG_RESTORE", "pg_restore")
     checksum_file = archive.with_suffix(archive.suffix + ".sha256")
     checksum, name = checksum_file.read_text(encoding="ascii").strip().split("  ", 1)
     if name != archive.name or not hmac.compare_digest(checksum, digest(archive)):
@@ -112,7 +114,7 @@ def verify(archive, identity, restore_into=None):
             ["age", "--decrypt", "--identity", str(identity), str(archive)], stdout=subprocess.PIPE
         )
         restore = subprocess.run(
-            ["pg_restore", "--no-owner", "--exit-on-error", "--dbname", restore_into],
+            [pg_restore_bin, "--no-owner", "--exit-on-error", "--dbname", restore_into],
             stdin=decrypt.stdout, capture_output=True, text=True,
         )
         decrypt.stdout.close()
