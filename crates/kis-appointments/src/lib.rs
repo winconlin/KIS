@@ -6,6 +6,7 @@
 //! - ISiK-Integration (book/cancel — Placeholder für FHIR-Appointments)
 //! - Kalender-Ansicht (GET /:doctor_id/calendar)
 //! - Slot-Verfügbarkeit (GET /slots)
+//! - Zeitplan je Arzt (GET /doctors/:id/schedule)
 //!
 //! Endpunkte:
 //!   GET    /api/v1/appointments             — Liste (Filter: date_from, date_to, doctor_id, patient_id, status)
@@ -17,6 +18,7 @@
 //!   POST   /api/v1/appointments/:id/cancel  — ISiK: Termin stornieren
 //!   GET    /api/v1/appointments/:doctor_id/calendar — Kalender-Ansicht
 //!   GET    /api/v1/appointments/slots       — Slot-Verfügbarkeit
+//!   GET    /api/v1/doctors/:id/schedule     — Zeitplan je Arzt (30-Min-Blöcke 08:00–16:00)
 
 #![allow(clippy::type_complexity)]
 
@@ -284,6 +286,7 @@ impl Module for AppointmentsModule {
                 read,
                 doctor_calendar,
             )
+            .get("/api/v1/doctors/:id/schedule", read, doctor_schedule)
             .get("/api/v1/appointments/:id", read, get_appointment)
             .put(
                 "/api/v1/appointments/:id",
@@ -1015,4 +1018,134 @@ fn db_err(e: sqlx::Error) -> AppointmentError {
         }
     }
     AppointmentError::Db(e.to_string())
+}
+
+// ── Zeitplan je Arzt ─────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ScheduleQuery {
+    date: String,
+}
+
+/// 30-Minuten-Blöcke von 08:00 bis 16:00, markiert, ob ein Termin liegt.
+#[derive(Serialize)]
+#[allow(non_snake_case)]
+struct DoctorSchedule {
+    doctorId: String,
+    date: String,
+    doctorName: String,
+    freeSlotCount: u32,
+    totalSlotCount: u32,
+    slots: Vec<ScheduleSlot>,
+}
+
+#[derive(Serialize)]
+#[allow(non_snake_case)]
+struct ScheduleSlot {
+    time: String,
+    isFree: bool,
+    appointmentId: Option<String>,
+}
+
+/// GET /api/v1/doctors/:id/schedule?date=2030-01-15
+async fn doctor_schedule(
+    State(db): State<Arc<PgPool>>,
+    Path(doctor_id): Path<Uuid>,
+    Query(q): Query<ScheduleQuery>,
+    _auth: RequireRole,
+) -> Result<Json<DoctorSchedule>, axum::response::Response> {
+    let pool = db.as_ref();
+
+    // Validierung: Dateiformat
+    let date: chrono::NaiveDate = q
+        .date
+        .parse()
+        .map_err(|_| AppointmentError::InvalidTimeRange)?;
+
+    // Arztname laden
+    let doctor_name: Option<(String,)> = sqlx::query_as(
+        "SELECT name_family || ' ' || name_given FROM doctors WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(doctor_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(db_err)?;
+    let doctor_name = doctor_name
+        .ok_or(AppointmentError::DoctorNotFound(doctor_id))?
+        .0;
+
+    // Termine für diesen Arzt und Tag laden
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: Uuid,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+    }
+
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT id, start_time, end_time FROM appointments
+             WHERE doctor_id = $1 AND start_time::date = $2 AND deleted_at IS NULL
+             ORDER BY start_time",
+    )
+    .bind(doctor_id)
+    .bind(date)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+
+    // 16 Slots à 30 Min: 08:00–08:30, 08:30–09:00, …, 15:30–16:00
+    let total_slot_count: u32 = 16;
+    let mut slots = Vec::with_capacity(total_slot_count as usize);
+
+    for i in 0..total_slot_count {
+        let slot_hour = 8 + i / 2;
+        let slot_min = if i % 2 == 0 { 0 } else { 30 };
+        let slot_start = date.and_hms_opt(slot_hour, slot_min, 0).unwrap();
+        let slot_end = date
+            .and_hms_opt(
+                if slot_min == 30 {
+                    slot_hour + 1
+                } else {
+                    slot_hour
+                },
+                if slot_min == 30 { 0 } else { 30 },
+                0,
+            )
+            .unwrap();
+
+        let mut matched: Option<&Row> = None;
+        for r in &rows {
+            let r_start = r.start_time.naive_utc();
+            let r_end = r.end_time.naive_utc();
+            if r_start <= slot_end && r_end > slot_start {
+                matched = Some(r);
+                break;
+            }
+        }
+
+        if let Some(r) = matched {
+            slots.push(ScheduleSlot {
+                time: format!("{:02}:{:02}", slot_hour, slot_min),
+                isFree: false,
+                appointmentId: Some(r.id.to_string()),
+            });
+        } else {
+            slots.push(ScheduleSlot {
+                time: format!("{:02}:{:02}", slot_hour, slot_min),
+                isFree: true,
+                appointmentId: None,
+            });
+        }
+    }
+
+    let free_slot_count = slots.iter().filter(|s| s.isFree).count() as u32;
+
+    Ok(Json(DoctorSchedule {
+        doctorId: doctor_id.to_string(),
+        date: date.to_string(),
+        doctorName: doctor_name,
+        freeSlotCount: free_slot_count,
+        totalSlotCount: total_slot_count,
+        slots,
+    }))
 }

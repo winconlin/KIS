@@ -28,5 +28,9 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 
+[dev-dependencies]
+tower = { workspace = true }
+http-body-util = "0.1"
+
 [lints]
 workspace = true

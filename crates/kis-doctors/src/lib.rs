@@ -3,7 +3,6 @@
 //! Vollständige CRUD-Implementierung mit:
 //! - Optimistic Locking (version-Feld)
 //! - Soft-Delete (deleted_at)
-//! - Zeitplan-Endpunkt (GET /:id/schedule)
 //!
 //! Endpunkte:
 //!   GET    /api/v1/doctors           — Liste
@@ -11,7 +10,6 @@
 //!   POST   /api/v1/doctors           — Anlegen
 //!   PUT    /api/v1/doctors/:id       — Aktualisieren (Optimistic Locking)
 //!   DELETE /api/v1/doctors/:id       — Soft-Delete
-//!   GET    /api/v1/doctors/:id/schedule — Zeitplan (Termine + Slots)
 
 use axum::{
     extract::{Path, Query, State},
@@ -98,31 +96,6 @@ pub struct DoctorPage {
     pub count: usize,
 }
 
-/// Termin im Zeitplan
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct ScheduleAppointment {
-    pub id: Uuid,
-    pub patient_id: Uuid,
-    pub patient_name: String,
-    pub status: String,
-    pub start_time: DateTime<Utc>,
-    pub end_time: DateTime<Utc>,
-    pub reason: Option<String>,
-}
-
-/// Zeitplan-Response: alle Termine für einen Zeitraum
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DoctorSchedule {
-    pub doctor_id: Uuid,
-    pub from: DateTime<Utc>,
-    pub to: DateTime<Utc>,
-    pub appointments: Vec<ScheduleAppointment>,
-    /// Anzahl freier Slots in diesem Zeitraum
-    pub free_slot_count: i64,
-}
-
 // ===========================================================================
 // Fehler-Typen
 // ===========================================================================
@@ -204,7 +177,6 @@ impl Module for DoctorsModule {
             .get("/api/v1/doctors/:id", read, get_doctor)
             .put("/api/v1/doctors/:id", write, update_doctor)
             .delete("/api/v1/doctors/:id", write, delete_doctor)
-            .get("/api/v1/doctors/:id/schedule", read, doctor_schedule)
             .with_state(Arc::new(ctx.pool().clone()))
     }
 }
@@ -447,90 +419,6 @@ async fn delete_doctor(
     }
 }
 
-/// GET /api/v1/doctors/:id/schedule — Zeitplan
-///
-/// Query-Parameter:
-///   date_from — Beginn des Zeitraums (ISO 8601, Default: heute 00:00)
-///   date_to   — Ende des Zeitraums (ISO 8601, Default: morgen 23:59)
-///
-/// Liefert alle Termine im Zeitraum + Anzahl freier Slots.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ScheduleQuery {
-    pub date_from: Option<DateTime<Utc>>,
-    pub date_to: Option<DateTime<Utc>>,
-}
-
-async fn doctor_schedule(
-    State(db): State<Arc<PgPool>>,
-    Path(id): Path<Uuid>,
-    Query(params): Query<ScheduleQuery>,
-) -> Result<Json<DoctorSchedule>, axum::response::Response> {
-    let pool = db.as_ref();
-
-    // Zeitraum berechnen (Default: heute bis morgen)
-    let now = Utc::now();
-    let today = now.date_naive();
-    let date_from = params
-        .date_from
-        .unwrap_or_else(|| today.and_hms_opt(0, 0, 0).unwrap().and_utc());
-    let date_to = params
-        .date_to
-        .unwrap_or_else(|| today.and_hms_opt(23, 59, 59).unwrap().and_utc());
-
-    // Termin-Liste mit Patient-Namen (JOIN)
-    let appts: Vec<ScheduleAppointment> = sqlx::query_as(
-        r#"
-        SELECT a.id, a.patient_id,
-               (p.name_family || ' ' || p.name_given) AS patient_name,
-               a.status, a.start_time, a.end_time, a.reason
-        FROM appointments a
-        JOIN patients p ON p.id = a.patient_id
-        WHERE a.doctor_id = $1
-          AND a.start_time >= $2
-          AND a.end_time <= $3
-          AND a.deleted_at IS NULL
-        ORDER BY a.start_time ASC
-        "#,
-    )
-    .bind(id)
-    .bind(date_from)
-    .bind(date_to)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| DoctorError::Db(e.to_string()))?;
-
-    // Anzahl freier Slots: Arbeitstage 08:00–16:00, 30-Min-Blöcke,
-    // abzüglich bereits gebuchter Slots
-    let booked_count: (i64,) = sqlx::query_as(
-        r#"
-        SELECT COUNT(*) FROM appointments
-        WHERE doctor_id = $1
-          AND start_time >= $2
-          AND end_time <= $3
-          AND deleted_at IS NULL
-        "#,
-    )
-    .bind(id)
-    .bind(date_from)
-    .bind(date_to)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| DoctorError::Db(e.to_string()))?;
-
-    // Schätzung: 16 Stunden * 2 Slots/Stunde = 32 Slots/Tag
-    let total_slots = 32;
-    let free_slot_count = total_slots - booked_count.0;
-
-    Ok(Json(DoctorSchedule {
-        doctor_id: id,
-        from: date_from,
-        to: date_to,
-        appointments: appts,
-        free_slot_count,
-    }))
-}
-
 // ===========================================================================
 // Modul-Status
 // ===========================================================================
@@ -543,8 +431,7 @@ pub struct ModuleStatus {
 }
 
 pub const MODULE_NAME: &str = "kis-doctors";
-pub const MODULE_DESCRIPTION: &str =
-    "KIS Arzt-Service — Phase 1: CRUD, Optimistic Locking, Zeitplan";
+pub const MODULE_DESCRIPTION: &str = "KIS Arzt-Service — Phase 1: CRUD, Optimistic Locking";
 
 /// Schreibt den Audit-Eintrag einer Änderung in die laufende Transaktion.
 /// Schlägt das Audit fehl, wird die Änderung verworfen.

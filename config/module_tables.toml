@@ -67,10 +67,6 @@ tables = [
 [modules.doctors]
 crate = "kis-doctors"
 tables = ["doctors"]
-# ALTLAST: `GET /api/v1/doctors/:id/schedule` liest Termine. Die Route
-# gehört fachlich ins Terminmodul (docs/ARBEITSPAKETE.md, AP-01). Mit der
-# Verlagerung entfällt diese Ausnahme.
-reads = ["appointments"]
 
 [modules.appointments]
 crate = "kis-appointments"
