@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verschlüsseltes PostgreSQL-Backup (pg_dump + age) und Prüfung.
 
-backup:  pg_dump --format=custom wird direkt in age gestreamt; unverschlüsselte
+backup:  pg_dump --format=plain wird direkt in age gestreamt; unverschlüsselte
          Daten berühren nie die Festplatte. Das Archiv wird erst nach
          erfolgreicher Lesbarkeitsprüfung veröffentlicht (atomar per rename),
          daneben eine SHA-256-Prüfsumme.
@@ -38,23 +38,51 @@ def require_tools(*names):
         raise ValueError("Werkzeuge fehlen: " + ", ".join(missing))
 
 
+def _filter_compat_lines(stream):
+    """Entfernt SET-Anweisungen, die ältere PostgreSQL-Server nicht kennen."""
+    for line in stream:
+        if not (line.startswith("SET ") and "transaction_timeout" in line):
+            yield line
+
+
+def _filtered_stream(stream):
+    """Liefert ein Pipe-Objekt, aus dem gefilterte Bytes gelesen werden können."""
+    import threading
+    r_fd, w_fd = os.pipe()
+    r_file = os.fdopen(r_fd, "rb")
+
+    def _pump():
+        w_file = os.fdopen(w_fd, "wb")
+        for raw in stream:
+            if isinstance(raw, bytes):
+                if b"SET transaction_timeout" not in raw:
+                    w_file.write(raw)
+            else:
+                if not (raw.startswith("SET ") and "transaction_timeout" in raw):
+                    w_file.write(raw.encode("utf-8"))
+        w_file.close()
+
+    t = threading.Thread(target=_pump, daemon=True)
+    t.start()
+    return r_file
+
+
 def archive_tables(archive, identity):
-    """Entschlüsselt in eine Pipe und liest das Inhaltsverzeichnis."""
+    """Entschlüsselt und prüft, ob alle Kerntabellen im Dump vorhanden sind."""
     decrypt = subprocess.Popen(
         ["age", "--decrypt", "--identity", str(identity), str(archive)], stdout=subprocess.PIPE
     )
-    listing = subprocess.run(["pg_restore", "--list"], stdin=decrypt.stdout, capture_output=True, text=True)
+    plain = decrypt.stdout.read()
     decrypt.stdout.close()
     if decrypt.wait() != 0:
         raise ValueError("Entschlüsselung fehlgeschlagen (falscher Schlüssel oder beschädigtes Archiv)")
-    if listing.returncode != 0:
-        raise ValueError("Archiv ist kein gültiger pg_dump: " + listing.stderr.strip())
+    if b"CREATE TABLE" not in plain:
+        raise ValueError("Archiv ist kein gültiger pg_dump-Dump")
     found = set()
-    for line in listing.stdout.splitlines():
-        parts = line.split()
-        # Format: "<id>; <oid> <oid> TABLE DATA public <name> <owner>"
-        if "TABLE DATA" in line and len(parts) >= 7:
-            found.add(parts[6])
+    for line in plain.decode("utf-8", errors="replace").splitlines():
+        if line.startswith("CREATE TABLE public."):
+            rest = line[len("CREATE TABLE public."):]
+            found.add(rest.split()[0].strip('"'))
     missing = [t for t in TABLES if t not in found]
     if missing:
         raise ValueError("Backup enthält kein vollständiges KIS-Schema, fehlend: " + ", ".join(missing))
@@ -71,7 +99,8 @@ def backup(database_url, destination, recipients, identity_for_check=None):
     with tempfile.TemporaryDirectory(prefix=".kis-backup-", dir=destination) as directory:
         encrypted = Path(directory) / "snapshot.age"
         dump = subprocess.Popen(
-            ["pg_dump", "--format=custom", "--dbname", database_url], stdout=subprocess.PIPE
+            ["pg_dump", "--format=plain", "--no-owner", "--no-privileges", "--dbname", database_url],
+            stdout=subprocess.PIPE,
         )
         enc = subprocess.run(
             ["age", "--encrypt", "-R", str(recipients), "--output", str(encrypted)], stdin=dump.stdout
@@ -112,8 +141,8 @@ def verify(archive, identity, restore_into=None):
             ["age", "--decrypt", "--identity", str(identity), str(archive)], stdout=subprocess.PIPE
         )
         restore = subprocess.run(
-            ["pg_restore", "--no-owner", "--exit-on-error", "--dbname", restore_into],
-            stdin=decrypt.stdout, capture_output=True, text=True,
+            ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-d", restore_into],
+            stdin=_filtered_stream(decrypt.stdout), capture_output=True, text=True,
         )
         decrypt.stdout.close()
         if decrypt.wait() != 0 or restore.returncode != 0:

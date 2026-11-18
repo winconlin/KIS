@@ -248,7 +248,6 @@ Routentabelle unten wird aus dem laufenden System erzeugt
 | DELETE | `/api/v1/doctors/:id` | doctor.write |  |
 | GET | `/api/v1/doctors/:id` | doctor.read |  |
 | PUT | `/api/v1/doctors/:id` | doctor.write |  |
-| GET | `/api/v1/doctors/:id/schedule` | doctor.read |  |
 
 ### Terminplanung (`appointments`)
 
@@ -263,6 +262,7 @@ Routentabelle unten wird aus dem laufenden System erzeugt
 | POST | `/api/v1/appointments/:id/book` | appointment.book |  |
 | POST | `/api/v1/appointments/:id/cancel` | appointment.cancel |  |
 | GET | `/api/v1/appointments/slots` | appointment.read |  |
+| GET | `/api/v1/doctors/:id/schedule` | appointment.read |  |
 
 ### Dauermedikation (`medications`)
 
