@@ -8,7 +8,11 @@ greifen ineinander. Ausgelegt für Einzelpraxen, MVZ, kleine Kliniken,
 Maximalversorger und vollständige Klinikverbünde mit mehreren Standorten,
 Rechtsträgern und zentralen Diensten. Das verbindliche Ziel umfasst
 stationäre, ambulante und sektorenübergreifende Versorgung sowie alle
-anwendbaren deutschen TI-/gematik- und Abrechnungsanforderungen. Siehe
+anwendbaren deutschen TI-/gematik- und Abrechnungsanforderungen.
+**Native First:** Fachfunktionen grundsätzlich als eigene KIS-Module,
+optionale Fremdsystemadapter für Migration und Wahlfreiheit; dauerhafte
+externe Abhängigkeiten nur als begründete technische, lizenzrechtliche
+oder regulatorische Ausnahme. Siehe
 [Enterprise-Zielbild](docs/ENTERPRISE_KIS.md), [TI-Auftrag](docs/TI_COMPLIANCE.md)
 und [Ausbauprogramm](docs/ENTERPRISE_BACKLOG.md). Dies sind Soll-Anforderungen,
 keine Aussage über implementierte oder zertifizierte Funktionen.
