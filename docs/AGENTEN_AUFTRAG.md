@@ -1,6 +1,6 @@
 # KIS — Auftrag für Agenten
 
-Stand: 10.11.2026
+Stand: 24.11.2026
 
 ## Auftrag des Benutzers
 
@@ -10,6 +10,8 @@ Daten ineinandergreifen — für kleine Kliniken bis Maximalversorger. Mit
 Datenschutz und Datensicherheit, vollständig konfigurierbar und sparsam im
 Umgang mit Rechnerressourcen. Einzelne Module müssen jederzeit geändert und
 verbessert werden können, ohne den Gesamtablauf zu stören.
+
+Der Auftrag umfasst ausdrücklich vollständige Klinikverbünde, Schwesterkliniken, getrennte Rechtsträger, MVZ und Facharztpraxen, sektorenübergreifende Versorgung sowie sämtliche anwendbaren gematik-/TI-/KBV-Anforderungen. Verbindliche Soll-Anforderungen: [ENTERPRISE_KIS.md](ENTERPRISE_KIS.md), [TI_COMPLIANCE.md](TI_COMPLIANCE.md); Umsetzung: [ENTERPRISE_BACKLOG.md](ENTERPRISE_BACKLOG.md). Keine Produktivfreigabe.
 
 ## Wo was steht
 
@@ -23,6 +25,7 @@ verbessert werden können, ohne den Gesamtablauf zu stören.
 
 ## Reihenfolge
 
+0. EP-00 bis EP-07: Verbundarchitektur, MPI, Fallmodell, Rechte, Ereignisverträge, Normen und Betrieb zuerst abstimmen. Danach EP-Pakete gemäß Abhängigkeiten in Teilpakete zerlegen. Unabhängige Härtung darf parallel erfolgen.
 1. Aufräumen und Härten (AP-01 bis AP-06): klein, unabhängig, guter
    Einstieg.
 2. Fachmodule erweitern (AP-10 bis AP-19) und Oberfläche (AP-40 bis
