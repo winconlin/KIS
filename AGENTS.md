@@ -9,17 +9,18 @@ Diese Regeln gelten für das gesamte Repository. Die Priorität der System-, Ent
 3. [Arbeitspakete](docs/ARBEITSPAKETE.md) — dein Paket und die dort genannten Dateien.
 4. Verbindliches erweitertes Zielbild: [Enterprise-KIS](docs/ENTERPRISE_KIS.md), [TI/Gematik](docs/TI_COMPLIANCE.md), [Enterprise-Backlog](docs/ENTERPRISE_BACKLOG.md).
 5. Bei Notaufnahme, Arztbrief, DMS und Workflow-Engine verbindlich: [CLINICAL_WORKFLOWS.md](docs/CLINICAL_WORKFLOWS.md) (DOC-01–07, ED-01–06).
-6. Bei Bedarf: [Architektur](docs/ARCHITECTURE.md), [Funktionslandkarte](docs/FUNKTIONSLANDKARTE.md), [Sicherheit](docs/SECURITY.md), [Sicherheits-Abnahme](docs/SICHERHEITS_ABNAHME.md).
+6. Verbindliche [Roadmap und Quality Gates](docs/ROADMAP.md) sowie [Abnahmebericht](docs/ABNAHMEBERICHT.md) für jedes Arbeitspaket.
+7. Bei Bedarf: [Architektur](docs/ARCHITECTURE.md), [Funktionslandkarte](docs/FUNKTIONSLANDKARTE.md), [Sicherheit](docs/SECURITY.md), [Sicherheits-Abnahme](docs/SICHERHEITS_ABNAHME.md).
 
 Prüfe Branch, HEAD und Arbeitsbaum. Arbeite auf einem eigenen Branch ab dem aktuellen `main`. Exakte Basis-SHA und Paket-Kennung im Arbeitsbericht nennen.
 
-**Ein Befehl entscheidet, ob eine Änderung fertig ist:**
+**Verbindliche lokale Basisprüfung (zusätzlich zu den CI-Jobs und Gate-Nachweisen):**
 
 ```bash
 KIS_TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres scripts/check.sh
 ```
 
-Läuft er nicht fehlerfrei durch, ist das Paket nicht fertig. Die Prüfungen werden nicht umgangen, abgeschwächt oder stillgelegt.
+Läuft er nicht fehlerfrei durch, ist das Implementierungspaket nicht fertig. Zusätzlich gelten G0–G7 aus ROADMAP.md: alle vorhandenen CI-Jobs (lint/test/audit/docs/container) auf dem betreffenden PR-Commit, unabhängiges Review und je Scope fachliche/externe/Betriebsnachweise. Die Prüfungen werden nicht umgangen, abgeschwächt oder stillgelegt. Bei reinen Dokumentationsänderungen lokale Dokumentationsprüfung und tatsächliche CI-Nachweise getrennt angeben.
 
 ## 2. Auftrag und Grenzen
 
@@ -34,7 +35,7 @@ Läuft er nicht fehlerfrei durch, ist das Paket nicht fertig. Die Prüfungen wer
 
 ## 3. Zuständigkeiten und Zusammenarbeit
 
-- Vor Änderungen Task-ID, Abhängigkeiten und zu bearbeitende Dateien bestimmen.
+- Vor Änderungen Task-ID, Abhängigkeiten, zu bearbeitende Dateien und G0 (Definition of Ready) bestimmen. Abnahmebericht-Vorlage verwenden; Gate-Nachweise mit SHA, Umgebung, Datum, Ergebnis und Reviewer festhalten.
 - Ein Implementierer je gemeinsamem Vertrag, Root-Manifest/Lockfile und Migrationssatz. Änderungen an diesen Integrationspunkten koordiniert vornehmen.
 - Bei mehreren Agenten getrennte Branches und Worktrees benutzen; keine parallelen Schreibzugriffe auf denselben Checkout oder dieselbe Testdatenbank.
 - Unabhängige Pakete dürfen nach stabilen Vertrags-/Schemaübergaben parallel bearbeitet werden. Abhängigkeiten nicht durch Annahmen oder Dummy-Ergebnisse ersetzen.
