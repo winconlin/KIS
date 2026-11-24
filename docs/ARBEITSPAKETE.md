@@ -11,6 +11,8 @@ ein Mensch jedes Paket für sich erledigen kann. Übersicht des Gesamtstands:
 
 ## So wird ein Paket bearbeitet
 
+Zusätzlich gelten [ROADMAP.md](ROADMAP.md), G0–G7 und die [Abnahmebericht-Vorlage](ABNAHMEBERICHT.md). Für Implementierungs-PRs ist scripts/check.sh die lokale Basisprüfung; die vorhandenen CI-Jobs (einschließlich cargo audit und Container-/Backup-Tests) und unabhängige Reviews sind zusätzliche, nicht ersetzbare Nachweise.
+
 1. **Ein Paket, ein Branch** (`ap-07-icd-katalog`), ausgehend vom aktuellen
    `main`. Nicht mehrere Pakete mischen.
 2. **Vorher lesen:** [AGENTS.md](../AGENTS.md), [MODULE.md](MODULE.md), die
