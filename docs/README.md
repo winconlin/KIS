@@ -8,6 +8,7 @@ Stand: 24.11.2026 · in Entwicklung, nicht für den Echtbetrieb freigegeben
 |---|---|
 | [ENTERPRISE_KIS.md](ENTERPRISE_KIS.md) | Verbindliches Zielbild für Klinikverbünde und MVZ, Funktionsparität E01–E24 |
 | [TI_COMPLIANCE.md](TI_COMPLIANCE.md) | Gematik/TI, ISiK, ISiP und externe Nachweise |
+| [CLINICAL_WORKFLOWS.md](CLINICAL_WORKFLOWS.md) | Native Notaufnahme, Arztbriefredaktion, Dokumentenmanagement und Freigabeprozesse |
 | [ENTERPRISE_BACKLOG.md](ENTERPRISE_BACKLOG.md) | Priorisierte EP-00–26, Abhängigkeiten und Abnahme |
 | [FUNKTIONSLANDKARTE.md](FUNKTIONSLANDKARTE.md) | Was je Arbeitsbereich vorhanden ist und was fehlt |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Kern, Module, Weg einer Anfrage, Ereignisse |
