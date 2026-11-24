@@ -15,6 +15,8 @@ Der Auftrag umfasst ausdrücklich vollständige Klinikverbünde, Schwesterklinik
 
 **Native First:** Alle fachlichen und organisatorischen Fähigkeiten grundsätzlich als eigene KIS-Module umsetzen. Externe Abhängigkeiten nur gemäß dem begründungspflichtigen N/H/X-Register in Abschnitt 1a des Enterprise-Zielbilds. Adapter zur Koexistenz zählen nicht als native Fertigstellung; offene Eigenimplementierungen bleiben im Backlog.
 
+Für Notaufnahme und klinische Dokumentation ist [CLINICAL_WORKFLOWS.md](CLINICAL_WORKFLOWS.md) verbindlich: vollständige native Fachworkflows statt Triage-/Briefgenerator-Prototyp, DOC-01–07 und ED-01–06.
+
 ## Wo was steht
 
 | Frage | Dokument |
