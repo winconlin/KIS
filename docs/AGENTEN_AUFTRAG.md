@@ -25,12 +25,14 @@ Für Notaufnahme und klinische Dokumentation ist [CLINICAL_WORKFLOWS.md](CLINICA
 | Wie baue oder ändere ich ein Modul? | [MODULE.md](MODULE.md) |
 | Was ist zu tun? | [ARBEITSPAKETE.md](ARBEITSPAKETE.md) |
 | Was gibt es schon, was fehlt? | [FUNKTIONSLANDKARTE.md](FUNKTIONSLANDKARTE.md) |
-| Wann ist etwas fertig? | wenn `scripts/check.sh` fehlerfrei durchläuft und die Abnahmepunkte des Pakets als Tests vorhanden sind |
+| Wann ist etwas fertig? | Nach den einschlägigen Gates G0–G7; lokale Basisprüfung, CI, Pakettests und unabhängige Nachweise getrennt dokumentieren |
 
 ## Reihenfolge
 
+Maßgeblich: [ROADMAP.md](ROADMAP.md) (M00–M11, G0–G7). Die folgende Übersicht ist eine Kurzorientierung; konkrete Abhängigkeiten und Teilpakete haben Vorrang. [ABNAHMEBERICHT.md](ABNAHMEBERICHT.md) bei jedem Paket verwenden. Kein Merge ohne erforderliche technische Prüfungen und unabhängiges Review; keine Produktivfreigabe allein durch CI.
+
 0. EP-00 bis EP-07: Verbundarchitektur, MPI, Fallmodell, Rechte, Ereignisverträge, Normen und Betrieb zuerst abstimmen. Danach EP-Pakete gemäß Abhängigkeiten in Teilpakete zerlegen. Unabhängige Härtung darf parallel erfolgen.
-1. Aufräumen und Härten (AP-01 bis AP-06): klein, unabhängig, guter
+1. Aufräumen und Härten (AP-01 bis AP-06 sowie AP-08): klein, unabhängig, guter
    Einstieg.
 2. Fachmodule erweitern (AP-10 bis AP-19) und Oberfläche (AP-40 bis
    AP-43): voneinander unabhängig, parallel bearbeitbar — je Paket ein
