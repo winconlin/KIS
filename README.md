@@ -4,7 +4,14 @@ Ein modulares Krankenhaus-Informations-System in Rust auf PostgreSQL. Ziel:
 Alle Beschäftigten eines Hauses — ärztlicher Dienst, Pflege,
 Patientenservice, Funktionsdienste, Verwaltung, Küche, Hauswirtschaft,
 Technik — erledigen ihre tägliche Arbeit in einem System, und alle Daten
-greifen ineinander. Ausgelegt für kleine Kliniken bis Maximalversorger.
+greifen ineinander. Ausgelegt für Einzelpraxen, MVZ, kleine Kliniken,
+Maximalversorger und vollständige Klinikverbünde mit mehreren Standorten,
+Rechtsträgern und zentralen Diensten. Das verbindliche Ziel umfasst
+stationäre, ambulante und sektorenübergreifende Versorgung sowie alle
+anwendbaren deutschen TI-/gematik- und Abrechnungsanforderungen. Siehe
+[Enterprise-Zielbild](docs/ENTERPRISE_KIS.md), [TI-Auftrag](docs/TI_COMPLIANCE.md)
+und [Ausbauprogramm](docs/ENTERPRISE_BACKLOG.md). Dies sind Soll-Anforderungen,
+keine Aussage über implementierte oder zertifizierte Funktionen.
 
 **Stand: in Entwicklung, nicht für den Echtbetrieb freigegeben.** Nur für
 Test- und Entwicklungsinstallationen mit synthetischen Daten. Was vorhanden
