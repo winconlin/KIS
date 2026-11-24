@@ -1,5 +1,35 @@
 # KIS — Prüfstatus
 
+## EP-00 (M00): Ist-Analyse, Zielarchitektur, Native-First-Register & Roadmap vom 24.11.2026
+
+Arbeitspaket: `EP-00` (`M00`). Basis-Commit/Branch: *im Container-Snapshot liegt kein `.git`-Verzeichnis vor; Git-Branch, Commit-SHA und PR müssen im Git-Checkout nachgezogen werden.* Vollständiger Bericht: [abnahme/EP-00.md](abnahme/EP-00.md).
+
+### Erstellte und aktualisierte Dokumente
+
+- [EP00_ARCHITEKTUR_UND_ANALYSE.md](EP00_ARCHITEKTUR_UND_ANALYSE.md): Code- und Migrationsanalyse (`001`–`011`), 13 dokumentierte Architektur-/Sicherheitsbefunde (`G-01`–`G-13`, darunter Laufzeit-Parameterfehler in `crates/kis-doctors/src/lib.rs::list_doctors`), `ADR-001` bis `ADR-007`, offene Hausentscheidungen `DEC-01`–`DEC-07`.
+- [NATIVE_FIRST_REGISTER.md](NATIVE_FIRST_REGISTER.md): Verbindliches N/H/X-Entscheidungsregister für `E01`–`E24`, `TI01`–`TI15`, `DOC-01`–`07`, `ED-01`–`06`.
+- [THREAT_MODEL_VERBUND.md](THREAT_MODEL_VERBUND.md): Bedrohungsmodell (`T01`–`T18`) und Liste der Klasse-A-Sicherheitsinvarianten.
+- [VERBUND_TESTMODELL.md](VERBUND_TESTMODELL.md): Synthetisches Verbund-Testmodell und Katalog negativer Verbundtests (`NVT-01`–`NVT-16`).
+- [ROADMAP.md](ROADMAP.md): Gesamt-Roadmap (`M00`–`M10`), Quality Gates `G0`–`G7` und Feinzerlegung (`EP-01a`–`EP-07b`).
+- [ABNAHMEBERICHT.md](ABNAHMEBERICHT.md) und [abnahme/EP-00.md](abnahme/EP-00.md): Vorlage und ausgefüllter EP-00-Abnahmebericht.
+- Lokaler statischer Vorschau-Server (`package.json`, `server.mjs`) für `static/` und lesende `docs/`-Ansicht auf Port 3000 (`/api/*` antwortet ehrlich mit `503 BACKEND_UNAVAILABLE`).
+
+### Tatsächlich ausgeführte Prüfungen (24.11.2026)
+
+- `python3 scripts/check_guardrails.py`: bestanden (`0 Verstöße`, `migrations/CHECKSUMS` unverändert).
+- `python3 scripts/check_modules.py`: bestanden (`49 Tabellen, 11 Fachmodule geprüft, 0 Verstöße`).
+- `python3 scripts/check_docs.py`: bestanden (`0 Fehler` über alle Markdown-Dokumente, Links, JSON-, TOML- und Shell-Codeblöcke).
+- Vorschau-Server (`node --check server.mjs`, HTTP- und Browser-Prüfung auf `http://localhost:3000`): bestanden.
+
+### Nicht geprüft / offen (24.11.2026)
+
+- **Kein Echtbetrieb, keine Freigabe.** Keine neuen Rust- oder SQL-Implementierungen in `EP-00`.
+- `scripts/check.sh` vollständig (`cargo fmt`, `cargo clippy`, `cargo test` gegen PostgreSQL, `scripts/check_sql.py`, `scripts/check_audit_exceptions.py`): in dieser Container-Umgebung **nicht ausführbar** (fehlende `cargo`/`rustc`/`postgres`/`psql`/`docker`/`age` sowie fehlende `Cargo.lock`). Muss vor Merge in der Rust-/PostgreSQL-CI vollständig nachgeholt werden.
+- **Unabhängiges Architektur- und Sicherheitsreview (`G6`):** offen; vor ADR-Freeze und Start von `EP-01a` zwingend erforderlich.
+- **Neu identifizierter Bestandsfehler (`G-13`):** `crates/kis-doctors/src/lib.rs::list_doctors` baut `$1`/`$2`-Platzhalter ohne `.bind(...)` und formatiert `cursor` direkt in SQL (als `AP-01`-Korrektur in Rust/PG-Umgebung einplanen).
+
+---
+
 ## Umbau zum modularen Gesamtsystem vom 10.11.2026
 
 Ausgangspunkt: `main` @ `41d6757`. Ergebnis-Branch: `feature/klinischer-kern`.
