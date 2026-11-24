@@ -13,6 +13,8 @@ verbessert werden können, ohne den Gesamtablauf zu stören.
 
 Der Auftrag umfasst ausdrücklich vollständige Klinikverbünde, Schwesterkliniken, getrennte Rechtsträger, MVZ und Facharztpraxen, sektorenübergreifende Versorgung sowie sämtliche anwendbaren gematik-/TI-/KBV-Anforderungen. Verbindliche Soll-Anforderungen: [ENTERPRISE_KIS.md](ENTERPRISE_KIS.md), [TI_COMPLIANCE.md](TI_COMPLIANCE.md); Umsetzung: [ENTERPRISE_BACKLOG.md](ENTERPRISE_BACKLOG.md). Keine Produktivfreigabe.
 
+**Native First:** Alle fachlichen und organisatorischen Fähigkeiten grundsätzlich als eigene KIS-Module umsetzen. Externe Abhängigkeiten nur gemäß dem begründungspflichtigen N/H/X-Register in Abschnitt 1a des Enterprise-Zielbilds. Adapter zur Koexistenz zählen nicht als native Fertigstellung; offene Eigenimplementierungen bleiben im Backlog.
+
 ## Wo was steht
 
 | Frage | Dokument |
