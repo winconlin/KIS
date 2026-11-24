@@ -5,6 +5,10 @@ ein Mensch jedes Paket für sich erledigen kann. Übersicht des Gesamtstands:
 [FUNKTIONSLANDKARTE.md](FUNKTIONSLANDKARTE.md). Regeln für Module:
 [MODULE.md](MODULE.md).
 
+## Erweiterter Auftrag ab 24.11.2026
+
+[ENTERPRISE_BACKLOG.md](ENTERPRISE_BACKLOG.md) erweitert diese AP-Liste verbindlich um EP-00 bis EP-26. Zielbild und Akzeptanzkriterien: [ENTERPRISE_KIS.md](ENTERPRISE_KIS.md), [TI_COMPLIANCE.md](TI_COMPLIANCE.md). Bestehende Pakete nicht duplizieren; bei Überschneidung anhand der EP-Abhängigkeiten erweitern. Kernvertragsänderungen aus EP-00–07 sind eigene koordinierte Pakete. Bei fehlenden externen Profilen dürfen unabhängige Infrastrukturarbeiten fortgesetzt werden; externe Konformität bleibt offen.
+
 ## So wird ein Paket bearbeitet
 
 1. **Ein Paket, ein Branch** (`ap-07-icd-katalog`), ausgehend vom aktuellen
@@ -92,6 +96,11 @@ vorher in Teilpakete zerlegen.
 - **Abnahme:** Skript läuft gegen eine Wegwerf-Datenbank; Messwerte mit
   Rechnerangabe dokumentiert; auffällige Abfragen mit `EXPLAIN` belegt.
 
+### AP-08 · Nicht mehr gewartete Abhängigkeiten evaluieren und ablösen · L
+- **Anlass:** cargo audit meldete chrono (RUSTSEC-2026-0543) und rustls-pemfile (RUSTSEC-2025-0134) als unmaintained ohne gepatchte Version. Separat vom behobenen URL-Update behandeln; Warnungen weder ausblenden noch als akute Exploit-Nachweise darstellen.
+- **Schritte:** auf dem aktuellen Lockfile tatsächliche direkte/transitive Pfade mit cargo tree -i je Crate ermitteln; gepflegte Alternativen und kompatible Upstream-Versionen prüfen. Chrono-Umstellung separat mit SQLx, PostgreSQL-Typen, Zeitzonen/DST, Zeitintervallen, Audit/Signaturzeitstempeln und Serialisierung testen; rustls-pemfile über gepflegte TLS-/PEM-Pfade bzw. Upstream-Upgrade ablösen, Zertifikatsketten und fehlerhafte Schlüssel prüfen. Kein unreviewter Austausch sicherheitsrelevanter Bibliotheken.
+- **Abnahme:** keine ungewartete Crate im Lockfile, soweit realistisch und kompatibel; andernfalls konkrete temporäre Risikobewertung, Eigentümer, Reviewdatum und Migrationsplan. cargo audit und alle bestehenden CI-/PostgreSQL-/TLS-Tests tatsächlich ausführen, keine Änderung der Audit-Ausnahmen als Ersatz.
+
 ## Fachmodule erweitern
 
 ### AP-10 · Dienstplan: mehrere Personen je Dienst und Tag · M
@@ -154,6 +163,7 @@ vorher in Teilpakete zerlegen.
   Wahl gilt das Standardgericht; nüchterne Fälle zählen nicht.
 
 ### AP-17 · Arztbrief aus Falldaten · L
+- **Erweiterter Auftrag:** Teilmenge von DOC-01–07 in [CLINICAL_WORKFLOWS.md](CLINICAL_WORKFLOWS.md); vollständige native Redaktion und Workflow mit Rückgaben, Revisionen, Signatur und Versand sind Pflicht.
 - **Ziel:** `POST /api/v1/cases/:case_id/letters/draft` erzeugt aus
   Diagnosen, Prozeduren, Verlauf, Labor und Entlassmedikation einen
   Entwurf der Dokumentationsart `arztbrief` (Text mit festen Abschnitten),
@@ -165,6 +175,7 @@ vorher in Teilpakete zerlegen.
   von `CASES_EXPORT_SQL` — als Kern-Änderung vorab abstimmen.
 
 ### AP-18 · Notaufnahme: Ersteinschätzung · M
+- **Erweiterter Auftrag:** Teilmenge von ED-01–06 in [CLINICAL_WORKFLOWS.md](CLINICAL_WORKFLOWS.md); Triage allein erfüllt nicht die epias-ähnliche Funktionsparität.
 - **Ziel:** Neues Modul `emergency`: Ersteinschätzung mit Dringlichkeit
   und Zeitstempeln (Ankunft, Einschätzung, Arztkontakt), Liste der
   Notaufnahme nach Dringlichkeit und Wartezeit.

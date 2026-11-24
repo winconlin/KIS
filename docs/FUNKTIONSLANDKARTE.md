@@ -5,7 +5,7 @@ tägliche Arbeit in einem System, und alle Daten greifen ineinander — von
 der kleinen Klinik bis zum Maximalversorger. Diese Seite zeigt je
 Arbeitsbereich, was heute vorhanden ist und was fehlt.
 
-Stand: 10.11.2026.
+Stand der Implementierungsangaben: 10.11.2026. Erweiterter Soll-Auftrag vom 24.11.2026: [Enterprise-KIS/Funktionsparität E01–E24](ENTERPRISE_KIS.md), [TI/Gematik TI01–TI15](TI_COMPLIANCE.md), [EP-Backlog](ENTERPRISE_BACKLOG.md). Die neuen Anforderungen sind offen, sofern hier kein tatsächlicher Nachweis steht; insbesondere sind rechtliche Mandantentrennung, vollständiges MPI, PVS/MVZ und produktive TI nicht nachgewiesen.
 
 | Status | Bedeutung |
 |---|---|

@@ -7,7 +7,9 @@ Diese Regeln gelten für das gesamte Repository. Die Priorität der System-, Ent
 1. Diese Datei.
 2. [Module](docs/MODULE.md) — Regeln, an die sich jede Änderung hält, mit Vorlage.
 3. [Arbeitspakete](docs/ARBEITSPAKETE.md) — dein Paket und die dort genannten Dateien.
-4. Bei Bedarf: [Architektur](docs/ARCHITECTURE.md), [Funktionslandkarte](docs/FUNKTIONSLANDKARTE.md), [Sicherheit](docs/SECURITY.md), [Sicherheits-Abnahme](docs/SICHERHEITS_ABNAHME.md).
+4. Verbindliches erweitertes Zielbild: [Enterprise-KIS](docs/ENTERPRISE_KIS.md), [TI/Gematik](docs/TI_COMPLIANCE.md), [Enterprise-Backlog](docs/ENTERPRISE_BACKLOG.md).
+5. Bei Notaufnahme, Arztbrief, DMS und Workflow-Engine verbindlich: [CLINICAL_WORKFLOWS.md](docs/CLINICAL_WORKFLOWS.md) (DOC-01–07, ED-01–06).
+6. Bei Bedarf: [Architektur](docs/ARCHITECTURE.md), [Funktionslandkarte](docs/FUNKTIONSLANDKARTE.md), [Sicherheit](docs/SECURITY.md), [Sicherheits-Abnahme](docs/SICHERHEITS_ABNAHME.md).
 
 Prüfe Branch, HEAD und Arbeitsbaum. Arbeite auf einem eigenen Branch ab dem aktuellen `main`. Exakte Basis-SHA und Paket-Kennung im Arbeitsbericht nennen.
 
@@ -22,6 +24,8 @@ Läuft er nicht fehlerfrei durch, ist das Paket nicht fertig. Die Prüfungen wer
 ## 2. Auftrag und Grenzen
 
 - **Auftrag des Benutzers (10.11.2026):** Ein umfassendes, modulares Krankenhaus-Informations-System, mit dem alle Beschäftigten eines Hauses ihre tägliche Arbeit erledigen — ärztlicher Dienst, Pflege, Patientenservice, Verwaltung, Küche und alle weiteren Bereiche — und in dem alle Daten ineinandergreifen. Für kleine Kliniken bis Maximalversorger. Datenschutz und Datensicherheit sind Pflicht, dabei vollständig konfigurierbar. Sparsamer Umgang mit Rechnerressourcen. Einzelne Module müssen jederzeit geändert und verbessert werden können, ohne den Gesamtablauf zu stören.
+- **Erweiterter Auftrag (24.11.2026):** vollständige sektorenübergreifende Plattform für Klinikverbünde, getrennte Rechtsträger, Schwesterkliniken, MVZ/Haupt- und Nebenbetriebsstätten und zentrale Dienste. Funktionsparität E01–E24 grundsätzlich nativ (Native First); Adapter sind optional für Koexistenz und nur bei dokumentierten H/X-Ausnahmen dauerhafte Abhängigkeit, alle anwendbaren TI-/gematik-/KBV-/Abrechnungsanforderungen TI01–TI15. Das erweiterte Zielbild und EP-Pakete sind verbindlich; vorhandene AP-Pakete bleiben gültig, soweit sie dem Zielbild nicht widersprechen. EP-00 bis EP-07 zuerst koordinieren; keine neuen Fachmodelle auf ungeklärten Mandanten-/Fallverträgen aufbauen.
+- **Native First (verbindlich):** Abschnitt 1a in `docs/ENTERPRISE_KIS.md` gilt für jedes Paket. Vollständige Fachworkflows mit eigener Datenhaltung, UI, API, Berechtigungen, Audit und Export implementieren; keine bloße Fremdsoftware-Verlinkung als Fertigstellung. Bibliotheken und selbst betriebene austauschbare Komponenten zulässig; unvermeidbare externe Dienste, zugelassene Komponenten und lizenzierte Daten separat begründen. Temporäre Adapter lassen die native Zielimplementierung offen. Keine Freigaben umgehen.
 - Es gibt nur frische Entwicklungs- und Testinstallationen mit synthetischen Daten. Der Stand ist nicht für den Echtbetrieb freigegeben ([Funktionslandkarte](docs/FUNKTIONSLANDKARTE.md)).
 - Die einzige ausführbare Referenz ist der Workspace unter `crates/`. `entwurf/` enthält ältere Schnittstellen-Entwürfe; sie sind kein Ausgangscode und nicht Teil des Builds.
 - Bearbeite genau ein Arbeitspaket und notwendige Fehlerkorrekturen. Erweitere es nicht eigenmächtig.
@@ -45,7 +49,7 @@ Ausführlich mit Begründung in [MODULE.md](docs/MODULE.md); geprüft von `scrip
 - **Keine Route ohne Zugriffsregel.** Routen entstehen nur über `ModuleRoutes` mit einem `Access`.
 - **Falldaten unter `/api/v1/cases/:case_id/…`**, Arbeitslisten unter `/api/v1/units/:unit_id/…` — dann prüft der Kern Behandlungszusammenhang bzw. Zuordnung. Handler filtern zusätzlich mit `WHERE case_id = $1`.
 - **Eigene Tabellen, fremde tabu.** Ein Modul schreibt nur in seine Tabellen (`config/module_tables.toml`) und liest daneben nur Kern-Tabellen. Zusammenspiel über Ereignisse und Kernfunktionen (`treatment`, `facility`, `http::audit`).
-- **Eine Folgeaktion darf den Auslöser nicht stören.** Reaktionen auf Ereignisse laufen isoliert; ihr Scheitern wird protokolliert, nicht verschluckt.
+- **Eine optionale Folgeaktion darf den Auslöser nicht stören.** Reaktionen laufen isoliert; ihr Scheitern wird protokolliert, nicht verschluckt. Sicherheitskritische Invarianten müssen atomar erfüllt oder in einem explizit sicheren blockierten Zustand gehalten werden; niemals nur best-effort (z. B. Bettfreigabe, kritischer Befund, Transfusion). EP-05 koordiniert den Kernvertrag.
 - **Migrationen sind unveränderlich**, sobald sie in `migrations/CHECKSUMS` stehen. Schema-Änderungen sind neue Migrationen. Integritätsregeln gehören als Constraints in die Datenbank.
 - **Rollen, Richtlinien und Kataloge sind Daten des Hauses**, nicht Programmcode. Neue feste Listen im Code nur, wenn sie wirklich für jedes Haus gleich sind.
 - **Unfertiges ist als solches ausgewiesen**: neue Module sind `Experimental`, bis sie fertig sind. Kein `todo!`, keine Platzhalter-Antworten, keine erfundenen Daten.
@@ -54,6 +58,7 @@ Ausführlich mit Begründung in [MODULE.md](docs/MODULE.md); geprüft von `scrip
 
 ## 5. Sicherheitsregeln bei jeder Änderung
 
+- Mandant/Rechtsträger, Standort, Zweck und Behandlungszusammenhang sind unabhängig zu prüfen; keine pauschale Zugriffsfreigabe durch gemeinsamen Patientenstamm oder Adminrolle. Neue Wege (API, Export, Jobs, Schnittstellen, Cache) benötigen negative Verbundtests gemäß EP-04. Keine internen Klinikadressen oder vertraulichen Infrastrukturdetails im öffentlichen Repo.
 - Nur synthetische Testdaten. Keine echten Patienteninformationen, Passwörter, Tokens, Schlüssel oder kompletten Umgebungsvariablen in Prompts, Logs, Beispielen, Issues oder Commits.
 - Vorhandene Credential-Bindings/CLI-Profile regulär verwenden; keine Secrets zur bloßen Entdeckung ihres Inhalts auslesen. Netzwerk-, Proxy- und TLS-Vorgaben der Umgebung einhalten. TLS-Prüfung nicht abschalten.
 - Authentifizierung, Rollen-/Objektberechtigung und Audit nicht deaktivieren, um einen Test oder eine Migration grün zu bekommen.
@@ -67,6 +72,8 @@ Ausführlich mit Begründung in [MODULE.md](docs/MODULE.md); geprüft von `scrip
 - Eine Hash-Kette ohne unabhängigen Prüfanker nicht als fälschungssicher, eine Krypto-Initialisierung nicht als vollständige DB-Verschlüsselung und Tests nicht als Zertifizierung bezeichnen.
 
 ## 6. Tests und Nachweise
+
+Für TI-/Abrechnungs-/Medizinproduktfunktionen gilt zusätzlich die Nachweiskette in TI_COMPLIANCE.md und ENTERPRISE_KIS.md; lokale Tests ersetzen keine externe Bestätigung oder Fachfreigabe.
 
 Ein Test ist nur bestanden, wenn er auf dem angegebenen Commit tatsächlich ausgeführt wurde und sein relevantes Verhalten bestätigt. Nicht ausgeführte, übersprungene, simulierte oder wegen fehlender Infrastruktur ausgefallene Prüfungen bleiben offen.
 
