@@ -1,51 +1,70 @@
-# Vorlage — Abnahmebericht für Arbeitspaket / Meilenstein
-Die Vorlage wird im PR oder verlinkten Nachweisbericht ausgefüllt. Keine echten Patientendaten, Secrets, vertraulichen Infrastrukturdetails oder personenbezogenen Logs im öffentlichen Repository. Nur tatsächlich ausgeführte Nachweise eintragen. Leere Felder und nicht ausgeführte Prüfungen bleiben offen. Regeln: [ROADMAP.md](ROADMAP.md), [AGENTS.md](../AGENTS.md), [SICHERHEITS_ABNAHME.md](SICHERHEITS_ABNAHME.md).
+# Abnahmebericht — Verbindliche Vorlage (`G0`–`G7`)
 
-## Identität und Scope
-- Paket-ID / Meilenstein / betroffene E-, TI-, DOC-, ED-IDs:
-- Basis-SHA / Ergebnis-SHA / PR:
-- Verantwortlicher Implementierer / technischer Gegenreview / zuständige Fach- und Security-Reviewer:
-- Ziel, Nicht-Ziele, betroffene Dateien/Migrationen/Kernverträge:
-- Abhängigkeiten und deren geprüfte Vertragsversionen:
-- N/H/X je Teilfähigkeit, begründete Ausnahmen, Reviewdatum und Exit-Plan:
-- Relevante Normen, Kataloge, Versionen, Lizenzen, Quellen:
-- Risiko, Rechte-/Mandantenkontext, Audit, Betriebs-/Ausfallfolgen:
-- Erwartete Akzeptanzszenarien und Messziele (vor Implementierung festlegen):
+Stand: 24.11.2026 · Gilt für alle Arbeitspakete (`EP-00` bis `EP-26`, `DOC-01`–`07`, `ED-01`–`06`, `AP-*`) gemäß [AGENTS.md](../AGENTS.md) § 7, [ARBEITSPAKETE.md](ARBEITSPAKETE.md) § 5, [SICHERHEITS_ABNAHME.md](SICHERHEITS_ABNAHME.md) § 9 und [ROADMAP.md](ROADMAP.md).
 
-## Änderungen und Nachweise
-| Gate | Status | Konkreter Nachweis / SHA / Datum / Umgebung | Verantwortlicher / unabhängiger Reviewer |
+## Grundregeln für jeden Abnahmebericht
+
+1. **Nur tatsächlich ausgeführte Prüfungen** auf dem konkreten Ergebnis-Stand dokumentieren. Nicht ausgeführte, übersprungene oder wegen fehlender Infrastruktur blockierte Prüfungen als **offen** kennzeichnen.
+2. **Kein Selbst-Review:** Wer eine sicherheitskritische Änderung implementiert, vergibt nicht selbst die unabhängige Freigabe (`G6`).
+3. **Keine Produktivfreigabe:** Lokale und CI-Tests ersetzen keine externe Bestätigung, Datenschutz-Folgenabschätzung, Penetrationstest, MDR-Bewertung oder gematik-/KBV-Zulassung (`G7`).
+
+---
+
+## Vorlage (für jedes neue Arbeitspaket unter `docs/abnahme/<PAKET-ID>.md` kopieren)
+
+```text
+# Abnahmebericht — <PAKET-ID> (<Kurztitel>)
+
+- **Arbeitspaket / Meilenstein:** <z. B. EP-01a / M01>
+- **Datum:** <TT.MM.JJJJ>
+- **Branch / PR:** <feature/... · PR #...>
+- **Basis-SHA:** <exakter Commit-SHA von main>
+- **Ergebnis-SHA:** <exakter Ergebnis-Commit-SHA>
+- **Implementierer:** <Rolle / Name>
+- **Unabhängiger Reviewer (G6):** <offen | Rolle / Name — nicht identisch mit Implementierer>
+
+## 1. Problemstellung & Zielumfang
+- Welches Problem / welche Anforderung wird gelöst?
+- Welche ADRs / Verträge gelten?
+- Native-First-Prüfung (`N` / `H` / `X` gemäß docs/NATIVE_FIRST_REGISTER.md): ...
+
+## 2. Durchgeführte Änderungen
+- Geänderte / neue Dateien (Code, Migrationen, Konfiguration, Tests, Dokumentation)
+- Neue oder geänderte API-Routen inkl. Zugriffsregel (`Access`)
+- Datenbankmigrationen & aktualisierte `migrations/CHECKSUMS`
+
+## 3. Tatsächlich ausgeführte Prüfungen (mit genauem Befehl und Ergebnis)
+| Prüfung | Befehl | Status | Befund / Umfang |
 |---|---|---|---|
-| G0 Definition of Ready | offen | – | – |
-| G1 Architektur und Daten | offen | – | – |
-| G2 Technik | offen | – | – |
-| G3 Sicherheit und Lieferkette | offen | – | – |
-| G4 Fachliche Funktion / Native First | offen | – | – |
-| G5 Interoperabilität / Regulatorik | offen | – | – |
-| G6 Betrieb | offen | – | – |
-| G7 Gesamtfreigabe | offen | – | – |
+| Gesamtprüfung (`check.sh`) | `KIS_TEST_DATABASE_URL=... scripts/check.sh` | bestanden / fehlgeschlagen / offen | ... |
+| Negative Verbundtests (`NVT-*`) | ... | bestanden / offen | ... |
+| Sicherheitsabnahme | ... | bestanden / offen | ... |
+| Backup / Restore | ... | bestanden / nicht betroffen / offen | ... |
+| Container-Rauchtest | ... | bestanden / nicht betroffen / offen | ... |
 
-| Prüfung | Status | Befehl/Test-ID, Ergebnis, SHA und Link |
-|---|---|---|
-| scripts/check.sh (echtes PostgreSQL) | offen | – |
-| CI lint/test/audit/docs/container | offen | – |
-| Paket-/Regressionstests | offen | – |
-| Rechte-/Tenant-/Negativtests | offen | – |
-| Browser-E2E / Native-First-Szenario | offen | – |
-| Nebenläufigkeit / Fehler / Ausfall | offen | – |
-| Migration / Export / Wiederherstellung | offen | – |
-| Offizielle Validatoren / Gegenstellen | offen | – |
-| Fachliche und regulatorische Abnahme | offen | – |
+## 4. Quality-Gate-Checkliste (`G0`–`G7`)
+- [ ] G0: Auftrag, Grenzen & Native-First geprüft
+- [ ] G1: Architektur-, Modul- & Schema-Integrität geprüft
+- [ ] G2: Sicherheit, Mandantenisolation & Negativtests erfüllt
+- [ ] G3: Echte PostgreSQL-, Funktions- & Fehlerpfad-Tests bestanden
+- [ ] G4: `scripts/check.sh` vollständig fehlerfrei
+- [ ] G5: Dokumentation, Funktionslandkarte & Prüfstatus aktualisiert
+- [ ] G6: Unabhängiges Review abgeschlossen (Pflicht bei Sicherheit/Kern)
+- [ ] G7: Fach-, Betriebs- & Regulatorik-Freigabe (nur vor Pilot-/Produktivbetrieb)
 
-Nicht anwendbar nur mit konkretem Grund und unabhängiger Bestätigung; kein fehlender Test als N/A umdeklarieren. Keine fiktiven Reviewer. Falls ein Test wegen fehlender Infrastruktur nicht ausführbar ist, ist er offen bzw. blockiert. Relevante Nachänderung macht den bisherigen Nachweis ungültig.
+## 5. Verbleibende Risiken, Abweichungen und offene Punkte
+- Konkrete offene Punkte, Abhängigkeiten und ggf. begründete Ausnahmen (mit Verantwortlichem und Frist)
 
-## Reviews und Entscheidungen
-- Feststellungen des Gegenreviews, Schweregrad, Behebung und Re-Test:
-- Sicherheits-/Fach-/Datenschutzrisiken, Verantwortlicher, Frist und Nachweis:
-- Externe Freigaben (zuständige Stelle, Scope, Version, Beleg) oder offen:
-- Zulässige Ausnahme (Grund, Umfang, Ablaufdatum, Reviewer) oder keine:
-- Update von Funktionslandkarte, Paketstatus und Nachweisregister:
-- Entscheidung: Review offen / technisch integrierbar / technisch integriert / fachlich abgenommen / extern bestätigt / betriebsfreigegeben (Scope ausdrücklich nennen):
-- Restarbeiten/Blocker, nächstes Paket und Abhängigkeit:
-- Merge- und main-CI-Nachweis (erst nach tatsächlicher Integration):
+## 6. Ergebnisstatus
+- [ ] Bereit für unabhängiges Review (`G6` offen)
+- [ ] Technisch abgenommen (keine Produktivfreigabe)
+- [ ] Blockiert (Grund angeben)
+```
 
-**Technisch integriert bedeutet nicht produktionsreif.** Für echte Patientennutzung gelten G5–G7 und die ausdrückliche Betreiberfreigabe; im aktuellen Entwicklungsauftrag ausschließlich synthetische Daten.
+---
+
+## Verzeichnis erstellter Abnahmeberichte
+
+| Paket | Meilenstein | Datum | Status | Bericht |
+|---|---|---|---|---|
+| `EP-00` | `M00` | 24.11.2026 | Entwurf fertig — wartet auf unabhängiges Review (`G6`) & vollständige CI-Umgebung (`G4`) | [abnahme/EP-00.md](abnahme/EP-00.md) |

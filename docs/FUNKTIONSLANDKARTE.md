@@ -5,13 +5,13 @@ tägliche Arbeit in einem System, und alle Daten greifen ineinander — von
 der kleinen Klinik bis zum Maximalversorger. Diese Seite zeigt je
 Arbeitsbereich, was heute vorhanden ist und was fehlt.
 
-Stand der Implementierungsangaben: 10.11.2026. Erweiterter Soll-Auftrag vom 24.11.2026: [Enterprise-KIS/Funktionsparität E01–E24](ENTERPRISE_KIS.md), [TI/Gematik TI01–TI15](TI_COMPLIANCE.md), [EP-Backlog](ENTERPRISE_BACKLOG.md). Die neuen Anforderungen sind offen, sofern hier kein tatsächlicher Nachweis steht; insbesondere sind rechtliche Mandantentrennung, vollständiges MPI, PVS/MVZ und produktive TI nicht nachgewiesen.
+Stand der Implementierungsangaben: 10.11.2026 (Ein-Haus-Kern); Architektur- und Roadmap-Aktualisierung (`EP-00`): 24.11.2026. Erweiterter Soll-Auftrag vom 24.11.2026: [Enterprise-KIS/Funktionsparität E01–E24](ENTERPRISE_KIS.md), [TI/Gematik TI01–TI15](TI_COMPLIANCE.md), [EP-Backlog](ENTERPRISE_BACKLOG.md), [Enterprise-Roadmap](ROADMAP.md) und [Native-First-Register](NATIVE_FIRST_REGISTER.md). Für `EP-00` liegen Ist-Analyse, ADRs (`ADR-001`–`ADR-007`), Bedrohungsmodell und Verbund-Testmodell im Review-Entwurf vor ([abnahme/EP-00.md](abnahme/EP-00.md)); sämtliche neuen Laufzeitfunktionen (`EP-01`–`EP-26`, insbesondere rechtliche Mandantentrennung, vollständiges MPI, PVS/MVZ, ZNA/DOC-Workflows und produktive TI) bleiben ausdrücklich **offen** und ungeprüft.
 
 | Status | Bedeutung |
 |---|---|
 | **vorhanden** | implementiert und gegen echtes PostgreSQL getestet |
 | **Grundlage** | Datenmodell oder Teilfunktion vorhanden, wesentliche Teile fehlen |
-| **offen** | nicht vorhanden |
+| **offen** | nicht vorhanden (bzw. nur in Architektur/Roadmap spezifiziert) |
 
 > **Nicht für den Echtbetrieb freigegeben.** Der vorhandene Teil ist
 > getestet, aber es fehlen für einen Krankenhausbetrieb unverzichtbare
