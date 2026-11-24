@@ -195,6 +195,7 @@ async fn list_doctors(
 
     let mut sql = String::from("SELECT * FROM doctors");
     let mut conds: Vec<String> = Vec::new();
+    let mut binds: Vec<String> = Vec::new();
     let mut bind_idx = 0;
 
     if active {
@@ -202,19 +203,22 @@ async fn list_doctors(
     }
     if let Some(ref search) = params.search {
         bind_idx += 1;
-        let _ = search;
-        // ILIKE für Name-Suche
+        binds.push(format!("%{}%", search));
         conds.push(format!(
             "(name_family ILIKE ${bind_idx} OR name_given ILIKE ${bind_idx})"
         ));
     }
     if let Some(ref spec) = params.specialty {
         bind_idx += 1;
-        let _ = spec;
+        binds.push(spec.clone());
         conds.push(format!("specialty = ${bind_idx}"));
     }
     if let Some(ref cursor) = params.cursor {
-        conds.push(format!("id > '{}'", cursor));
+        bind_idx += 1;
+        let mut cursor_bind = cursor.to_string();
+        cursor_bind.push_str("::uuid");
+        binds.push(cursor_bind);
+        conds.push(format!("id > ${bind_idx}"));
     }
 
     if !conds.is_empty() {
@@ -224,7 +228,11 @@ async fn list_doctors(
     sql.push_str(&limit.to_string());
 
     let pool = db.as_ref();
-    let rows: Vec<Doctor> = sqlx::query_as::<_, Doctor>(&sql)
+    let mut query = sqlx::query_as::<_, Doctor>(&sql);
+    for b in &binds {
+        query = query.bind(b);
+    }
+    let rows: Vec<Doctor> = query
         .fetch_all(pool)
         .await
         .map_err(|e| DoctorError::Db(e.to_string()))?;
