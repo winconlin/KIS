@@ -1,11 +1,13 @@
-# KIS — Fahrplan für die Entwicklung
+# KIS — historischer Fahrplan für die Entwicklung
+
+> **Abgelöst:** Die verbindliche Entwicklungsreihenfolge und das Freigabemodell ab 24.11.2026 stehen in [ROADMAP.md](ROADMAP.md). Dieses Dokument bleibt ausschließlich als historischer Entwurf erhalten.
 
 > **Älterer Planungsstand.** Dieser Fahrplan stammt aus der Zeit vor dem 10.11.2026 und beschreibt ein früheres Zielbild; Statusangaben darin sind nicht maßgeblich. Maßgeblich sind [FUNKTIONSLANDKARTE.md](FUNKTIONSLANDKARTE.md) (Stand) und [ARBEITSPAKETE.md](ARBEITSPAKETE.md) (offene Arbeit).
 
 > **Hinweis (06.11.2026):** Teile dieses Dokuments beschreiben den entfernten SQLite-Prototyp oder ein Zielbild. Maßgeblich für den Ist-Zustand sind [INSTALLATION](INSTALLATION.md), [API](API.md), [DATABASE](DATABASE.md) und [REVIEW_STATUS](REVIEW_STATUS.md).
 
 
-> **Dieses Dokument beschreibt die langfristige Roadmap.**
+> **Dieses Dokument beschreibt ein früheres langfristiges Zielbild.**
 > Agenten lesen zunächst [Root-AGENTS.md](../AGENTS.md), den [operativen Auftrag](AGENTEN_AUFTRAG.md) und die [Sicherheits-Abnahme](SICHERHEITS_ABNAHME.md).
 > Zugewiesene Arbeitspakete werden anhand tatsächlicher Nachweise abgeschlossen. Übliche technische Entscheidungen erfolgen selbstständig innerhalb dieses Auftrags; neue Produkt-/Datenfreigaben werden nicht aus der Roadmap abgeleitet.
 
