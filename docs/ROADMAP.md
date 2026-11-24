@@ -1,0 +1,84 @@
+# KIS — Entwicklungsroadmap und Quality Gates
+Stand: 24.11.2026 · verbindlicher Plan · keine Produktivfreigabe
+
+## 1. Zweck und Geltungsbereich
+Diese Roadmap steuert die Umsetzung des [Enterprise-Zielbilds](ENTERPRISE_KIS.md), der [TI-Anforderungen](TI_COMPLIANCE.md) und der [klinischen Workflows](CLINICAL_WORKFLOWS.md). Sie löst den historischen [Fahrplan](FAHRPLAN.md) als Reihenfolge und Freigabemodell ab, nicht die vorhandenen fachlichen Anforderungen oder Paket-IDs. [Enterprise-Backlog](ENTERPRISE_BACKLOG.md) und [Arbeitspakete](ARBEITSPAKETE.md) bleiben die detaillierten Lieferaufträge; [Funktionslandkarte](FUNKTIONSLANDKARTE.md) und [Prüfstatus](REVIEW_STATUS.md) dokumentieren den Ist-Stand. Bei Widerspruch keine Sicherheitsanforderung reduzieren; Entscheidung als ADR dokumentieren.
+
+Ziel: weitgehend eigenständiges, natives, modulares Rust/PostgreSQL-System für Einzelpraxis, MVZ, Krankenhaus, Klinikverbund und Maximalversorgung. N/H/X-Register nach Native First; kein obligatorisches Fremd-KIS/PVS, keine pauschale Ausnahme für Fachmodule. Zulässige regulierte externe Gegenstellen/Komponenten und lizenzierte Daten getrennt ausweisen. Keine echte Patientennutzung in der derzeitigen Entwicklungsphase.
+
+**Baseline:** Merge von PR #7, Commit `3f10d3c36013dde7a3aaeae004b1c9ea937ef9f7`. [CI 45376787320](https://github.com/winconlin/KIS/actions/runs/45376787320) meldete lint/test/audit/docs/container erfolgreich (inkl. URL-Sicherheitsupdate). Diese Evidenz gilt nur für diesen Commit, nicht automatisch für neue Änderungen. Chrono/rustls-pemfile-Wartungswarnungen bleiben AP-08; keine Produktiv-/Fach-/TI-Abnahme aus CI ableiten. Alle neuen Meilensteine unten sind offen, keine Prozentwerte oder Fertigmeldungen ohne Nachweis.
+
+## 2. Meilensteine und kritischer Pfad
+Die Reihenfolge richtet sich nach Abhängigkeiten, nicht Kalenderdaten. Milestone IDs M00–M11 sind Planungs- und Abnahmebündel, keine zusätzlichen konkurrierenden Implementierungspakete. P0-Blocker und EP-26 begleiten alle Phasen. Teilpakete dürfen parallel entwickelt werden, sobald ihre tatsächlich benötigten Verträge geprüft und eingefroren sind; ein späteres externes Zertifikat muss unabhängige lokale Arbeit nicht blockieren. Ein Gate für die Freigabe eines konkreten Einsatzprofils kann dagegen nicht durch einen anderen Meilenstein ersetzt werden.
+
+| Meilenstein | Paketzuordnung | Voraussetzungen | Nachweis für Abschluss (zusätzlich zu allgemeinen Gates) |
+|---|---|---|---|
+| M00 – Baseline und Entwicklungsprozess | EP-00, AP-01/02/05/06/08, EP-26 fortlaufend | aktuelles main, synthetische Testumgebung | ADRs für Datenverantwortung, Mandant, MPI, Fall, Native First; Threat Model; CI-Baseline; Dependency-Register; priorisierte Risiken, Prüfszenarien und Zuständigkeiten; keine offenen Architekturentscheidungen für M01 |
+| M01 – Verbundfähiger Kern | EP-01–06, AP-03/04/12/13/14 | M00, koordinierte Kernverträge | 2 getrennte Rechtsträger, 4 synthetische Kliniken, mehrere MVZ und zentrale Dienste; MPI Merge/Unmerge, zeitabhängige Kennungen/Rollen, parallele Kontakte/Fälle, Verlegung/Überleitung, Rechte- und Export-Isolation; transaktionale Sicherheitsinvarianten, Inbox/Outbox, Katalogversionen |
+| M02 – Betrieb, Security, Interoperabilitätsbasis | EP-07/08, AP-30/31, EP-26 | jeweilige M01-Verträge | gemessener Last-/Ausfalltest, Restore/WAN-Failover, SQL/Least Privilege, SBOM, signierbare Artefakte, native Kommunikationsengine, validierte FHIR-/HL7-/DICOM-Profile, scoped Servicekonten, Quittung/Deduplikation/Quarantäne; externe Tests gesondert |
+| M03 – Digitaler klinischer Arbeitsplatz und Dokumente | EP-12, DOC-01–04/06, AP-11/17/40/41/43; DOC-07 Basis | Fall-/Zugriffs-/Ereignisverträge aus M01, Kataloge | Browser-E2E Aufnahme→Arzt/Pflege→Entlassung; native Kurve, Aufträge, Aufgaben, Dokumentenrevisionen, Vorlagen, DMS, AA↔OA↔CA↔Sekretariat, Vertretung, Kommentar/Diff, Entlassmedikationsabgleich soweit Daten verfügbar; kein falscher Fall, keine stale Freigabe. DOC-05 externe Versandanteile M07, DOC-07 KI-Anteile M09 |
+| M04 – Medikation, Labor, Fachdiagnostik | EP-13/14/15, AP-15 | M01, jeweilige M02-Schnittstellen, M03-UI-Verträge | CPOE/eMAR/BCMA, Apotheke, LIS/POCT, Blutbank separat; native RIS/PACS, EKG/Echo/HKU/EP/Lufu und weitere Befundung; Tests falsche ID/Barcode/Dosis, kritischer Wert mit Eskalation, Blutprodukt, Korrektur/Provenienz, Bildzuordnung, Workflow ohne proprietäres Fachsystem (H/X-Ausnahmen dokumentiert) |
+| M05 – Notaufnahme, OP und Intensivmedizin | EP-16, ED-01–04, ED-06 lokale Anteile, AP-18/19 | M01, M03-DOC-Verträge, M04 betroffene klinische Verträge, M02 Downtime | epias-ähnlicher nativer E2E Rettungsdienst/Walk-in→Triage/Re-Triage→Live-Board→Schockraum/Diagnostik→Disposition/Übergabe→Notaufnahmebrief; INZ/MANV, Pädiatrie, sichere Aufrufanzeige; OP/AIMS/PDMS/ICU mit validierten Scores, Gerätedaten, Ausfallverfahren. ED-05 und externe ED-06-Anteile M06/M07/M10 |
+| M06 – Ambulant, MVZ und Abrechnung | EP-10/11, ED-05 Abrechnungsanteil | M01/M02, betroffene M03/M04, relevante TI-Schnittstellen aus M07 für vollständige Abnahme | natives PVS, Quartalsfälle/BSNR/LANR, Überweisungen, EBM/KVDT, GOÄ, DMP; stationär DRG/PEPP/§301/§21; AOP/ASV/Hybrid-DRG; MD/Kostenträger, Rechnungen/Storno/Quittung; offizielle Prüfkataloge, fachliche Abnahme; keine Abrechnung ohne bestätigte Regelwerksversion |
+| M07 – TI, gematik und Meldungen | EP-09/24, DOC-05, ED-05 relevante Schnittstellenanteile, TI01–15 | M01/M02, betroffene M03/M04/M06-Verträge | native TI-Primärsystemworkflows, VSDM/ePA/eRezept/KIM/eAU/TIM/ISiK/ISiP und weitere anwendbare Dienste; institutionelle Identität, Signatur, Empfang/Retry/Storno, Melderegister, offizielle Validatoren/Testumgebungen; externe Bestätigungen/KBV-Prüfungen je Rolle; kein Verwechseln von lokalem Test und Zulassung |
+| M08 – Fachbereiche und Krankenhausorganisation | EP-17–21, AP-10/16/42, DOC-06 nichtklinische Anteile | M01, jeweilige klinische/Workflow-Verträge | Aufklärung, Therapie, Geriatrie, Palliativ, Onkologie, Register; Logistik, Küche, Technik, AEMP, ERP/Fibu, HR/Dienstplan/Zeitwirtschaft, Intranet/QM/CIRS/DMS/Projektmanagement; Workflow-Engine wiederverwenden; Rückverfolgbarkeit und getrennte Rechte, native E2E je Berufsgruppe |
+| M09 – Patientenzugang, Wissen, BI und KI | EP-22/23, DOC-07 | M01, M03, relevante M07/M08-Verträge | Patientenportal, Stellvertretung, Termine, PROM/PREM, sichere Kommunikation; getrennte BI-/Forschungszwecke, SOP-Suche, Diktat/KI-Entwürfe mit Herkunft/Modellversion/Freigabe; klinische/Datenschutz-/AI-Act-Prüfung, Injection-/Datenabfluss-/Negativtests |
+| M10 – Gesamtintegration, Migration und Pilotvorbereitung | EP-25/26, ED-05/06 Rest | alle für das gewählte Einsatzprofil verpflichtenden Funktionen M01–09 | synthetischer Verbundtest sämtlicher relevanter E2E-Wege, native N/H/X-Abnahme, Datenmigration-Reconciliation/Rollback/Altarchiv, Notbetrieb, Last-/Penetrationstest, Usability, Schulung, Betriebs-/Datenschutz-/Fachkonzept, externe Nachweise; keine reale Migration oder klinische Nutzung ohne separate Freigabe |
+| M11 – Freigabe je Einsatzprofil und kontrollierter Betrieb | EP-26, wiederkehrende Wartung aller Pakete | M10 plus anwendbare rechtliche und externe Freigaben | schriftliche Betreiber-/Fach-/Security-/Datenschutz- und ggf. Medizinproduktfreigaben, dokumentierter Release-Scope und Ausschlüsse, Support/Incident/Rollback, Monitoring, Verantwortlichkeiten; schrittweiser Pilot nur nach ausdrücklichem Auftrag und Nachweis. Einzelpraxisfreigabe ist keine Verbundfreigabe |
+
+### Parallelisierung ohne Abhängigkeitszyklen
+M06 und M07 sind getrennte Arbeitsstränge: EP-10/11 liefern PVS-/Abrechnungsverträge und synthetische lokale Tests, EP-09 liefert TI-Clients/Identitätsverträge und isolierte Testdienste; verbindliche End-to-End-Abnahme der gemeinsam genutzten Prozesse erst nach Integration beider. DOC-03/04 dürfen mit freigegebenen Kernverträgen starten; medizinische Datenquellen inkrementell hinzufügen, vollständige Befund-/AMTS-Abnahme erst mit M04. DOC-06/EP-21 teilen den Dokumentenkern; klinische Basis zuerst, nichtklinischer Ausbau später, kein Duplikat. ED-01/02 können früh auf M01/06-Katalogverträgen arbeiten; ED-03/04 brauchen die relevanten Fachfunktionen; ED-05/06-Abschluss nach M06/07/10. Jede Unterabhängigkeit im Arbeitsbericht konkret benennen.
+
+## 3. Checks & Balances: vier unabhängige Ebenen
+| Ebene | Verantwortlichkeit | Darf nicht |
+|---|---|---|
+| Implementierung | Mensch oder Agent; Code, Migrationen, Tests, Dokumentation, Nachweisbericht | eigenes Security-/Fachreview als unabhängig ausgeben, Gates abschalten |
+| Technischer Gegenreview | anderer Mensch/Agent mit unabhängigem Auftrag; Diff, Verträge, Testqualität, Reproduktion | ungeprüft Zusammenführung oder Tests abnicken; Review für späteren geänderten Commit weiterverwenden |
+| Fach-/Security-/Datenschutzreview | fachlich befugte Personen je Risiko (z.B. Arzt/Pflege, Apotheke, Labor, Abrechnung, IT-Sicherheit/DSB); technische Agenten können vorbereiten | KI-Review als rechtliche oder klinische Abnahme ausgeben |
+| Release-/Betreiberverantwortung | Projektverantwortlicher, ggf. formell zuständige externe Stellen/Betreiber | Merge, CI-Grün und klinische Freigabe gleichsetzen; offenen Blocker still ausnehmen |
+
+Ein Mensch kann die Projektleitung und Implementierung übernehmen; die erforderliche unabhängige Sicherheitsprüfung muss eine andere beauftragte Instanz leisten. Bei fehlender Fach-/Externer-Freigabe bleibt diese offen. Agenten führen keine Produktivbereitstellung, externe Veröffentlichung oder automatische main-Integration aus dem Entwicklungsauftrag ab.
+
+## 4. Verbindliche Gate-Matrix
+Gate-Status: offen / läuft / bestanden / fehlgeschlagen / blockiert / nicht anwendbar (mit konkreter Begründung und Reviewer). Ein simuliertes/übersprungenes Ergebnis ist nicht bestanden. Nach relevanter Änderung Nachweis auf neuem Commit wiederholen. Jede Abnahme trägt SHA, Datum, Test-/Spezifikationsversion, Umgebung, Ergebnis, Evidence-Link, verantwortliche Person/Agent und unabhängigen Reviewer.
+
+| Gate | Zeitpunkt | Prüfumfang | Blockiert |
+|---|---|---|---|
+| G0 – Definition of Ready | vor Code | Paket-ID, Scope, Akzeptanztests, Abhängigkeiten, Basis-SHA, N/H/X, Quellen/Lizenzen, Risiken, Daten-/Rechte-/Auditvertrag, betroffene Migrationen, Reviewzuständigkeit | Paketstart (unabhängige Vorarbeiten erlaubt) |
+| G1 – Architektur & Daten | vor Integration | Modulgrenzen, immutable Migrationen/Checksums, DB-Constraints, versionierte Ereignisse/API, Mandanten-/Fallkontext, Upgrade, Export und Rückroll-/Forward-Fix-Plan | Merge |
+| G2 – Reproduzierbare Technik | vor Merge | vorhandene lokale und CI-Prüfungen vollständig; siehe unten. Keine neuen ignorierten/übersprungenen Tests; neuer Fehler reproduziert und behoben | Merge |
+| G3 – Sicherheit & Lieferkette | vor Merge/Release | cargo audit und begründete Ausnahmen separat, keine bekannte ungeklärte blockierende Schwachstelle, Secrets/Dependency-/Lizenzprüfung, Threat Model, AuthZ-/IDOR-/Tenant-/Audit-/Injection-/Konkurrenz-/Replay-Tests, unabhängiger Review; unmaintained-Warnungen mit AP/Owner/Review | Merge/Release nach Risiko, kritische Risiken immer blockierend |
+| G4 – Fachliche Funktion/Native First | vor Modul-Stable/Fachabnahme | Rolle kann vollständigen Prozess in UI und API ausführen; Korrektur, Vertretung, Freigabe, Export, nachvollziehbare Quellen, negative und Ausfalltests; keine externen proprietären Fachsysteme außer dokumentierten H/X, keine Attrappen | Modul-Stable/Fachfreigabe |
+| G5 – Interoperabilität & regulatorische Nachweise | vor betroffener Einsatzfreigabe | verbindliche Versions-/Rollenmatrix; offizielle Validatoren, Gegenstellen, TI/ISiK/ISiP/KBV/GKV, ggf. Medizinprodukt/QMS/AI Act; regulatorische Nachweise getrennt von CI; H/X-Entscheidungen genehmigt | betroffene Nutzung/Release-Scope |
+| G6 – Betrieb & Resilienz | vor Einsatzfreigabe | vereinbarte messbare SLO/RPO/RTO, Last/Failover/WAN/Downtime, Backup/Restore, Schlüsselrotation, Monitoring, Incident-/Rollbackübung, Migration/Reconciliation, SBOM | betroffene Einsatzfreigabe |
+| G7 – Unabhängige Gesamtfreigabe | vor Produktiv-/Pilotbetrieb | dokumentierte fachliche/technische/Datenschutz-/Betreiberfreigaben, ggf. externe Bestätigungen; akzeptierte Restrisiken, Schulung, Support, definierter Scope und Betriebsverantwortung | jede reale Patientennutzung |
+
+### Bereits vorhandene technische Prüfungen (nicht reduzieren)
+Der lokale Befehl ist die vorhandene Basisprüfung:
+```sh
+KIS_TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres scripts/check.sh
+```
+Er prüft Format, Leitplanken, Modulgrenzen, Dokumentation, Audit-Ausnahmen, Clippy, Unit-/echte PostgreSQL-Tests und SQL-Schema. **Er führt nicht selbst cargo audit, Docker-Smoke- oder Backup-/Restore-Tests aus.** Zusätzlich müssen für G2/G3 alle bestehenden Jobs der [CI](../.github/workflows/ci.yml) auf dem betreffenden PR-Commit grün sein (lint, test, audit, docs, container); insbesondere cargo audit, Backup/Restore, Least-Privilege-DB-Rollen, Build und Container-Smoke. Lokal bei verfügbarer Infrastruktur ergänzend:
+```sh
+cargo audit
+```
+Keine Audit-Ausnahme zur bloßen Behebung eines roten Builds. Schutzregeln, Testdatenbankpflicht, `--locked`, Tests und Prüfskripte nicht abschwächen. Ein grüner Lauf auf einem anderen SHA ist keine Evidenz. Neue Qualitätsprüfungen (Browser-E2E, Mandantenmatrix, FHIR-Validator, Last-/Ausfalltests, SBOM/Secrets, Barrierefreiheit) sind Ausbauaufträge im jeweiligen EP/DOC/ED-Paket und nicht als bereits automatisiert ausweisen.
+
+### Branch-/Merge-Schutz (Soll; nicht als bereits konfiguriert ausgeben)
+Projektverantwortlicher soll für main erforderliche CI-Checks, unabhängige Review-Freigaben, Auflösung von Review-Threads, erneute Prüfung bei neuen Commits und Verbot von Force-Push/Löschung konfigurieren. Für sensible Kernverträge und Security nach Möglichkeit CODEOWNERS/Reviewer-Rollen mit tatsächlich zuständigen Personen. Keine fiktiven Reviewer, keine Tokens oder privaten URLs im Repo. Bestehende Branch-Regeln werden durch dieses Dokument nicht technisch geändert. Notfallfix nur klein, auf eigenem Branch, mit vollständiger Evidenz; keine stillen Bypässe.
+
+## 5. Ablauf für jeden Agenten / jedes Paket
+1. Paket auswählen; offene Blocker, Basis-SHA, betroffene Dateien und Besitz von Root-Manifest/Lockfile/Migrationsnummer prüfen. Worktree/Test-DB isolieren. G0-Check vorlegen.
+2. Akzeptanztests und Negativfälle ableiten, ggf. zunächst fehlschlagenden Regressionstest. Bei regulierten Inhalten gültige Primärquelle und Version fixieren. Kein Guessing.
+3. Kleinste vollständige fachliche Scheibe implementieren. Bestehende APIs und Modulgrenzen erhalten, Schema nur durch neue Migrationen. Ein Paket je Branch/PR.
+4. Reproduzierbar prüfen; relevante Ausfälle/Concurrency/Isolation demonstrieren. CI-URLs und Commit-SHA im Bericht. Fehlgeschlagene oder nicht ausführbare Checks offen lassen.
+5. Andere Instanz reviewt Diff, Sicherheits-/Fachrisiko, Tests und Ausnahmen; Korrektur und erneute betroffene Prüfungen. Keine Selbstabnahme.
+6. Projektverantwortlicher entscheidet über Merge; Implementierung/Stable/Betriebsfreigabe getrennte Zustände. Nach Integration CI auf main verifizieren; Funktionslandkarte, Paket- und Nachweisregister aktualisieren. Keine automatische Produktion.
+7. Bei neuem Advisory, Normenänderung, Regression oder kritischem Vorfall betroffene Fähigkeiten/Gates wieder öffnen, Patch/Regressionstest, Impact-Analyse und erneute Abnahme; nicht einfach Häkchen stehen lassen.
+
+## 6. Fortschritt und Kennzahlen
+Paketstatus: geplant → ready → in Arbeit → Review → technisch integriert → fachlich abgenommen → extern bestätigt (falls erforderlich) → betriebsfreigegeben. Blockiert/fehlgeschlagen explizit. Ein Paket darf technisch integriert sein, während Fach-/TI-Freigabe offen ist; betreffende Funktionen bleiben Experimental/nicht freigegeben. Meilensteine mit fehlendem Pflichtnachweis bleiben offen.
+
+Pro Meilenstein berichten: Anzahl geprüfter/definierter Teilfähigkeiten (Nenner aus E-/TI-/EP-/DOC-/ED-Register), N/H/X Ziel und Ist getrennt, bestandene/fehlgeschlagene/nicht ausgeführte Gates, offene Sicherheits-/Fachrisiken, abgelaufene Norm-/Lizenzversionen, CI-Commit und Review, tatsächliche Latenz/Fehlerquote/Restore-Messwerte gegenüber vorher vereinbarten Zielen. Keine pauschale Vollständigkeitsquote aus Codezeilen oder Anzahl Crates. Scope-Änderung, neue externe Ausnahme und Gate-Ausnahme erfordern nachvollziehbaren Beschluss und Ablaufdatum; zwingendes Recht oder klinisch kritisches Risiko nicht wegentscheidbar.
+
+[Abnahmebericht-Vorlage](ABNAHMEBERICHT.md) bei jedem Paket und Meilenstein verwenden. Für konkrete Fortschrittsstände die bestehenden Statusdokumente fortschreiben, nicht mehrere widersprüchliche Roadmaps führen.
