@@ -158,6 +158,7 @@ vorher in Teilpakete zerlegen.
   Wahl gilt das Standardgericht; nüchterne Fälle zählen nicht.
 
 ### AP-17 · Arztbrief aus Falldaten · L
+- **Erweiterter Auftrag:** Teilmenge von DOC-01–07 in [CLINICAL_WORKFLOWS.md](CLINICAL_WORKFLOWS.md); vollständige native Redaktion und Workflow mit Rückgaben, Revisionen, Signatur und Versand sind Pflicht.
 - **Ziel:** `POST /api/v1/cases/:case_id/letters/draft` erzeugt aus
   Diagnosen, Prozeduren, Verlauf, Labor und Entlassmedikation einen
   Entwurf der Dokumentationsart `arztbrief` (Text mit festen Abschnitten),
@@ -169,6 +170,7 @@ vorher in Teilpakete zerlegen.
   von `CASES_EXPORT_SQL` — als Kern-Änderung vorab abstimmen.
 
 ### AP-18 · Notaufnahme: Ersteinschätzung · M
+- **Erweiterter Auftrag:** Teilmenge von ED-01–06 in [CLINICAL_WORKFLOWS.md](CLINICAL_WORKFLOWS.md); Triage allein erfüllt nicht die epias-ähnliche Funktionsparität.
 - **Ziel:** Neues Modul `emergency`: Ersteinschätzung mit Dringlichkeit
   und Zeitstempeln (Ankunft, Einschätzung, Arztkontakt), Liste der
   Notaufnahme nach Dringlichkeit und Wartezeit.
