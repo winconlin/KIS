@@ -96,6 +96,11 @@ vorher in Teilpakete zerlegen.
 - **Abnahme:** Skript läuft gegen eine Wegwerf-Datenbank; Messwerte mit
   Rechnerangabe dokumentiert; auffällige Abfragen mit `EXPLAIN` belegt.
 
+### AP-08 · Nicht mehr gewartete Abhängigkeiten evaluieren und ablösen · L
+- **Anlass:** cargo audit meldete chrono (RUSTSEC-2026-0543) und rustls-pemfile (RUSTSEC-2025-0134) als unmaintained ohne gepatchte Version. Separat vom behobenen URL-Update behandeln; Warnungen weder ausblenden noch als akute Exploit-Nachweise darstellen.
+- **Schritte:** auf dem aktuellen Lockfile tatsächliche direkte/transitive Pfade mit cargo tree -i je Crate ermitteln; gepflegte Alternativen und kompatible Upstream-Versionen prüfen. Chrono-Umstellung separat mit SQLx, PostgreSQL-Typen, Zeitzonen/DST, Zeitintervallen, Audit/Signaturzeitstempeln und Serialisierung testen; rustls-pemfile über gepflegte TLS-/PEM-Pfade bzw. Upstream-Upgrade ablösen, Zertifikatsketten und fehlerhafte Schlüssel prüfen. Kein unreviewter Austausch sicherheitsrelevanter Bibliotheken.
+- **Abnahme:** keine ungewartete Crate im Lockfile, soweit realistisch und kompatibel; andernfalls konkrete temporäre Risikobewertung, Eigentümer, Reviewdatum und Migrationsplan. cargo audit und alle bestehenden CI-/PostgreSQL-/TLS-Tests tatsächlich ausführen, keine Änderung der Audit-Ausnahmen als Ersatz.
+
 ## Fachmodule erweitern
 
 ### AP-10 · Dienstplan: mehrere Personen je Dienst und Tag · M
