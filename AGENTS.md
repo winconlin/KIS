@@ -8,7 +8,8 @@ Diese Regeln gelten für das gesamte Repository. Die Priorität der System-, Ent
 2. [Module](docs/MODULE.md) — Regeln, an die sich jede Änderung hält, mit Vorlage.
 3. [Arbeitspakete](docs/ARBEITSPAKETE.md) — dein Paket und die dort genannten Dateien.
 4. Verbindliches erweitertes Zielbild: [Enterprise-KIS](docs/ENTERPRISE_KIS.md), [TI/Gematik](docs/TI_COMPLIANCE.md), [Enterprise-Backlog](docs/ENTERPRISE_BACKLOG.md).
-5. Bei Bedarf: [Architektur](docs/ARCHITECTURE.md), [Funktionslandkarte](docs/FUNKTIONSLANDKARTE.md), [Sicherheit](docs/SECURITY.md), [Sicherheits-Abnahme](docs/SICHERHEITS_ABNAHME.md).
+5. Bei Notaufnahme, Arztbrief, DMS und Workflow-Engine verbindlich: [CLINICAL_WORKFLOWS.md](docs/CLINICAL_WORKFLOWS.md) (DOC-01–07, ED-01–06).
+6. Bei Bedarf: [Architektur](docs/ARCHITECTURE.md), [Funktionslandkarte](docs/FUNKTIONSLANDKARTE.md), [Sicherheit](docs/SECURITY.md), [Sicherheits-Abnahme](docs/SICHERHEITS_ABNAHME.md).
 
 Prüfe Branch, HEAD und Arbeitsbaum. Arbeite auf einem eigenen Branch ab dem aktuellen `main`. Exakte Basis-SHA und Paket-Kennung im Arbeitsbericht nennen.
 
