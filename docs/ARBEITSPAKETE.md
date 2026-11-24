@@ -5,6 +5,10 @@ ein Mensch jedes Paket für sich erledigen kann. Übersicht des Gesamtstands:
 [FUNKTIONSLANDKARTE.md](FUNKTIONSLANDKARTE.md). Regeln für Module:
 [MODULE.md](MODULE.md).
 
+## Erweiterter Auftrag ab 24.11.2026
+
+[ENTERPRISE_BACKLOG.md](ENTERPRISE_BACKLOG.md) erweitert diese AP-Liste verbindlich um EP-00 bis EP-26. Zielbild und Akzeptanzkriterien: [ENTERPRISE_KIS.md](ENTERPRISE_KIS.md), [TI_COMPLIANCE.md](TI_COMPLIANCE.md). Bestehende Pakete nicht duplizieren; bei Überschneidung anhand der EP-Abhängigkeiten erweitern. Kernvertragsänderungen aus EP-00–07 sind eigene koordinierte Pakete. Bei fehlenden externen Profilen dürfen unabhängige Infrastrukturarbeiten fortgesetzt werden; externe Konformität bleibt offen.
+
 ## So wird ein Paket bearbeitet
 
 1. **Ein Paket, ein Branch** (`ap-07-icd-katalog`), ausgehend vom aktuellen
