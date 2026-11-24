@@ -6,6 +6,8 @@ Stand: 24.11.2026 · in Entwicklung, nicht für den Echtbetrieb freigegeben
 
 | Dokument | Inhalt |
 |---|---|
+| [ROADMAP.md](ROADMAP.md) | Verbindliche Meilensteine M00–M11, Quality Gates G0–G7, Checks & Balances |
+| [ABNAHMEBERICHT.md](ABNAHMEBERICHT.md) | Nachweisvorlage für Pakete und Meilensteine |
 | [ENTERPRISE_KIS.md](ENTERPRISE_KIS.md) | Verbindliches Zielbild für Klinikverbünde und MVZ, Funktionsparität E01–E24 |
 | [TI_COMPLIANCE.md](TI_COMPLIANCE.md) | Gematik/TI, ISiK, ISiP und externe Nachweise |
 | [CLINICAL_WORKFLOWS.md](CLINICAL_WORKFLOWS.md) | Native Notaufnahme, Arztbriefredaktion, Dokumentenmanagement und Freigabeprozesse |
@@ -42,6 +44,6 @@ gekennzeichnet.
 
 | Dokument | Inhalt |
 |---|---|
-| [FAHRPLAN.md](FAHRPLAN.md) | Früherer Gesamtfahrplan |
+| [FAHRPLAN.md](FAHRPLAN.md) | Historischer Gesamtfahrplan; abgelöst durch ROADMAP.md |
 | [INTERFACES.md](INTERFACES.md) | Entwürfe für HL7, FHIR, DICOM, XDS (Code unter `entwurf/`, nicht im Build) |
 | [CGM_MEDICO.md](CGM_MEDICO.md) | Entwurf eines MEDICO-Clients und Datenmapping |
