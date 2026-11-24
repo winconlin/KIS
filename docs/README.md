@@ -1,11 +1,14 @@
 # KIS — Dokumentation
 
-Stand: 10.11.2026 · in Entwicklung, nicht für den Echtbetrieb freigegeben
+Stand: 24.11.2026 · in Entwicklung, nicht für den Echtbetrieb freigegeben
 
 ## Aktuell und maßgeblich
 
 | Dokument | Inhalt |
 |---|---|
+| [ENTERPRISE_KIS.md](ENTERPRISE_KIS.md) | Verbindliches Zielbild für Klinikverbünde und MVZ, Funktionsparität E01–E24 |
+| [TI_COMPLIANCE.md](TI_COMPLIANCE.md) | Gematik/TI, ISiK, ISiP und externe Nachweise |
+| [ENTERPRISE_BACKLOG.md](ENTERPRISE_BACKLOG.md) | Priorisierte EP-00–26, Abhängigkeiten und Abnahme |
 | [FUNKTIONSLANDKARTE.md](FUNKTIONSLANDKARTE.md) | Was je Arbeitsbereich vorhanden ist und was fehlt |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Kern, Module, Weg einer Anfrage, Ereignisse |
 | [MODULE.md](MODULE.md) | Regeln und Anleitung für Module |
