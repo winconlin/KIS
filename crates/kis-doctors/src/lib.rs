@@ -195,30 +195,30 @@ async fn list_doctors(
 
     let mut sql = String::from("SELECT * FROM doctors");
     let mut conds: Vec<String> = Vec::new();
-    let mut binds: Vec<String> = Vec::new();
     let mut bind_idx = 0;
+    let mut search_bind: Option<String> = None;
+    let mut specialty_bind: Option<String> = None;
+    let mut cursor_bind: Option<Uuid> = None;
 
     if active {
         conds.push("deleted_at IS NULL".into());
     }
     if let Some(ref search) = params.search {
         bind_idx += 1;
-        binds.push(format!("%{}%", search));
+        search_bind = Some(format!("%{}%", search));
         conds.push(format!(
             "(name_family ILIKE ${bind_idx} OR name_given ILIKE ${bind_idx})"
         ));
     }
     if let Some(ref spec) = params.specialty {
         bind_idx += 1;
-        binds.push(spec.clone());
+        specialty_bind = Some(spec.clone());
         conds.push(format!("specialty = ${bind_idx}"));
     }
     if let Some(ref cursor) = params.cursor {
         bind_idx += 1;
-        let mut cursor_bind = cursor.to_string();
-        cursor_bind.push_str("::uuid");
-        binds.push(cursor_bind);
-        conds.push(format!("id > ${bind_idx}"));
+        cursor_bind = Some(*cursor);
+        conds.push(format!("id > ${bind_idx}::uuid"));
     }
 
     if !conds.is_empty() {
@@ -229,7 +229,13 @@ async fn list_doctors(
 
     let pool = db.as_ref();
     let mut query = sqlx::query_as::<_, Doctor>(&sql);
-    for b in &binds {
+    if let Some(ref b) = search_bind {
+        query = query.bind(b);
+    }
+    if let Some(ref b) = specialty_bind {
+        query = query.bind(b);
+    }
+    if let Some(ref b) = cursor_bind {
         query = query.bind(b);
     }
     let rows: Vec<Doctor> = query

@@ -354,7 +354,8 @@ async fn list_search_umlaut() {
     let pool = app._tdb.db.write();
     let umlaut = create_doctor(pool, "Grüninger", "Anna", None).await;
 
-    let (status, v) = get(&app, "/api/v1/doctors?search=gr%C3%BCnger").await;
+    // Suche "grüninger" (URL-encoded gr%C3%BCninger) — Umlaut im Suchbegriff
+    let (status, v) = get(&app, "/api/v1/doctors?search=gr%C3%BCninger").await;
     assert_eq!(status, StatusCode::OK, "{v}");
     assert!(page_ids(&v).contains(&umlaut.to_string()), "Umlaut: {v}");
 }
@@ -375,7 +376,7 @@ async fn list_empty_result() {
     assert_eq!(status, StatusCode::OK, "{v}");
     assert_eq!(v["count"], 0);
     assert!(page_ids(&v).is_empty());
-    assert!(v["next_cursor"].is_null());
+    assert!(v["nextCursor"].is_null());
 }
 
 // ===========================================================================
@@ -449,7 +450,7 @@ async fn list_pagination_limit_2_of_5() {
     let (s1, v1) = get(&app, "/api/v1/doctors?limit=2").await;
     assert_eq!(s1, StatusCode::OK, "{v1}");
     assert_eq!(page_ids(&v1), vec![ids[0].to_string(), ids[1].to_string()]);
-    assert_eq!(v1["next_cursor"], json!(ids[1]));
+    assert_eq!(v1["nextCursor"], json!(ids[1].to_string()));
 
     // Seite 2
     let (s2, v2) = get(&app, &format!("/api/v1/doctors?limit=2&cursor={}", ids[1])).await;
@@ -466,7 +467,7 @@ async fn list_pagination_limit_2_of_5() {
     let (s4, v4) = get(&app, &format!("/api/v1/doctors?limit=2&cursor={}", ids[4])).await;
     assert_eq!(s4, StatusCode::OK, "{v4}");
     assert_eq!(v4["count"], 0);
-    assert!(v4["next_cursor"].is_null());
+    assert!(v4["nextCursor"].is_null());
 }
 
 // ===========================================================================
@@ -541,8 +542,26 @@ async fn list_cursor_uuid_bound() {
         None => return,
     };
     let pool = app._tdb.db.write();
-    let a = create_doctor(pool, "Cursor", "Anna", None).await;
-    let b = create_doctor(pool, "Cursor", "Ben", None).await;
+
+    // Deterministische, geordnete UUIDs (gen_random_uuid() wäre nicht monoton
+    // und machte den Test flaky: a < b ist hier garantiert).
+    let a = Uuid::parse_str("00000000-0000-0000-0000-0000000000aa").unwrap();
+    let b = Uuid::parse_str("00000000-0000-0000-0000-0000000000bb").unwrap();
+    for (id, given) in [(a, "Anna"), (b, "Ben")] {
+        sqlx::query(
+            r#"
+            INSERT INTO doctors (
+                id, external_id, name_family, name_given,
+                specialty, specialties, created_at, updated_at, version
+            ) VALUES ($1, NULL, 'Cursor', $2, NULL, '[]'::jsonb, now(), now(), 1)
+            "#,
+        )
+        .bind(id)
+        .bind(given)
+        .execute(pool)
+        .await
+        .expect("Arzt mit fester UUID anlegen");
+    }
 
     // Cursor = a → nur b
     let (s, v) = get(&app, &format!("/api/v1/doctors?cursor={a}")).await;
@@ -596,7 +615,7 @@ async fn list_pagination_multi_page_with_specialty() {
         let (s, v) = get(&app, &path).await;
         assert_eq!(s, StatusCode::OK, "{v}");
         collected.extend(page_ids(&v));
-        cursor = v["next_cursor"].as_str().map(|s| s.to_string());
+        cursor = v["nextCursor"].as_str().map(|s| s.to_string());
         if cursor.is_none() {
             break;
         }
