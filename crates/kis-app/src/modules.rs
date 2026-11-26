@@ -5,9 +5,15 @@
 //! Mehr ist nicht nötig — Routen, Zugriffsregeln und Reaktionen auf
 //! Ereignisse bringt das Modul selbst mit.
 
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::Duration;
 
+use axum::extract::{Request, State};
+use axum::middleware::Next;
+use axum::response::Response;
 use axum::Router;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::timeout::TimeoutLayer;
@@ -130,6 +136,7 @@ pub async fn build_app(
         ctx: ctx.clone(),
         modules: Arc::new(statuses),
         routes: Arc::new(route_infos),
+        http_responses: Arc::default(),
         deletion: Arc::new(DataDeletionService::new(db.clone(), security.clone())),
         portability: Arc::new(DataPortabilityService::new(db.clone(), security.clone())),
         anonymization: Arc::new(
@@ -156,7 +163,7 @@ pub async fn build_app(
     };
     let limiter = Arc::new(SlidingWindowRateLimiter::new(&config.security.rate_limit));
 
-    // Schichten von außen nach innen: Protokoll, Panik-Schutz,
+    // Schichten von außen nach innen: Antwortzähler, Protokoll, Panik-Schutz,
     // Sicherheits-Header, Zeitlimit, Größenlimit, Anfragebegrenzung,
     // Zugriffskontrolle, Handler. Ein Fehler oder Absturz in einem Handler
     // betrifft nur diese eine Anfrage.
@@ -174,11 +181,28 @@ pub async fn build_app(
         )))
         .layer(axum::middleware::from_fn(security_headers))
         .layer(CatchPanicLayer::new())
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn_with_state(
+            state.http_responses.clone(),
+            count_http_response,
+        ));
 
     Ok(App {
         router,
         state,
         policy,
     })
+}
+
+async fn count_http_response(
+    State(counters): State<Arc<[AtomicU64; 5]>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let response = next.run(request).await;
+    let class = usize::from(response.status().as_u16() / 100);
+    if let Some(counter) = counters.get(class - 1) {
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+    response
 }

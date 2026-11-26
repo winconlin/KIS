@@ -80,6 +80,7 @@ Routentabelle unten wird aus dem laufenden System erzeugt
 | GET | `/api/v1/interfaces/events` | interface.consume |  |
 | POST | `/api/v1/interfaces/events/ack` | interface.consume |  |
 | GET | `/api/v1/me` | angemeldet |  |
+| GET | `/api/v1/metrics` | config.read |  |
 | GET | `/api/v1/modules` | angemeldet |  |
 | GET | `/api/v1/patients/:id/export` | data.export |  |
 | POST | `/api/v1/patients/:id/hard-delete` | admin |  |

@@ -1,6 +1,6 @@
 //! Zustand der Kern-Handler (Anmeldung, Verwaltung, DSGVO).
 
-use std::sync::Arc;
+use std::sync::{atomic::AtomicU64, Arc};
 
 use kis_core::anonymization::AnonymizationService;
 use kis_core::data_deletion::DataDeletionService;
@@ -55,6 +55,8 @@ pub struct AppState {
     pub modules: Arc<Vec<ModuleStatus>>,
     /// Alle Routen dieser Instanz mit ihren Zugriffsregeln
     pub routes: Arc<Vec<RouteInfo>>,
+    /// Abgeschlossene HTTP-Antworten dieser Instanz, Klassen 1xx bis 5xx.
+    pub(crate) http_responses: Arc<[AtomicU64; 5]>,
     pub deletion: Arc<DataDeletionService>,
     pub portability: Arc<DataPortabilityService>,
     pub anonymization: Arc<AnonymizationService>,

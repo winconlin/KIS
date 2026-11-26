@@ -125,7 +125,22 @@ curl -fsS --max-time 5 http://127.0.0.1:8080/api/health
 journalctl -u kis -f
 ```
 
-Anwendungslogs gehen über tracing in die Standardausgabe, bei systemd ins Journal. `RUST_LOG` steuert die Filter. Eine allgemeine JSON-Logdatei oder `/metrics`, Prometheus-Regeln und Grafana-Dashboards sind noch nicht implementiert. Diagnostik darf keine Schlüssel, Passwörter oder Patientendaten ausgeben.
+Anwendungslogs gehen über tracing in die Standardausgabe, bei systemd ins Journal. `RUST_LOG` steuert die Filter. Diagnostik darf keine Schlüssel, Passwörter oder Patientendaten ausgeben.
+
+### Prometheus-Kennzahlen
+
+`GET /api/v1/metrics` liefert Prometheus-Textformat 0.0.4. Der Scrape
+benötigt ein gültiges Bearer-Access-Token mit dem Recht `config.read`.
+
+| Metrik | Messwert |
+|---|---|
+| `kis_http_requests_total` | Abgeschlossene Antworten der Instanz seit dem Prozessstart, gruppiert nach `status_class` von `1xx` bis `5xx`. Der laufende Scrape zählt erst beim nächsten Abruf. |
+| `kis_db_pool_connections` | Offene, ungenutzte und maximal zulässige Verbindungen, gekennzeichnet durch `state=open`, `state=idle` und `state=max`. Neben `pool=write` erscheint `pool=read` bei einem separaten Lesepool. Die Belegung ergibt sich aus offenen minus ungenutzten Verbindungen. |
+| `kis_event_failures_open` | Anzahl offener Folgeaktionsfehler. |
+| `kis_emergency_access_unreviewed` | Anzahl ungeprüfter Notfallzugriffe, einschließlich bereits abgelaufener Zugriffe. |
+
+Die Labels verwenden feste Kategorien. Die Summen für Folgeaktionsfehler
+und Notfallzugriffe stammen aus dem Schreib-Pool.
 
 ## Backup: Voraussetzungen
 

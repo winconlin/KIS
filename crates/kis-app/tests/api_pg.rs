@@ -6,17 +6,138 @@
 
 mod common;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{header, Request, StatusCode};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use common::{config, patient_body, App, TestDb, JWT_SECRET, MASTER_KEY, PASSWORD};
+use common::{config, id_of, patient_body, App, TestDb, JWT_SECRET, MASTER_KEY, PASSWORD};
 use kis_core::config::AppConfig;
 use kis_core::security::Security;
+
+#[tokio::test]
+async fn prometheus_metrics_require_config_read_and_count_responses() {
+    async fn scrape(app: &App, token: &str) -> HashMap<String, u64> {
+        let request = Request::get("/api/v1/metrics")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = app.router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/plain; version=0.0.4; charset=utf-8"
+        );
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body = std::str::from_utf8(&bytes).unwrap();
+        assert!(body.ends_with('\n'));
+        assert!(body.contains("# TYPE kis_http_requests_total counter\n"));
+        assert!(body.contains("# TYPE kis_db_pool_connections gauge\n"));
+        body.lines()
+            .filter(|line| !line.starts_with('#'))
+            .map(|line| {
+                let (sample, value) = line.split_once(' ').unwrap();
+                (sample.to_owned(), value.parse().unwrap())
+            })
+            .collect()
+    }
+
+    let app = app!();
+    let (admin_id, admin) = app.session("metrics-admin", "admin").await;
+    let (_, nurse) = app.session("metrics-nurse", "pflege").await;
+
+    let patient = app
+        .ok("POST", "/api/v1/patients", &admin, Some(patient_body()))
+        .await;
+    let department = app
+        .ok(
+            "POST",
+            "/api/v1/org/units",
+            &admin,
+            Some(json!({"kind": "fachabteilung", "code": "TEST", "name": "Testabteilung"})),
+        )
+        .await;
+    let case = app
+        .ok(
+            "POST",
+            "/api/v1/cases",
+            &admin,
+            Some(json!({
+                "patientId": id_of(&patient), "kind": "ambulant", "departmentId": id_of(&department)
+            })),
+        )
+        .await;
+
+    let event_id: i64 = sqlx::query_scalar(
+        "INSERT INTO domain_events (topic, entity_type, entity_id)
+         VALUES ('test.example', 'case', $1) RETURNING id",
+    )
+    .bind(id_of(&case))
+    .fetch_one(app.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO event_failures (event_id, subscriber, error, resolved_at, resolved_by)
+         VALUES ($1, 'test', 'Testfehler', NULL, NULL),
+                ($1, 'test', 'Testfehler', now(), $2)",
+    )
+    .bind(event_id)
+    .bind(admin_id)
+    .execute(app.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO emergency_access_grants (user_id, case_id, reason, expires_at, reviewed_at, reviewed_by)
+         VALUES ($1, $2, 'Synthetischer Test', now() + interval '15 minutes', NULL, NULL),
+                ($1, $2, 'Synthetischer Test', now() + interval '15 minutes', now(), $1)",
+    )
+    .bind(admin_id)
+    .bind(id_of(&case))
+    .execute(app.pool())
+    .await
+    .unwrap();
+
+    let before = scrape(&app, &admin).await;
+    let (status, _) = app.raw("GET", "/api/v1/metrics", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    app.fails(
+        StatusCode::FORBIDDEN,
+        "GET",
+        "/api/v1/metrics",
+        &nurse,
+        None,
+    )
+    .await;
+    let (status, _) = app.raw("GET", "/health", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let after = scrape(&app, &admin).await;
+
+    for class in ["1xx", "2xx", "3xx", "4xx", "5xx"] {
+        let key = format!("kis_http_requests_total{{status_class=\"{class}\"}}");
+        let delta = if class == "2xx" || class == "4xx" {
+            2
+        } else {
+            0
+        };
+        assert_eq!(after[&key], before[&key] + delta, "{key}");
+    }
+    for state in ["open", "idle", "max"] {
+        assert!(after.contains_key(&format!(
+            "kis_db_pool_connections{{pool=\"write\",state=\"{state}\"}}"
+        )));
+    }
+    assert_eq!(after["kis_event_failures_open"], 1);
+    assert_eq!(after["kis_emergency_access_unreviewed"], 1);
+    assert_eq!(
+        after.len(),
+        10,
+        "nur die erwarteten Metriken und festen Labels"
+    );
+    app.finish().await;
+}
 
 #[tokio::test]
 async fn authentication_and_session_lifecycle() {

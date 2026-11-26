@@ -1,8 +1,11 @@
 //! Kern-Routen: Anmeldung, eigener Benutzer, Status, Module,
 //! Notfallzugriff, Ereignis-Outbox für Schnittstellen.
 
+use std::fmt::Write;
+use std::sync::atomic::Ordering;
+
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Deserialize;
@@ -26,6 +29,11 @@ pub fn routes() -> ModuleRoutes<AppState> {
             "/api/v1/health/db",
             Access::Permission(P::ConfigRead),
             db_health,
+        )
+        .get(
+            "/api/v1/metrics",
+            Access::Permission(P::ConfigRead),
+            metrics,
         )
         .get("/api/v1/status", Access::Authenticated, status)
         .get("/api/v1/modules", Access::Authenticated, modules)
@@ -65,6 +73,73 @@ async fn db_health(State(st): State<AppState>) -> Json<serde_json::Value> {
     let (write, read) = st.ctx.db.pool_metrics();
     let replica = st.ctx.db.replica_status().await;
     Json(serde_json::json!({ "writePool": write, "readPool": read, "replica": replica }))
+}
+
+async fn metrics(State(st): State<AppState>) -> Result<Response, ApiFailure> {
+    let (open_failures, unreviewed_grants): (i64, i64) = sqlx::query_as(
+        "SELECT
+            (SELECT COUNT(*) FROM event_failures WHERE resolved_at IS NULL),
+            (SELECT COUNT(*) FROM emergency_access_grants WHERE reviewed_at IS NULL)",
+    )
+    .fetch_one(st.pool())
+    .await?;
+
+    let mut body = String::from(concat!(
+        "# HELP kis_http_requests_total HTTP responses by status class.\n",
+        "# TYPE kis_http_requests_total counter\n",
+    ));
+    for (index, counter) in st.http_responses.iter().enumerate() {
+        writeln!(
+            body,
+            "kis_http_requests_total{{status_class=\"{}xx\"}} {}",
+            index + 1,
+            counter.load(Ordering::Relaxed),
+        )
+        .expect("Schreiben in String");
+    }
+
+    body.push_str(concat!(
+        "# HELP kis_db_pool_connections Connection counts by pool and state.\n",
+        "# TYPE kis_db_pool_connections gauge\n",
+    ));
+    let (write, read) = st.ctx.db.pool_metrics();
+    for (pool, counts) in [("write", write), ("read", read)] {
+        if pool == "read" && st.ctx.config.database.read_url.is_none() {
+            continue;
+        }
+        for (state, value) in [
+            ("open", counts.open),
+            ("idle", counts.idle),
+            ("max", counts.max),
+        ] {
+            writeln!(
+                body,
+                "kis_db_pool_connections{{pool=\"{pool}\",state=\"{state}\"}} {value}",
+            )
+            .expect("Schreiben in String");
+        }
+    }
+    write!(
+        body,
+        concat!(
+            "# HELP kis_event_failures_open Unresolved follow-up failures.\n",
+            "# TYPE kis_event_failures_open gauge\n",
+            "kis_event_failures_open {}\n",
+            "# HELP kis_emergency_access_unreviewed Unreviewed emergency access grants.\n",
+            "# TYPE kis_emergency_access_unreviewed gauge\n",
+            "kis_emergency_access_unreviewed {}\n",
+        ),
+        open_failures, unreviewed_grants,
+    )
+    .expect("Schreiben in String");
+    Ok((
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    )
+        .into_response())
 }
 
 async fn status(State(st): State<AppState>) -> Json<serde_json::Value> {
