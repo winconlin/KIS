@@ -2,12 +2,12 @@
   "name": "kis-preview-server",
   "version": "1.0.0",
   "private": true,
-  "description": "Lokaler Vorschau- und Dokumentationsserver für die statische KIS-Oberfläche (static/) und Architektur-Dokumentation (docs/) auf Port 3000",
+  "description": "Lokaler schreibgeschützter Vorschau- und Koordinationsserver für KIS-Roadmap, M01-Verträge, Prüfstatus und statische KIS-Oberfläche (static/) auf Port 3000",
   "type": "module",
   "scripts": {
     "dev": "node server.mjs",
     "start": "node server.mjs",
-    "build": "node --check server.mjs",
-    "lint": "node --check server.mjs"
+    "build": "node --check server.mjs && node --check preview/cockpit.js",
+    "lint": "node --check server.mjs && node --check preview/cockpit.js"
   }
 }

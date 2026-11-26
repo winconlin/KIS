@@ -1,0 +1,255 @@
+{
+  "schema_version": "1.0.0",
+  "synthetic_only": true,
+  "warning": "AUSSCHLIESSLICH SYNTHETISCHE TESTDATEN (AGENTS.md § 5). Niemals mit produktiven Patientendaten oder realen Kennungen mischen.",
+  "source_doc": "docs/VERBUND_TESTMODELL.md",
+  "organization_group": {
+    "id": "10000000-0000-4000-8000-000000000000",
+    "code": "VERBUND-TEST",
+    "name": "Testverbund Gesundheit",
+    "grants_data_access": false
+  },
+  "legal_entities": [
+    {
+      "id": "10000000-0000-4000-8000-000000000001",
+      "code": "RT-NORD",
+      "legal_name": "Nordverbund Kliniken gGmbH",
+      "federal_state": "DE-HH",
+      "default_timezone": "Europe/Berlin"
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000002",
+      "code": "RT-SUED",
+      "legal_name": "Südregion Gesundheits-AG",
+      "federal_state": "DE-BY",
+      "default_timezone": "Europe/Berlin"
+    }
+  ],
+  "sites": [
+    {
+      "id": "20000000-0000-4000-8000-000000000101",
+      "code": "KL-N1",
+      "legal_entity_code": "RT-NORD",
+      "name": "Klinikum Nordstadt",
+      "sector": "inpatient",
+      "identifiers": [
+        { "type": "IK", "value": "260000101" },
+        { "type": "STANDORTNUMMER_293", "value": "770001001" }
+      ]
+    },
+    {
+      "id": "20000000-0000-4000-8000-000000000102",
+      "code": "KL-N2",
+      "legal_entity_code": "RT-NORD",
+      "name": "Krankenhaus Heideblick",
+      "sector": "inpatient",
+      "identifiers": [
+        { "type": "IK", "value": "260000102" },
+        { "type": "STANDORTNUMMER_293", "value": "770001002" }
+      ]
+    },
+    {
+      "id": "20000000-0000-4000-8000-000000000103",
+      "code": "MVZ-N1",
+      "legal_entity_code": "RT-NORD",
+      "name": "MVZ Nordstadt Innere/Kardiologie",
+      "sector": "mvz",
+      "identifiers": [
+        { "type": "BSNR", "value": "990001100" }
+      ]
+    },
+    {
+      "id": "20000000-0000-4000-8000-000000000104",
+      "code": "MVZ-N2",
+      "legal_entity_code": "RT-NORD",
+      "name": "MVZ Heideblick Chirurgie/Orthopädie",
+      "sector": "mvz",
+      "identifiers": [
+        { "type": "BSNR", "value": "990001200" }
+      ]
+    },
+    {
+      "id": "20000000-0000-4000-8000-000000000201",
+      "code": "KL-S1",
+      "legal_entity_code": "RT-SUED",
+      "name": "Klinikum Südtal",
+      "sector": "inpatient",
+      "identifiers": [
+        { "type": "IK", "value": "260000201" },
+        { "type": "STANDORTNUMMER_293", "value": "770002001" }
+      ]
+    },
+    {
+      "id": "20000000-0000-4000-8000-000000000202",
+      "code": "KL-S2",
+      "legal_entity_code": "RT-SUED",
+      "name": "Klinik Bergfried",
+      "sector": "inpatient",
+      "identifiers": [
+        { "type": "IK", "value": "260000202" },
+        { "type": "STANDORTNUMMER_293", "value": "770002002" }
+      ]
+    },
+    {
+      "id": "20000000-0000-4000-8000-000000000203",
+      "code": "MVZ-S1",
+      "legal_entity_code": "RT-SUED",
+      "name": "MVZ Südtal Neurologie/Psychiatrie",
+      "sector": "mvz",
+      "identifiers": [
+        { "type": "BSNR", "value": "990002100" }
+      ]
+    },
+    {
+      "id": "20000000-0000-4000-8000-000000000301",
+      "code": "ZD-LAB",
+      "legal_entity_code": "RT-NORD",
+      "name": "Verbund-Zentrallabor",
+      "sector": "central_service",
+      "identifiers": []
+    }
+  ],
+  "org_units": [
+    { "code": "ZNA-N1", "site_code": "KL-N1", "legal_entity_code": "RT-NORD", "kind": "station", "care_level": "notaufnahme" },
+    { "code": "INN-N1", "site_code": "KL-N1", "legal_entity_code": "RT-NORD", "kind": "fachabteilung" },
+    { "code": "N1-S1",  "site_code": "KL-N1", "legal_entity_code": "RT-NORD", "kind": "station", "parent_code": "INN-N1", "care_level": "normal" },
+    { "code": "CHI-N1", "site_code": "KL-N1", "legal_entity_code": "RT-NORD", "kind": "fachabteilung" },
+    { "code": "N1-S2",  "site_code": "KL-N1", "legal_entity_code": "RT-NORD", "kind": "station", "parent_code": "CHI-N1", "care_level": "normal" },
+    { "code": "OP-N1",  "site_code": "KL-N1", "legal_entity_code": "RT-NORD", "kind": "funktionsbereich", "parent_code": "CHI-N1" },
+    { "code": "ITS-N1", "site_code": "KL-N1", "legal_entity_code": "RT-NORD", "kind": "station", "care_level": "intensiv" },
+    { "code": "GEB-N1", "site_code": "KL-N1", "legal_entity_code": "RT-NORD", "kind": "fachabteilung" },
+    { "code": "INN-N2", "site_code": "KL-N2", "legal_entity_code": "RT-NORD", "kind": "fachabteilung" },
+    { "code": "N2-S1",  "site_code": "KL-N2", "legal_entity_code": "RT-NORD", "kind": "station", "parent_code": "INN-N2", "care_level": "normal" },
+    { "code": "NBS-N1a", "site_code": "MVZ-N1", "legal_entity_code": "RT-NORD", "kind": "mvz_nebenbetriebsstaette", "nbsnr": "990001101" },
+    { "code": "ZNA-S1", "site_code": "KL-S1", "legal_entity_code": "RT-SUED", "kind": "station", "care_level": "notaufnahme" },
+    { "code": "INN-S1", "site_code": "KL-S1", "legal_entity_code": "RT-SUED", "kind": "fachabteilung" },
+    { "code": "S1-S1",  "site_code": "KL-S1", "legal_entity_code": "RT-SUED", "kind": "station", "parent_code": "INN-S1", "care_level": "normal" },
+    { "code": "RAD-S1", "site_code": "KL-S1", "legal_entity_code": "RT-SUED", "kind": "funktionsbereich" },
+    { "code": "PSY-S2", "site_code": "KL-S2", "legal_entity_code": "RT-SUED", "kind": "fachabteilung" },
+    { "code": "S2-P1",  "site_code": "KL-S2", "legal_entity_code": "RT-SUED", "kind": "station", "parent_code": "PSY-S2", "care_level": "normal" },
+    { "code": "NBS-S1a", "site_code": "MVZ-S1", "legal_entity_code": "RT-SUED", "kind": "mvz_nebenbetriebsstaette", "nbsnr": "990002101" },
+    { "code": "ZD-LAB-UNIT", "site_code": "ZD-LAB", "legal_entity_code": "RT-NORD", "kind": "funktionsbereich" }
+  ],
+  "service_agreements": [
+    {
+      "code": "SA-ZDLAB-SUED",
+      "provider_legal_entity_code": "RT-NORD",
+      "provider_unit_code": "ZD-LAB-UNIT",
+      "consumer_legal_entity_code": "RT-SUED",
+      "service_domain": "central_lab",
+      "allowed_purposes": ["treatment"],
+      "avv_reference": "SYNTH-AVV-2026-001"
+    }
+  ],
+  "users": [
+    { "code": "U-PLAT",   "email": "platform.ops@test.invalid",   "legal_entity_code": null,      "unit_codes": [],             "roles": ["platform_admin"] },
+    { "code": "U-ADM-N",  "email": "admin.nord@test.invalid",     "legal_entity_code": "RT-NORD", "unit_codes": [],             "roles": ["tenant_admin"] },
+    { "code": "U-ADM-S",  "email": "admin.sued@test.invalid",     "legal_entity_code": "RT-SUED", "unit_codes": [],             "roles": ["tenant_admin"] },
+    { "code": "U-AUD-N",  "email": "audit.nord@test.invalid",     "legal_entity_code": "RT-NORD", "unit_codes": [],             "roles": ["privacy_auditor"] },
+    { "code": "U-HR-N",   "email": "hr.nord@test.invalid",        "legal_entity_code": "RT-NORD", "unit_codes": [],             "roles": ["hr_manager"] },
+    { "code": "U-DOC-N1", "email": "dr.mertens@test.invalid",     "legal_entity_code": "RT-NORD", "unit_codes": ["INN-N1", "N1-S1"], "roles": ["arzt"], "lanr": "990010101" },
+    { "code": "U-OA-N1",  "email": "oa.weber@test.invalid",       "legal_entity_code": "RT-NORD", "unit_codes": ["INN-N1"],     "roles": ["oberarzt"] },
+    { "code": "U-SEK-N1", "email": "sekretariat.n1@test.invalid", "legal_entity_code": "RT-NORD", "unit_codes": ["INN-N1"],     "roles": ["sekretariat"] },
+    { "code": "U-DOC-N2", "email": "dr.keller@test.invalid",      "legal_entity_code": "RT-NORD", "unit_codes": ["INN-N2", "N2-S1"], "roles": ["arzt"] },
+    { "code": "U-MVZ-N1", "email": "dr.vogt@test.invalid",        "legal_entity_code": "RT-NORD", "unit_codes": ["NBS-N1a"],    "roles": ["arzt", "mvz_behandler"], "lanr": "990010202" },
+    { "code": "U-PFL-N1", "email": "pflege.n1@test.invalid",      "legal_entity_code": "RT-NORD", "unit_codes": ["N1-S1"],      "roles": ["pflege"] },
+    { "code": "U-DOC-S1", "email": "dr.lindner@test.invalid",     "legal_entity_code": "RT-SUED", "unit_codes": ["INN-S1", "S1-S1"], "roles": ["arzt"] },
+    { "code": "U-DOC-S2", "email": "dr.falk@test.invalid",        "legal_entity_code": "RT-SUED", "unit_codes": ["PSY-S2", "S2-P1"], "roles": ["arzt"] },
+    { "code": "U-LAB-Z",  "email": "labor.zentral@test.invalid",  "legal_entity_code": "RT-NORD", "unit_codes": ["ZD-LAB-UNIT"], "roles": ["funktionsdienst"] },
+    { "code": "U-EXT-N",  "email": "export.nord@test.invalid",    "legal_entity_code": "RT-NORD", "unit_codes": [],             "roles": ["datenschutz_export"] }
+  ],
+  "patients": [
+    {
+      "code": "PAT-01",
+      "name_family": "Muster",
+      "name_given": "Anna",
+      "birth_date": "1984-05-12",
+      "synthetic_kvnr": "T000000001",
+      "identity_status": "verified",
+      "legal_entities": ["RT-NORD"],
+      "backlog_scenarios": [1]
+    },
+    {
+      "code": "PAT-02",
+      "name_family": "Beispiel",
+      "name_given": "Bernd",
+      "birth_date": "1972-11-03",
+      "synthetic_kvnr": "T000000002",
+      "identity_status": "verified",
+      "legal_entities": ["RT-NORD", "RT-SUED"],
+      "backlog_scenarios": [1, 4]
+    },
+    {
+      "code": "PAT-03",
+      "name_family": "Unbekannt-ZNA-01",
+      "name_given": "Notfall",
+      "birth_date": null,
+      "synthetic_kvnr": null,
+      "identity_status": "unknown_emergency",
+      "legal_entities": ["RT-NORD"],
+      "backlog_scenarios": [2]
+    },
+    {
+      "code": "PAT-04",
+      "name_family": "Verlegung",
+      "name_given": "David",
+      "birth_date": "1961-02-20",
+      "synthetic_kvnr": null,
+      "identity_status": "verified",
+      "legal_entities": ["RT-NORD", "RT-SUED"],
+      "backlog_scenarios": [1]
+    },
+    {
+      "code": "PAT-05",
+      "name_family": "Psych-Sensibel",
+      "name_given": "Eva",
+      "birth_date": "1990-08-15",
+      "synthetic_kvnr": null,
+      "identity_status": "verified",
+      "legal_entities": ["RT-SUED"],
+      "has_legal_hold": true,
+      "backlog_scenarios": [4]
+    },
+    {
+      "code": "PAT-06",
+      "name_family": "Auftrag-Labor",
+      "name_given": "Frank",
+      "birth_date": "1955-09-01",
+      "synthetic_kvnr": null,
+      "identity_status": "verified",
+      "legal_entities": ["RT-NORD"],
+      "backlog_scenarios": [3]
+    },
+    {
+      "code": "PAT-07",
+      "name_family": "Neugeborenes-Muster",
+      "name_given": "Kind",
+      "birth_date": null,
+      "synthetic_kvnr": null,
+      "identity_status": "newborn_provisional",
+      "mother_patient_code": "PAT-01",
+      "legal_entities": ["RT-NORD"],
+      "backlog_scenarios": [2]
+    }
+  ],
+  "negative_tests": [
+    { "id": "NVT-01", "package": "EP-01",  "actors": ["U-ADM-N", "U-DOC-N1"], "expected_status": [403], "summary": "Keine RT-SUED-Org-Einheiten für RT-NORD-Benutzer" },
+    { "id": "NVT-02", "package": "EP-01",  "actors": ["U-ADM-N"],             "expected_status": [400, 403], "summary": "Keine Cross-Tenant-Hierarchiekante, kein Zyklus, keine Vererbung über organization_group" },
+    { "id": "NVT-03", "package": "EP-04a", "actors": ["U-PLAT", "U-ADM-N", "U-HR-N"], "expected_status": [403], "summary": "Admin/Technik/HR erhalten kein klinisches Leserecht" },
+    { "id": "NVT-04", "package": "EP-01c", "actors": ["U-PLAT", "U-ADM-N"],   "expected_status": [400, 403], "summary": "Policy-Floor (treatment_context.enforce, Klasse-A-Schutz) nicht abschaltbar" },
+    { "id": "NVT-05", "package": "EP-02",  "actors": ["U-DOC-N1"], "patient": "PAT-02", "expected_status": [403, 404], "summary": "MPI-Suche eröffnet keine Quersicht auf RT-SUED-Fälle; Lese-Audit erzwungen" },
+    { "id": "NVT-06", "package": "EP-02c", "actors": ["U-ADM-N"],  "patient": "PAT-02", "expected_status": [400, 403, 409], "summary": "Kein Merge über Rechtsträgergrenzen, kein Auto-Merge, Sperre bei kritischem Prozess" },
+    { "id": "NVT-07", "package": "EP-03",  "actors": ["U-DOC-N1"], "patient": "PAT-02", "expected_status": [403, 404], "summary": "Kein Zugriff und kein Existenz-Leak auf fremde Fallnummern aus RT-SUED" },
+    { "id": "NVT-08", "package": "EP-04b", "actors": ["U-DOC-S1"], "patient": "PAT-05", "expected_status": [403], "summary": "Kein standortübergreifender Fallzugriff (KL-S1 -> KL-S2) ohne Behandlungszusammenhang" },
+    { "id": "NVT-09", "package": "EP-04b", "actors": ["U-LAB-Z"],  "patient": "PAT-06", "expected_status": [403], "summary": "Zentraldienst ohne Auftrag, nach Auftragsende oder ohne aktives service_agreement gesperrt" },
+    { "id": "NVT-10", "package": "EP-04c", "actors": ["U-DOC-N1"], "patient": "PAT-01", "expected_status": [200], "summary": "Pflicht-Lese-Audit mit legal_entity_id und purpose_of_use ohne PII-Volldump" },
+    { "id": "NVT-11", "package": "EP-04c", "actors": ["U-DOC-S1", "U-AUD-N"], "patient": "PAT-05", "expected_status": [403], "summary": "Break-Glass läuft ab; fremder Auditor (RT-NORD) sieht keine RT-SUED-Break-Glass-Einträge" },
+    { "id": "NVT-12", "package": "EP-04d", "actors": ["U-EXT-N"],  "patient": "PAT-02", "expected_status": [200], "summary": "DSGVO-Export über db.write() enthält ausschließlich RT-NORD-Daten" },
+    { "id": "NVT-13", "package": "EP-04d", "actors": ["U-ADM-S"],  "patient": "PAT-05", "expected_status": [409], "summary": "Legal Hold / Aufbewahrungsfrist blockiert Löschung und Anonymisierung" },
+    { "id": "NVT-14", "package": "EP-05a", "actors": ["U-DOC-N1"], "patient": "PAT-01", "expected_status": [200, 500], "summary": "Fehler-Injektion bei Entlassung belässt Bett niemals ungesperrt (Klasse-A-Invariante)" },
+    { "id": "NVT-15", "package": "EP-05b", "actors": ["U-ADM-N"],  "patient": "PAT-06", "expected_status": [200], "summary": "Outbox-Consumer RT-NORD sieht keine RT-SUED-Events; Inbox dedupliziert Duplikate" },
+    { "id": "NVT-16", "package": "EP-07",  "actors": ["U-ADM-N", "U-ADM-S"], "expected_status": [200], "summary": "Mandanten-Präfixzwang in Caches, Berichten und Hintergrundjobs" },
+    { "id": "NVT-17", "package": "EP-12",  "actors": ["U-SEK-N1", "U-DOC-N1"], "patient": "PAT-05", "expected_status": [403, 409], "summary": "Keine medizinische Freigabe durch Sekretariat; kein OCR/DMS-Leak über Mandantengrenze" },
+    { "id": "NVT-18", "package": "EP-23",  "actors": ["U-DOC-N1"], "patient": "PAT-01", "expected_status": [400, 403], "summary": "Prompt-Injection-Schutz bei KI-Entwürfen; keine autonome Freigabe" }
+  ]
+}

@@ -6,18 +6,19 @@ Stand: 24.11.2026 · in Entwicklung, nicht für den Echtbetrieb freigegeben
 
 | Dokument | Inhalt |
 |---|---|
-| [ROADMAP.md](ROADMAP.md) | Verbindliche Meilensteine M00–M11, Quality Gates G0–G7, Checks & Balances |
-| [ABNAHMEBERICHT.md](ABNAHMEBERICHT.md) | Nachweisvorlage für Pakete und Meilensteine |
+| [ROADMAP.md](ROADMAP.md) | Verbindliche Meilensteine (M00–M07 / EP-00–26; Kurzphasen M00–M11 in README), Quality Gates G0–G7 & Paketzerlegung |
+| [ABNAHMEBERICHT.md](ABNAHMEBERICHT.md) | Verbindliche Abnahmebericht-Vorlage (G0–G7) und Berichtsverzeichnis |
+| [KOORDINATIONSREGISTER.md](KOORDINATIONSREGISTER.md) | Zentrales Multi-Agenten-Arbeitspaket-, Ressourcen- und Reservierungsregister (`google-neon`) |
+| [UEBERGABE_GIT_CI.md](UEBERGABE_GIT_CI.md) | Schritt-für-Schritt-Übergabe-Playbook für Git-Branch, GitHub-Issue, Draft-PR, `G6`-Review & CI |
 | [ENTERPRISE_KIS.md](ENTERPRISE_KIS.md) | Verbindliches Zielbild für Klinikverbünde und MVZ, Funktionsparität E01–E24 |
 | [TI_COMPLIANCE.md](TI_COMPLIANCE.md) | Gematik/TI, ISiK, ISiP und externe Nachweise |
 | [CLINICAL_WORKFLOWS.md](CLINICAL_WORKFLOWS.md) | Native Notaufnahme, Arztbriefredaktion, Dokumentenmanagement und Freigabeprozesse |
 | [ENTERPRISE_BACKLOG.md](ENTERPRISE_BACKLOG.md) | Priorisierte EP-00–26, Abhängigkeiten und Abnahme |
-| [ROADMAP.md](ROADMAP.md) | Abhängigkeitsbasierte Gesamt-Roadmap (M00–M10), Quality Gates G0–G7 und Paketzerlegung |
 | [EP00_ARCHITEKTUR_UND_ANALYSE.md](EP00_ARCHITEKTUR_UND_ANALYSE.md) | EP-00 Ist-Analyse, identifizierte Lücken und verbindliche ADRs (ADR-001–ADR-007) |
-| [NATIVE_FIRST_REGISTER.md](NATIVE_FIRST_REGISTER.md) | Verbindliches N/H/X-Entscheidungsregister für E01–E24, TI01–TI15, DOC/ED |
+| [vertraege/README.md](vertraege/README.md) | Implementierungsreife M01-Umsetzungsverträge (`EP-01`–`EP-07`, Migrationsentwürfe `012`–`016`) & synthetische JSON-Fixtures |
+| [NATIVE_FIRST_REGISTER.md](NATIVE_FIRST_REGISTER.md) | Verbindliches N/H/X-Entscheidungsregister für EP-00–07, E01–E24, TI01–TI15, DOC/ED |
 | [THREAT_MODEL_VERBUND.md](THREAT_MODEL_VERBUND.md) | Bedrohungsmodell für Klinikverbund, MVZ, zentrale Dienste und Sicherheitsinvarianten |
-| [VERBUND_TESTMODELL.md](VERBUND_TESTMODELL.md) | Synthetisches Verbund-Testmodell und Pflicht-Negativtestkatalog (NVT-01–NVT-16) |
-| [ABNAHMEBERICHT.md](ABNAHMEBERICHT.md) | Verbindliche Abnahmebericht-Vorlage (G0–G7) und Berichtsverzeichnis |
+| [VERBUND_TESTMODELL.md](VERBUND_TESTMODELL.md) | Synthetisches Verbund-Testmodell und Pflicht-Negativtestkatalog (NVT-01–NVT-18) |
 | [FUNKTIONSLANDKARTE.md](FUNKTIONSLANDKARTE.md) | Was je Arbeitsbereich vorhanden ist und was fehlt |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Kern, Module, Weg einer Anfrage, Ereignisse |
 | [MODULE.md](MODULE.md) | Regeln und Anleitung für Module |

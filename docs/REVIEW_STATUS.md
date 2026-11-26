@@ -1,32 +1,40 @@
 # KIS — Prüfstatus
 
-## EP-00 (M00): Ist-Analyse, Zielarchitektur, Native-First-Register & Roadmap vom 24.11.2026
+## EP-00 (M00): Ist-Analyse, Konsistenzbereinigung (v2), Zielarchitektur & Koordinationsregister vom 24.11.2026
 
-Arbeitspaket: `EP-00` (`M00`). Basis-Commit/Branch: *im Container-Snapshot liegt kein `.git`-Verzeichnis vor; Git-Branch, Commit-SHA und PR müssen im Git-Checkout nachgezogen werden.* Vollständiger Bericht: [abnahme/EP-00.md](abnahme/EP-00.md).
+Arbeitspaket: `EP-00` (`M00`). Bearbeiter & Koordinator: **`google-neon`**. Vorgesehener Branch: `agent/google-neon/ep00-architecture-coordination` *(im Container-Snapshot liegt kein `.git`-Verzeichnis und kein `gh`-CLI vor; Git-Branch, Commit-SHA, GitHub-Koordinations-Issue und PR müssen im Git-Checkout nachgezogen werden).* Vollständige Berichte: [abnahme/EP-00.md](abnahme/EP-00.md) und [abnahme/EP-00-konsistenzpruefung.md](abnahme/EP-00-konsistenzpruefung.md).
 
-### Erstellte und aktualisierte Dokumente
+> **Wichtige Abgrenzung (kein Selbst-Review):** Da die ursprünglichen `EP-00`-Dokumente von `google-neon` stammen, handelt es sich bei der v2-Bereinigung ausdrücklich um eine **Konsistenz-, Abgleichs- und Selbstprüfung** und **nicht** um ein unabhängiges `G6`-Review. Das unabhängige Gegenreview (`G6`) ist verbindlich an **`hermes`** (bzw. eine andere unabhängige Instanz) zugewiesen (`EP-00-REV`).
 
-- [EP00_ARCHITEKTUR_UND_ANALYSE.md](EP00_ARCHITEKTUR_UND_ANALYSE.md): Code- und Migrationsanalyse (`001`–`011`), 13 dokumentierte Architektur-/Sicherheitsbefunde (`G-01`–`G-13`, darunter Laufzeit-Parameterfehler in `crates/kis-doctors/src/lib.rs::list_doctors`), `ADR-001` bis `ADR-007`, offene Hausentscheidungen `DEC-01`–`DEC-07`.
-- [NATIVE_FIRST_REGISTER.md](NATIVE_FIRST_REGISTER.md): Verbindliches N/H/X-Entscheidungsregister für `E01`–`E24`, `TI01`–`TI15`, `DOC-01`–`07`, `ED-01`–`06`.
-- [THREAT_MODEL_VERBUND.md](THREAT_MODEL_VERBUND.md): Bedrohungsmodell (`T01`–`T18`) und Liste der Klasse-A-Sicherheitsinvarianten.
-- [VERBUND_TESTMODELL.md](VERBUND_TESTMODELL.md): Synthetisches Verbund-Testmodell und Katalog negativer Verbundtests (`NVT-01`–`NVT-16`).
-- [ROADMAP.md](ROADMAP.md): Gesamt-Roadmap (`M00`–`M10`), Quality Gates `G0`–`G7` und Feinzerlegung (`EP-01a`–`EP-07b`).
-- [ABNAHMEBERICHT.md](ABNAHMEBERICHT.md) und [abnahme/EP-00.md](abnahme/EP-00.md): Vorlage und ausgefüllter EP-00-Abnahmebericht.
-- Lokaler statischer Vorschau-Server (`package.json`, `server.mjs`) für `static/` und lesende `docs/`-Ansicht auf Port 3000 (`/api/*` antwortet ehrlich mit `503 BACKEND_UNAVAILABLE`).
+### Erstellte und konsistenzbereinigte Dokumente (v2)
 
-### Tatsächlich ausgeführte Prüfungen (24.11.2026)
+- [EP00_ARCHITEKTUR_UND_ANALYSE.md](EP00_ARCHITEKTUR_UND_ANALYSE.md): Code- und Migrationsanalyse (exakt **16 Workspace-Crates**, **49 Tabellen** aus `001`–`011`), 14 dokumentierte Befunde (`G-01`–`G-14`, darunter Laufzeit-Parameterfehler `G-13` in `crates/kis-doctors/src/lib.rs::list_doctors` als eigenes Paket `AP-09` sowie `AP-08` als `G-14`), `ADR-001` bis `ADR-007` und offene Entscheidungen `DEC-01`–`DEC-09`.
+- [NATIVE_FIRST_REGISTER.md](NATIVE_FIRST_REGISTER.md): 1:1 auf `ENTERPRISE_KIS.md` (`E01`–`E24`), `TI_COMPLIANCE.md` (`TI01`–`TI15`), `ENTERPRISE_BACKLOG.md` (`EP-00`–`EP-26`) und `CLINICAL_WORKFLOWS.md` (`DOC-01`–`07`, `ED-01`–`06`) abgeglichenes N/H/X-Entscheidungsregister.
+- [THREAT_MODEL_VERBUND.md](THREAT_MODEL_VERBUND.md): Bedrohungsmodell (`T01`–`T24`, verknüpft mit `SICHERHEITS_ABNAHME.md`) und Liste der Klasse-A-Sicherheitsinvarianten.
+- [VERBUND_TESTMODELL.md](VERBUND_TESTMODELL.md): Synthetisches Verbund-Testmodell (`PAT-01`–`PAT-07` inkl. Neugeborenen-Szenario) und 18 Pflicht-Negativtests (`NVT-01`–`NVT-18`).
+- [ROADMAP.md](ROADMAP.md): 1:1 mit `ENTERPRISE_BACKLOG.md` bereinigte Gesamt-Roadmap (`M00`–`M07`, `EP-00`–`EP-26`), Quality Gates `G0`–`G7`, Status-Taxonomie und Feinzerlegung (`EP-01a`–`EP-07b`).
+- [KOORDINATIONSREGISTER.md](KOORDINATIONSREGISTER.md): Zentrales Multi-Agenten-Aufgaben-, Ressourcen- und Sperrregister (Spiegelungsvorlage für das GitHub-Koordinations-Issue, alleiniger Schreiber: `google-neon`).
+- [vertraege/README.md](vertraege/README.md): Implementierungsreife `M01`-Umsetzungsverträge (`EP-01` bis `EP-07`, konkrete Migrationsentwürfe `012`–`016`, Rust-Kernverträge für `TenantContext`, `PolicyFloor`, `PermissionSet([u64; 4])`, mandantenbegrenztes `MY_UNITS`, `InvariantHandler`, `ClinicalTimestamp`/`MeasuredQuantity`/`ClinicalResultStatus`) sowie kanonische, maschinenlesbare synthetische Fixtures ([verbund_test_fixture.json](vertraege/verbund_test_fixture.json), [normative_requirements_seed.json](vertraege/normative_requirements_seed.json)).
+- [ABNAHMEBERICHT.md](ABNAHMEBERICHT.md), [abnahme/EP-00.md](abnahme/EP-00.md) und [abnahme/EP-00-konsistenzpruefung.md](abnahme/EP-00-konsistenzpruefung.md).
+- [UEBERGABE_GIT_CI.md](UEBERGABE_GIT_CI.md) und `scripts/check_vertraege.py`: Reproduzierbare Git-/GitHub-/CI-Übergabebefehle für `hermes` (`EP-00-REV` + paralleles `AP-09`) sowie eigenständige Validierung der kanonischen Fixtures und Querdokument-IDs.
+- Lokaler schreibgeschützter Vorschau- und Koordinationsserver (`package.json`, `server.mjs`, `preview/`): Architektur- und Koordinations-Cockpit für Roadmap, `M01`-Verträge, Verbund-Testmodell, Normenregister und echte lokale Prüfläufe auf Port 3000; unveränderte statische KIS-Oberfläche unter `/kis` und `/arbeitsplatz`; `/api/*` antwortet ehrlich mit `503 BACKEND_UNAVAILABLE`.
+
+### Tatsächlich ausgeführte Prüfungen (26.11.2026)
 
 - `python3 scripts/check_guardrails.py`: bestanden (`0 Verstöße`, `migrations/CHECKSUMS` unverändert).
 - `python3 scripts/check_modules.py`: bestanden (`49 Tabellen, 11 Fachmodule geprüft, 0 Verstöße`).
 - `python3 scripts/check_docs.py`: bestanden (`0 Fehler` über alle Markdown-Dokumente, Links, JSON-, TOML- und Shell-Codeblöcke).
-- Vorschau-Server (`node --check server.mjs`, HTTP- und Browser-Prüfung auf `http://localhost:3000`): bestanden.
+- `python3 scripts/check_vertraege.py`: bestanden (`2 Rechtsträger, 18 NVTs, 17 Normen, 0 Fehler`, Querdokument-ID-Konsistenz geprüft).
+- Vorschau-Server (`node --check server.mjs && node --check preview/cockpit.js`, Build/Lint sowie Live-HTTP-Prüfung auf Port 3000): bestanden.
+- **GitHub-Abgleich & unabhängiges `G6`-Review zu PR #9 (`hermes-qwen38`, 26.11.2026):** Live-Abfrage auf `winconlin/KIS` — PR #9 (`list_doctors`-Parameterfix + 20 PG-Tests, 5/5 CI-Checks grün) wurde als **`2d0e4479f9`** auf `origin/main` gemerged und in diesen Workspace synchronisiert; Issue #10 ist geschlossen. Unabhängiges `G6`-Review durch `google-neon`: [abnahme/PR-09-review-list-doctors.md](abnahme/PR-09-review-list-doctors.md) (fachlicher Fix i. O.; Post-Merge-Nachbesserung `R-01` zur Entfernung der unbenutzten Dev-Dependency `kis-app` aus `crates/kis-doctors/Cargo.toml`/`Cargo.lock` als **`AP-09b`** eingetragen).
 
-### Nicht geprüft / offen (24.11.2026)
+### Nicht geprüft / offen (26.11.2026)
 
-- **Kein Echtbetrieb, keine Freigabe.** Keine neuen Rust- oder SQL-Implementierungen in `EP-00`.
-- `scripts/check.sh` vollständig (`cargo fmt`, `cargo clippy`, `cargo test` gegen PostgreSQL, `scripts/check_sql.py`, `scripts/check_audit_exceptions.py`): in dieser Container-Umgebung **nicht ausführbar** (fehlende `cargo`/`rustc`/`postgres`/`psql`/`docker`/`age` sowie fehlende `Cargo.lock`). Muss vor Merge in der Rust-/PostgreSQL-CI vollständig nachgeholt werden.
-- **Unabhängiges Architektur- und Sicherheitsreview (`G6`):** offen; vor ADR-Freeze und Start von `EP-01a` zwingend erforderlich.
-- **Neu identifizierter Bestandsfehler (`G-13`):** `crates/kis-doctors/src/lib.rs::list_doctors` baut `$1`/`$2`-Platzhalter ohne `.bind(...)` und formatiert `cursor` direkt in SQL (als `AP-01`-Korrektur in Rust/PG-Umgebung einplanen).
+- **Kein Echtbetrieb, keine Freigabe.** Keine eigenen Änderungen durch `google-neon` an Rust-Code (`crates/`) oder Datenbankmigrationen (`migrations/`).
+- `scripts/check.sh` vollständig (`cargo fmt`, `cargo clippy`, `cargo test` gegen PostgreSQL, `scripts/check_sql.py`, `scripts/check_audit_exceptions.py`): in dieser Container-Umgebung **nicht ausführbar** (`cargo`/`rustc`/`postgres`/`psql`/`docker`/`age` und `Cargo.lock` fehlen). Muss auf dem PR-Commit in der Rust-/PostgreSQL-CI vollständig durchlaufen.
+- **GitHub-Push, Koordinations-Issue & Draft-PR:** Im Container fehlen `.git`, `gh` sowie GitHub-Schreibzugangsdaten. Übertragung erfolgt über den GitHub-Sync der Entwicklungsumgebung oder gemäß [UEBERGABE_GIT_CI.md](UEBERGABE_GIT_CI.md).
+- **Unabhängiges Architektur- und Sicherheitsreview (`G6`) für `EP-00`:** **offen — zugewiesen an `hermes-qwen38` / unabhängige Instanz** vor ADR-Freeze und Start von `EP-01a`.
+- **Nachbesserung `AP-09b` (auf `origin/main` `2d0e4479f9`):** Unbenutzte zirkuläre `[dev-dependencies] kis-app` in `crates/kis-doctors/Cargo.toml` + `Cargo.lock` auf einem Rust-Host entfernen (hier bewusst nicht ohne `Cargo.lock` angefasst, damit `cargo test --locked` grün bleibt).
 
 ---
 

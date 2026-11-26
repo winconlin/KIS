@@ -1,33 +1,34 @@
 # Bedrohungsmodell Klinikverbund, MVZ & Zentrale Dienste
 
-Stand: 24.11.2026 · Arbeitspaket: `EP-00` · Bezug: [SECURITY.md](SECURITY.md), [SICHERHEITS_ABNAHME.md](SICHERHEITS_ABNAHME.md), [ENTERPRISE_KIS.md](ENTERPRISE_KIS.md)
+Stand: 24.11.2026 (konsistenzbereinigte Fassung v2) · Arbeitspaket: `EP-00` · Autor: `google-neon` · Status: **Im Review (`G6` offen)** · Bezug: [SECURITY.md](SECURITY.md), [SICHERHEITS_ABNAHME.md](SICHERHEITS_ABNAHME.md), [ENTERPRISE_KIS.md](ENTERPRISE_KIS.md), [CLINICAL_WORKFLOWS.md](CLINICAL_WORKFLOWS.md)
 
-Dieses Dokument analysiert die Sicherheits- und Patientensicherheitsrisiken beim Ausbau von der Ein-Haus-Grundlage zu einer mandantenfähigen Verbundplattform mit getrennten Rechtsträgern, Schwesterkliniken, MVZ, zentralen Diensten und TI-Schnittstellen. Alle konkreten Ist-Befunde beruhen auf der Code- und Schema-Analyse in [EP00_ARCHITEKTUR_UND_ANALYSE.md](EP00_ARCHITEKTUR_UND_ANALYSE.md).
+Dieses Dokument analysiert die Sicherheits- und Patientensicherheitsrisiken beim Ausbau von der Ein-Haus-Grundlage zu einer mandantenfähigen Verbundplattform mit getrennten Rechtsträgern, Schwesterkliniken, MVZ, zentralen Diensten, klinischen Dokumenten-/Notaufnahme-Workflows und TI-Schnittstellen. Alle konkreten Ist-Befunde beruhen auf der Code- und Schema-Analyse in [EP00_ARCHITEKTUR_UND_ANALYSE.md](EP00_ARCHITEKTUR_UND_ANALYSE.md).
 
 ---
 
 ## 1. Vertrauensgrenzen (Trust Boundaries)
 
 ```text
-[TB-1: Browser / Klinik-Endgerät / MVZ-Arbeitsplatz]
-   |  TLS 1.3 (+ perspektivisch HttpOnly-Cookie / mTLS / Smartcard-Terminal)
+[TB-1: Browser / Klinik-Endgerät / MVZ-Arbeitsplatz / Patientenportal / Großbild-Warteraum]
+   |  TLS 1.3 (HttpOnly-Cookie + CSRF / mTLS / Smartcard-Terminal)
    v
 [TB-2: Reverse-Proxy / Ingress (nginx)]
-   |  Vertrauenswürdige Client-IP (nur Loopback/internes Netz), strikte CSP/Header
+   |  Vertrauenswürdige Client-IP (nur konfigurierte Proxy-Grenze), strikte CSP/Header
    v
 [TB-3: KIS-Applikationsserver (kis-app, DB-Rolle kis_app)]
    |  +-- TB-3a: Mandantengrenze (legal_entity_id: RT-NORD vs. RT-SUED)
-   |  +-- TB-3b: Standort-/Sektorgrenze (Akutklinik vs. MVZ vs. Zentraldienst)
+   |  +-- TB-3b: Standort-/Sektorgrenze (Akutklinik vs. MVZ vs. Zentraldienst vs. Portal)
    |  +-- TB-3c: Zweck- & Behandlungszusammenhangsgrenze (TreatmentContext / Break-Glass)
-   |  +-- TB-3d: Administrationsgrenze (platform_admin vs. tenant_admin vs. Klinik)
+   |  +-- TB-3d: Domänentrennung (Klinik vs. platform_admin/tenant_admin vs. HR vs. Finanzen vs. CIRS vs. Forschung)
    |  +-- TB-3e: Modulgrenze (Tabellen-Eigentum gemäß config/module_tables.toml)
    v
 [TB-4: PostgreSQL (kis_app Laufzeit vs. kis_owner Migrationen)]
-   |  Append-Only Audit-Trigger, Constraints, Feldverschlüsselung (AEAD)
+   |  Append-Only Audit-Trigger, Constraints, AEAD-Feldverschlüsselung + Key-Rotation
    v
-[TB-5: Externe Netze & Dienste]
-   +-- TI / Konnektor / TI-Gateway (mTLS, SMC-B, HBA)
-   +-- Fremdsysteme (HL7 / FHIR / DICOM / GDT / MEDICO-Koexistenz)
+[TB-5: Externe Netze, Geräte & Dienste]
+   +-- TI / Konnektor / TI-Gateway (mTLS, SMC-B, eHBA, eGK)
+   +-- Fremdsysteme & Medizingeräte (HL7 / FHIR / DICOM / IHE / xDT / MEDICO-Koexistenz)
+   +-- Optionale lokale/genehmigte KI-/ASR-Modelle (keine ungenehmigte PHI-Weitergabe)
    +-- Externer Audit-Prüfanker (WORM) & verschlüsselte Backups (age)
 ```
 
@@ -37,55 +38,58 @@ Dieses Dokument analysiert die Sicherheits- und Patientensicherheitsrisiken beim
 
 | Profil | Beschreibung | Relevante Fähigkeiten |
 |---|---|---|
-| **A1 — Mandantenfremder Beschäftigter** | Regulär authentifizierter Kliniker oder Verwaltungsmitarbeiter aus Rechtsträger A (`RT-NORD`) | Gültige Sitzung in `RT-NORD`; kennt oder errät UUIDs/Fallnummern/KVNR aus Rechtsträger B (`RT-SUED`) |
-| **A2 — Neugieriger Beschäftigter im selben Rechtsträger** | Authentifizierter Mitarbeiter derselben Klinik ohne Behandlungszusammenhang (z. B. Kollege/Prominenter auf anderer Station) | Gültige Rolle `arzt`/`pflege`, versucht direkten Fall-, Patienten-, Such- oder Exportzugriff oder Missbrauch von Break-Glass |
-| **A3 — Privilegierter IT-/Plattform-Administrator** | Betreiber oder Helpdesk-Admin mit administrativen Rechten | Versucht über globale Adminrolle, Settings-Änderung (`treatment_context.enforce=false`) oder Rollenmanipulation klinische Daten einzusehen |
-| **A4 — Kompromittiertes Schnittstellen- oder Zentraldienst-Konto** | Servicekonto eines zentralen Labors (`ZD-LAB`), eines HL7-/FHIR-Adapters oder eines Event-Consumers | Legitimer Auftragskanal, versucht mandantenfremde Akten abzurufen, fremde Ereignisse zu konsumieren oder Replay-Angriffe |
-| **A5 — Externer Angreifer / XSS / Session-Hijacking** | Angreifer im lokalen Netz oder über kompromittiertes Browser-Script | Versucht Token-Diebstahl (`localStorage`), CSRF, Rate-Limit-Umgehung, SQL-/Filter-Injection oder Brute-Force |
-| **A6 — Datenbank-/Infrastruktur-Administrator** | Zugriff auf DB-Host, Backups oder Logs | Versucht Auslesen sensibler Patientenfelder, stille Manipulation von `audit_logs` oder Aushebeln von Aufbewahrungsfristen |
+| **A1 — Mandantenfremder Beschäftigter** | Regulär authentifizierter Mitarbeiter aus Rechtsträger A (`RT-NORD`) | Gültige Sitzung in `RT-NORD`; kennt oder errät UUIDs/Fallnummern/KVNR aus Rechtsträger B (`RT-SUED`) |
+| **A2 — Neugieriger Beschäftigter im selben Rechtsträger** | Authentifizierter Mitarbeiter derselben Klinik ohne Behandlungszusammenhang | Versucht direkten Fall-, Patienten-, Dokument-/OCR-, Such- oder Exportzugriff oder Missbrauch von Break-Glass |
+| **A3 — Privilegierter IT-/Plattform- oder Bereichs-Administrator** | Betreiber, Helpdesk-, HR- oder Finanz-Admin | Versucht über globale Adminrolle, Settings-Änderung (`treatment_context.enforce=false`), HR-/Finanz-/CIRS-Konten oder Rollenmanipulation klinische Daten einzusehen |
+| **A4 — Kompromittiertes Schnittstellen-, Zentraldienst- oder Portal-Konto** | Servicekonto eines zentralen Labors (`ZD-LAB`), HL7-/FHIR-Adapters, Event-Consumers oder Patientenportal-Kontos | Legitimer Auftragskanal, versucht mandantenfremde Akten abzurufen, fremde Events zu konsumieren, Replay oder Prompt-Injection |
+| **A5 — Externer Angreifer / XSS / Session-Hijacking** | Angreifer im lokalen Netz oder über kompromittiertes Browser-Script / manipulierte Upload-Datei | Versucht Token-Diebstahl (`localStorage`), CSRF, Rate-Limit-Umgehung, SQL-/Filter-Injection, Malware-Upload ins DMS |
+| **A6 — Datenbank-/Infrastruktur-Administrator** | Zugriff auf DB-Host, Backups oder Logs | Versucht Auslesen sensibler Patientenfelder, stille Manipulation/Abschneiden von `audit_logs` oder Umgehen von Legal Holds |
 
 ---
 
-## 3. Konkrete Bedrohungsmatrix (`T01`–`T18`)
+## 3. Bedrohungsmatrix (`T01`–`T24`)
 
-| ID | Bedrohung (STRIDE) | Angreifer | Ist-Befund im Bestandscode (24.11.2026) | Ziel-Gegenmaßnahme | Zielpaket | Pflicht-Negativtest |
+| ID | Bedrohung (STRIDE) | Angreifer | Ist-Befund / Risiko | Ziel-Gegenmaßnahme | Zielpaket | Pflicht-Nachweis (`NVT` / `SICHERHEITS_ABNAHME`) |
 |---|---|---|---|---|---|---|
-| **T01** | **Mandantenübergreifender Datenabfluss via Org-Baum** *(Information Disclosure)* | A1, A3 | `org_units` hat kein `legal_entity_id`; `MY_UNITS` (`treatment.rs`) traversiert ab `traeger` rekursiv über alle Häuser; `GET /api/v1/org/units` liefert global alle Einheiten. | Harte `legal_entity_id`-Grenze auf `org_units`, DB-Constraint gegen rechtsträgerübergreifende Eltern-Kind-Kanten, mandantengebundener `TenantContext`. | `EP-01` | `NVT-01`, `NVT-02` |
-| **T02** | **Globaler Patienten- und Fall-IDOR** *(Information Disclosure / Tampering)* | A1, A2 | `GET /api/v1/patients`, `/patients/:id`, `/cases?caseNumber=`, `/patients/:id/cases` haben `Scope::None` ohne Mandanten- oder Behandlungszusammenhangsprüfung. | Mandanten-Scoping + Trennung MPI vs. lokale Patientenakte (`ADR-002`); verpflichtende Behandlungszusammenhangs-/Zweckprüfung auf Fall- und Suchrouten. | `EP-02`, `EP-03`, `EP-04` | `NVT-05`, `NVT-07`, `NVT-08` |
-| **T03** | **Klinischer Datenzugriff durch IT-/Global-Admin** *(Elevation of Privilege)* | A3 | `RoleMatrix::effective` (`rbac.rs`) gewährt `admin` pauschal `PermissionSet::all()`. | Rollenaufteilung in `platform_admin` / `tenant_admin` / `privacy_auditor` ohne klinisches Leserecht; Abschaffung der hartcodierten Admin-Allmacht (`ADR-004`). | `EP-04a` | `NVT-03` |
-| **T04** | **Abschalten von Datenschutz-Schutzregeln zur Laufzeit** *(Defense Evasion)* | A3 | `security.treatment_context.enforce` (`platform.rs`) kann auf `false` gesetzt werden. | Unveränderliche Schutzklasse (`policy_floor`) für Mandantenisolation, Behandlungszusammenhang und Pflicht-Audit (`ADR-001`/`ADR-004`). | `EP-01c`, `EP-04a` | `NVT-04` |
-| **T05** | **MPI-Missbrauch als Datenbrücke zwischen Rechtsträgern** *(Information Disclosure)* | A1, A2 | Globale Tabelle `patients` ohne Trennung von Identitätsindex und rechtsträgerlokaler Akte. | Zweistufiges MPI (`ADR-002`): rechtsträgerlokale Akten getrennt, MPI-Suche minimal und zwingend lesend auditiert, keine Quersicht auf fremde Fälle. | `EP-02` | `NVT-05`, `NVT-06` |
-| **T06** | **Fehlzuordnung / Verwechslung bei Merge oder Notfallpatienten** *(Patient Safety / Tampering)* | A2 (Fehler) | `birth_date NOT NULL` erzwingt fiktive Daten bei unbekannten Notfällen; kein Merge/Unmerge-Workflow. | Expliziter `unknown_emergency`-Status, Vier-Augen- bzw. privilegierter Merge/Unmerge mit Sperre bei offenen kritischen Prozessen (Transfusion/OP) und Audit. | `EP-02c` | `NVT-06`, Merge-Integritätstest |
-| **T07** | **Zentraldienst-Überzugriff (z. B. Zentrallabor sieht fremde Akten)** *(Elevation of Privilege)* | A4 | Kein Konzept für `service_agreements`; Auftragszugriff nur über einheitliche `org_units`. | Explizite zeitgebundene `service_agreements` je Rechtsträger; Zugriff ausschließlich auf aktive Auftragsfälle des jeweiligen Mandanten und für den vereinbarten Zweck. | `EP-01b`, `EP-04b` | `NVT-09` |
-| **T08** | **Unbemerkter Lesezugriff (Schnüffeln) & Break-Glass-Missbrauch** *(Repudiation / Disclosure)* | A2 | Lesezugriffe auf Patienten, Fälle, Labor und Dokumentation erzeugen aktuell keinen Audit-Eintrag; Break-Glass-Review nicht eskaliert. | Verpflichtendes Lese-Audit auf allen sensiblen Lese-/Suchrouten inkl. `legal_entity_id` und Zweck; verpflichtende Break-Glass-Nachprüfung mit Frist/Eskalation. | `EP-04c` | `NVT-10`, `NVT-11` |
-| **T09** | **DSGVO-Export über Rechtsträgergrenzen / Replica-Lag** *(Information Disclosure)* | A1, A3 | `export_patient` (`data_portability.rs`) liest von `db.read()` und exportiert global alle Fälle ohne `legal_entity_id`-Filter. | Zwingende Ausführung auf `db.write()`, strikte Mandantenbindung je Rechtsträger, vollständige JSON/CSV/FHIR-Abdeckung. | `EP-04d` | `NVT-12` |
-| **T10** | **Unzulässige Löschung trotz Aufbewahrungspflicht / Legal Hold** *(Tampering / Compliance)* | A3 | `retention_check()` (`data_deletion.rs`) prüft nur `appointments.start_time`; keine Legal Holds; `anonymization.rs` belässt Fall-Freitexte. | Vollständige Retention-Matrix (§ 630f BGB etc.), `legal_holds`-Sperre, mandantengebundene Anonymisierung inkl. Freitext-Redaktion. | `EP-04d` | `NVT-13` |
-| **T11** | **Sitzungs-/Token-Diebstahl & fehlende MFA-Härtung** *(Spoofing)* | A5, A6 | Frontend speichert Tokens in `localStorage` (`AP-02`); `users.mfa_secret` unverschlüsselt; MFA-Setup fehlt; `core_routes.rs` übergibt `ip = None` an Auth. | `HttpOnly; Secure; SameSite=Strict`-Cookies + CSRF, AEAD-verschlüsseltes `mfa_secret`, MFA-Enrollment-Flow, reale Client-IP-Auswertung (nur Proxy-Allowlist). | `EP-04a`, `AP-02` | `SICHERHEITS_ABNAHME` Auth/Session |
-| **T12** | **Klartext-PII in der Datenbank trotz vorhandener `*_enc`-Spalten** *(Information Disclosure)* | A6 | `kis-patients` liest/schreibt Klartextspalten `insurance_number`, `phone`, `email` statt `*_enc`. | Aktive AEAD-Verschlüsselung inkl. Key-Versionierung und Blind-Index; Bereinigung der Klartextpfade. | `EP-02a` | DB-Rohinspektionstest |
-| **T13** | **Manipulation der Audit-Kette durch DB-Admin ohne Erkennung** *(Repudiation / Tampering)* | A6 | Hash-Kette existiert intern in `audit_logs`, besitzt aber keinen externen Prüfanker; keine Partitionierung. | Regelmäßiger signierter Root-Hash-Export an externen WORM-Prüfanker + monatliche Partitionierung + automatisierte Kettenprüfung. | `EP-04c`, `EP-07` | Manipulations-/Anker-Verifikationstest |
-| **T14** | **Stilles Scheitern sicherheitskritischer Folgeaktionen** *(Patient Safety / Integrity)* | Systemfehler / A4 | `EventBus::publish` (`events.rs`) schluckt Fehler im Savepoint; Bettensperre bei Entlassung (`kis-orders`) läuft best-effort; `resolve_event_failure` ohne Audit. | Zwei-Klassen-Ereignisvertrag (`ADR-005`): atomare Sicherheitsinvarianten / sicherer Sperrzustand (Klasse A); Outbox/Inbox mit Quarantäne und auditiertem Replay (Klasse B). | `EP-05` | `NVT-14`, Fehler-Injektionstest |
-| **T15** | **Mandantenübergreifende Ereignis-/Outbox-Vermischung** *(Information Disclosure)* | A4 | `domain_events` und `event_consumers` haben kein `legal_entity_id`-Feld. | Pflichtfeld `legal_entity_id` auf `domain_events` und `event_consumers`; Consumer dürfen ausschließlich eigene Mandanten-Events abrufen. | `EP-05b` | `NVT-15` |
-| **T16** | **Cache-, Export- oder Hintergrundjob-Leck zwischen Mandanten** *(Information Disclosure)* | A1, A4 | Noch keine verteilten Caches/Batch-Jobs im Kern, aber Risiko bei Einführung von Berichten, Brief-Rendering, Katalog-/Statistik-Caches. | Mandantenschlüssel (`legal_entity_id`) zwingender Präfix für jeden Cache-Key, Export-Pfad und Job-Kontext; kein gemeinsamer Ergebnis-Cache über Rechtsträger. | `EP-01`, `EP-07`, `EP-24` | `NVT-16` |
-| **T17** | **SQL-Parameterfehler & ungebundene Filter-Interpolation** *(Denial of Service / Injection)* | A5 | `kis-doctors/src/lib.rs` (`list_doctors`) bindet `$1`/`$2` nicht (500-Fehler) und interpoliert `cursor` per `format!`; `kis-patients` interpoliert `cursor` ebenfalls. | Strikte Parametrisierung aller SQL-Werte (auch typisierter UUIDs) über `sqlx::QueryBuilder` bzw. `.bind()`; Ergänzung von Filter-Regressionstests. | `AP-01`, `EP-02a` | Filter- & Fuzz-Tests |
-| **T18** | **Kompromittierung externer Schnittstellen / TI-Komponenten** *(Spoofing / Tampering)* | A4, A5 | Schnittstellen-Crates in `entwurf/` ungeprüft und nicht im Build. | Striktes mTLS, Signaturprüfung (QES/SMC-B), Profilvalidierung, Mandantenzuordnung pro Verbindung/BSNR/IK, Quittierungs- und Quarantäne-Queue für eingehende Nachrichten. | `EP-22`, `EP-23` | Schnittstellen-Negativtests + RU-Nachweis |
+| **T01** | **Mandantenübergreifender Datenabfluss via Org-Baum** *(Disclosure)* | A1, A3 | `org_units` ohne `legal_entity_id`; `MY_UNITS` (`treatment.rs`) traversiert ab `traeger` rekursiv über alle Häuser; `GET /api/v1/org/units` global. | Harte `legal_entity_id`-Grenze, zyklenfreier DB-Constraint gegen rechtsträgerübergreifende Kanten, serverseitiger `TenantContext`. | `EP-01` | `NVT-01`, `NVT-02` |
+| **T02** | **Globaler Patienten- und Fall-IDOR** *(Disclosure / Tampering)* | A1, A2 | `GET /api/v1/patients`, `/patients/:id`, `/cases?caseNumber=`, `/patients/:id/cases` laufen mit `Scope::None`. | Mandanten-Scoping, zweistufiges MPI (`ADR-002`), verpflichtende Behandlungszusammenhangs-/Zweckprüfung auf allen Fall- und Suchrouten. | `EP-02`, `EP-03`, `EP-04` | `NVT-05`, `NVT-07`, `NVT-08` |
+| **T03** | **Klinischer Datenzugriff durch IT-/Global-Admin oder HR/Finanzen** *(Elevation)* | A3 | `RoleMatrix::effective` (`rbac.rs`) gewährt `admin` pauschal `PermissionSet::all()`. | Rollenaufteilung `platform_admin` / `tenant_admin` / `privacy_auditor` / `hr_manager` / `finance_clerk` ohne pauschales klinisches Leserecht (`ADR-004`). | `EP-04a`, `EP-19`, `EP-20` | `NVT-03`, `A-09`, `A-10` |
+| **T04** | **Abschalten rechtlicher Mindestschutzregeln zur Laufzeit** *(Defense Evasion)* | A3 | `security.treatment_context.enforce` (`platform.rs`) kann auf `false` gesetzt werden. | Unveränderliche Schutzklasse (`policy_floor`); Modulabschaltung darf Schutzfunktionen nie still deaktivieren. | `EP-01c`, `EP-04a`, `EP-05` | `NVT-04`, Szenario 7 |
+| **T05** | **MPI-Missbrauch als Datenbrücke zwischen Rechtsträgern** *(Disclosure)* | A1, A2 | Globale Tabelle `patients` ohne Trennung von Identitätsindex und rechtsträgerlokaler Akte. | Zweistufiges MPI + Betriebsoption getrennter Identitätsräume (`ADR-002`); MPI-Suche minimal und lesend auditiert. | `EP-02` | `NVT-05`, `NVT-06`, `D-03` |
+| **T06** | **Fehlzuordnung / Verwechslung bei Merge, Notfallpatienten oder Neugeborenen** *(Patient Safety)* | A2 | `birth_date NOT NULL` erzwingt fiktive Daten; kein Merge/Unmerge-Workflow. | `unknown_emergency`/`newborn_provisional`, kein Auto-Merge nach Name+Geburtsdatum, geprüfter Merge/Unmerge mit Sperre bei offenen kritischen Prozessen. | `EP-02c`, `EP-16` | `NVT-06`, `D-05`, Merge-Race-Test |
+| **T07** | **Zentraldienst-Überzugriff (z. B. Zentrallabor sieht fremde Akten)** *(Elevation)* | A4 | Kein Konzept für `service_agreements`; Auftragszugriff nur über einheitliche `org_units`. | Zeitgebundene `service_agreements` je Rechtsträger; Zugriff strikt auf aktive Auftragsfälle des jeweiligen Mandanten. | `EP-01b`, `EP-04b` | `NVT-09` |
+| **T08** | **Unbemerkter Lesezugriff & Break-Glass-Missbrauch** *(Repudiation / Disclosure)* | A2 | Lesezugriffe auf Patienten/Fälle/Akten aktuell nicht auditiert; Break-Glass ohne Eskalation. | Verpflichtendes Lese-Audit (mit Mandant & Zweck, ohne PII-Volldump); befristetes Break-Glass mit mandantengetrennter Nachprüfung. | `EP-04c` | `NVT-10`, `NVT-11`, `L-05` |
+| **T09** | **DSGVO-Export über Rechtsträgergrenzen / Replica-Lag** *(Disclosure)* | A1, A3 | `export_patient` (`data_portability.rs`) liest von `db.read()` und exportiert global alle Fälle. | Zwingende Ausführung auf `db.write()`, strikte Mandantenbindung, vollständige JSON/CSV/FHIR-Abdeckung (`AP-03`). | `EP-04d` | `NVT-12`, `A-14` |
+| **T10** | **Unzulässige Löschung trotz Aufbewahrungspflicht / Legal Hold** *(Tampering)* | A3 | `retention_check()` prüft nur `appointments.start_time`; keine Legal Holds; Freitexte bleiben bei Anonymisierung. | Vollständige Retention-Matrix (`DEC-06`), `legal_holds`-Sperre, abgestimmte Freitext-Anonymisierung (`AP-04`/`DEC-08`). | `EP-04d` | `NVT-13`, `D-08` |
+| **T11** | **Sitzungs-/Token-Diebstahl & fehlende MFA-Härtung** *(Spoofing)* | A5, A6 | Frontend nutzt `localStorage` (`AP-02`); `users.mfa_secret` Klartext; MFA-Setup fehlt; `core_routes.rs` übergibt `ip = None`. | `HttpOnly; Secure; SameSite=Strict`-Cookies + CSRF (`AP-02`), AEAD-verschlüsseltes `mfa_secret`, MFA-Enrollment, reale Proxy-IP (`F-03`). | `EP-04a`, `AP-02` | `A-01`–`A-14`, `F-02`, `F-03` |
+| **T12** | **Klartext-PII in der DB trotz `*_enc`-Spalten** *(Disclosure)* | A6 | `kis-patients` liest/schreibt Klartextspalten statt `*_enc`. | Aktive AEAD-Verschlüsselung mit `key_version` (Rotation) und Blind-Index; Klartextpfade ablösen. | `EP-02a`, `EP-07` | DB-Rohinspektionstest, `B-07` |
+| **T13** | **Manipulation/Abschneiden der Audit-Kette durch DB-Admin** *(Repudiation)* | A6 | Hash-Kette ohne externen Prüfanker; keine Partitionierung. | Signierter Root-Hash-Export an externen WORM-Prüfanker + monatliche Partitionierung + Verifikationstest. | `EP-04c`, `EP-07` | `L-01`–`L-09`, `P-01`–`P-03` |
+| **T14** | **Stilles Scheitern sicherheitskritischer Folgeaktionen** *(Patient Safety)* | System / A4 | `EventBus::publish` schluckt Fehler im Savepoint; Bettensperre bei Entlassung läuft best-effort; `resolve_event_failure` ohne Audit. | Klasse-A-Sicherheitsinvarianten (atomar / sicherer Sperrzustand); Klasse-B-Outbox/Inbox mit Quarantäne, Reconciliation und auditiertem Replay. | `EP-05` | `NVT-14`, Fehler-Injektionstest |
+| **T15** | **Mandantenübergreifende Ereignis-/Outbox-Vermischung** *(Disclosure)* | A4 | `domain_events` und `event_consumers` ohne `legal_entity_id`. | Pflichtfeld `legal_entity_id` auf Events und Consumern; strenge Mandantenfilterung + Deduplizierung. | `EP-05b` | `NVT-15`, Szenario 3 |
+| **T16** | **Cache-, Export-, BI- oder Hintergrundjob-Leck zwischen Mandanten** *(Disclosure)* | A1, A4 | Risiko bei Berichten, Brief-Rendering, Caches, BI und Forschungszonen. | `legal_entity_id` Pflichtpräfix für jeden Cache-Key, Job und Export; getrennte Forschungs-/Pseudonymisierungszone. | `EP-01`, `EP-07`, `EP-23` | `NVT-16` |
+| **T17** | **SQL-Parameterfehler & ungebundene Filter-Interpolation** *(DoS / Injection)* | A5 | `kis-doctors/src/lib.rs` (`list_doctors`) bindet `$1`/`$2` nicht (`500`) und interpoliert `cursor`; `kis-patients` interpoliert `cursor`. | Strikte Parametrisierung aller SQL-Werte über `sqlx::QueryBuilder` / `.bind()`; Regressionstests. | **`AP-09`**, `EP-02a` | `D-09`, Filter-Regressionstests |
+| **T18** | **Kompromittierung externer Schnittstellen / TI-Komponenten** *(Spoofing / Tampering)* | A4, A5 | Entwürfe in `entwurf/` nicht im Build; keine Gegenstellenvalidierung. | mTLS, QES/SMC-B-Prüfung, gepinnte FHIR-Profile, mandantenbezogener Kontext, ACK/Retry/Quarantäne. | `EP-08`, `EP-09`, `EP-24` | Szenario 6, RU-Tests |
+| **T19** | **DMS-Upload-Malware, OCR-Suchleck & Weiterverwendung veralteter Signaturen** *(Tampering / Disclosure)* | A2, A5 | Dokumenten-/Workflow-Plattform (`DOC-01`–`07`) noch offen. | Quarantäne/Malwareprüfung, MIME-/Größenlimits, objektbezogene ACL auf Suche/OCR/Vorschau, unveränderliche Revisionen, Signatur-Invalidierung bei Nachbearbeitung. | `EP-12`, `EP-21`, `DOC-01`–`06` | `NVT-17`, `CLINICAL_WORKFLOWS` § 6 |
+| **T20** | **Barcode-, Medikations- oder Blutprodukt-Verwechslung** *(Patient Safety)* | Klinischer Fehler | Allergieabgleich aktuell rein textuell; keine BCMA-/Blutbank-Sperren. | Atomare Identitäts-/Barcode-Prüfung, geprüfte AMTS-Datenbasis (`DEC-02`), separate sicherheitskritische Transfusions-/Kreuzproben-Sperre. | `EP-13`, `EP-14` | Falsch-Patient-/Falsch-Barcode-Tests (Szenario 6) |
+| **T21** | **CIRS-Deanonymisierung oder Vermischung mit Patientenakte** *(Privacy / Retaliation)* | A2, A3 | CIRS (`E18`) noch offen. | Logisch und rechtlich getrennte CIRS-Identität und Tabellen ohne Verknüpfungspflicht zur Patientenakte; eigene ACL. | `EP-21` | CIRS-Trennungs-Negativtest |
+| **T22** | **Prompt-Injection & ungenehmigter PHI-Abfluss an KI-Modelle** *(Disclosure / Tampering)* | A4, A5 | Optionale KI-Entwürfe (`E19`/`DOC-07`) noch offen. | Kein Versand von PHI an nicht genehmigte Modelle, strikte System-/Kontexttrennung, Quellen-/Modellversionspflicht, verpflichtende menschliche Freigabe. | `EP-23`, `DOC-07` | `NVT-18`, Prompt-Injection-Tests |
+| **T23** | **Offenlegung von Namen/Diagnosen auf Großbild- oder Warteraumanzeigen** *(Disclosure)* | Physisch / A5 | ZNA-Live-Board & Patientenleitsystem (`ED-02`/`ED-06`) noch offen. | Pseudonyme Aufrufnummern, minimierte Großbildansichten ohne Diagnosen/Klarnamen, automatisches Reconnect + Veraltungsanzeige. | `EP-16` (`ED-02`/`06`) | ZNA-Warteraum-Prüfung |
+| **T24** | **Datenverlust oder Konflikt bei TI-/Netz-Downtime & Wiederanlauf** *(Availability / Integrity)* | Infrastruktur | Kein klinikspezifisches Downtime-/Reconciliation-Verfahren im Kern. | Freigegebener Read-Only-Notfallmodus, Offline-Schreiben nur nach expliziter Konfliktanalyse, idempotenter Wiederanlauf ohne Doppelversand. | `EP-07`, `EP-09`, `EP-16` | Szenario 5, `B-01`–`B-07` |
 
 ---
 
-## 4. Sicherheitskritische klinische Invarianten (niemals Best-Effort)
+## 4. Sicherheitskritische klinische Invarianten (niemals Best-Effort, `ADR-005`)
 
-Folgende Abläufe fallen zwingend unter **Klasse A** ([ADR-005](EP00_ARCHITEKTUR_UND_ANALYSE.md#adr-005-sicherheitskritische-invarianten-vs-isolierte-dom%C3%A4nenereignisse--inboxoutbox-ep-05)):
-
-1. **Bettensperre und Hygienefreigabe** bei Entlassung, Verlegung oder Isolationsstatus — ein Bett darf niemals freigegeben werden, solange die Aufbereitung nicht bestätigt ist.
-2. **Kritische Labor- und Pathologiebefunde** — Eskalation und Pflichtquittierung dürfen nicht spurlos in einer Fehlerqueue versanden.
-3. **Allergie-, AMTS- und Transfusionssperren** — Warnungen und harte Kontraindikationen müssen atomar bei Verordnung/Freigabe wirksam sein.
-4. **Entlassung + Neuaufnahme bei Rechtsträgerwechsel** — keine halbfertige Verlegung zwischen zwei rechtlich getrennten Trägern.
-5. **Revisionssicheres Audit bei sicherheitsrelevanten Mutationen und Lesezugriffen** — bei Audit-Fehler erfolgt Rollback bzw. Ablehnung der Auslieferung (Fail-Closed).
+1. **Richtiger Patient / Identitätssicherheit** (inkl. Merge-Sperre bei laufenden kritischen Prozessen, Barcode-Verifikation).
+2. **Bettensperre und Hygienefreigabe** bei Entlassung, Verlegung oder Isolation.
+3. **Kritische Labor-, Pathologie- und ZNA-Befunde** (inkl. Nachbefunden nach Entlassung) mit Pflichtquittierung und Eskalation.
+4. **Verordnete/abgegebene Dosis, Allergie-, AMTS- und Blutprodukt-/Transfusionssperren**.
+5. **Einwilligungsstatus** vor invasiven/präoperativen Eingriffen und **Signatur-Unveränderlichkeit** bei freigegebenen Dokumenten.
+6. **Entlassung + Neuaufnahme bei Rechtsträgerwechsel** (keine halbfertige rechtsträgerübergreifende Verlegung).
+7. **Verpflichtendes Audit** bei Mutationen und sensiblen Lesezugriffen (Fail-Closed).
 
 ---
 
 ## 5. Review- und Freigabepflicht
 
-Jede Umsetzung eines in Abschnitt 3 adressierten Pakets (`EP-01` bis `EP-05`, `EP-07`, `EP-22`, `EP-23`) ist sicherheitskritisch im Sinne von [AGENTS.md](../AGENTS.md) § 3 und § 7 und erfordert zwingend:
-- echte PostgreSQL-Integrationstests inklusive aller zugeordneten Negativtests (`NVT-*`),
-- einen ausgefüllten [Abnahmebericht](ABNAHMEBERICHT.md),
-- ein **unabhängiges Sicherheitsreview** durch eine nicht-implementierende Person oder Instanz (Quality Gate `G6`).
+Jede Umsetzung eines in Abschnitt 3 adressierten Pakets erfordert echte PostgreSQL-Integrationstests inklusive der zugeordneten Negativtests, einen ausgefüllten [Abnahmebericht](ABNAHMEBERICHT.md) und ein **unabhängiges Sicherheitsreview (`G6`)** durch eine nicht-implementierende Instanz.

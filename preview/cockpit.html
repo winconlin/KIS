@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="KIS Enterprise — Schreibgeschütztes Architektur-, Vertrags- und Koordinations-Cockpit für EP-00 bis EP-26">
+  <title>KIS — Architektur- &amp; Koordinations-Cockpit</title>
+  <link rel="stylesheet" href="/preview/cockpit.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="Hauptnavigation">
+      <div class="sidebar-brand">
+        <a href="#overview" class="brand-wordmark">KIS Architektur</a>
+        <p class="brand-caption">Enterprise-Verbund · Schreibgeschützt</p>
+      </div>
+
+      <nav class="sidebar-nav" aria-label="Arbeitsbereiche">
+        <button type="button" class="nav-item" data-view="overview">
+          <span class="nav-label">Übersicht &amp; Gates</span>
+          <span class="nav-meta">G0–G7</span>
+        </button>
+        <button type="button" class="nav-item" data-view="roadmap">
+          <span class="nav-label">Roadmap &amp; Koordination</span>
+          <span class="nav-meta">EP-00–26</span>
+        </button>
+        <button type="button" class="nav-item" data-view="contracts">
+          <span class="nav-label">M01-Verträge &amp; Doku</span>
+          <span class="nav-meta">EP-01–07</span>
+        </button>
+        <button type="button" class="nav-item" data-view="verbund">
+          <span class="nav-label">Verbund-Testmodell</span>
+          <span class="nav-meta">NVT-01–18</span>
+        </button>
+        <button type="button" class="nav-item" data-view="handoff">
+          <span class="nav-label">Normen &amp; Übergabe</span>
+          <span class="nav-meta">TI01–15</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="sidebar-fact">
+          <span class="fact-label">Koordinator</span>
+          <span class="fact-value mono">google-neon</span>
+        </div>
+        <div class="sidebar-fact">
+          <span class="fact-label">G6-Gegenreview</span>
+          <span class="fact-value mono">hermes (offen)</span>
+        </div>
+        <div class="sidebar-fact">
+          <span class="fact-label">Code-/Schema-Sperre</span>
+          <span class="fact-value">crates/ &amp; migrations/</span>
+        </div>
+        <div class="sidebar-links">
+          <a href="/kis">KIS-Login</a>
+          <span aria-hidden="true">·</span>
+          <a href="/arbeitsplatz">Arbeitsplatz</a>
+        </div>
+      </div>
+    </aside>
+
+    <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
+
+    <div class="main-column">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Navigation umschalten" aria-expanded="false">
+            Menü
+          </button>
+          <nav class="breadcrumbs" aria-label="Breadcrumb">
+            <span>KIS Architektur</span>
+            <span class="crumb-sep" aria-hidden="true">/</span>
+            <span id="breadcrumb-current" class="crumb-current">Übersicht &amp; Gates</span>
+          </nav>
+        </div>
+
+        <div class="topbar-right">
+          <a href="/kis" class="btn btn-primary">Zur KIS-Oberfläche</a>
+        </div>
+      </header>
+
+      <main class="workspace" id="workspace" tabindex="-1">
+        <div id="global-error" class="error-banner" role="alert" hidden>
+          <div>
+            <strong>Lokale Projektdaten konnten nicht geladen werden.</strong>
+            <p id="global-error-message"></p>
+          </div>
+          <button type="button" class="btn btn-secondary" id="retry-load-btn">Erneut laden</button>
+        </div>
+
+        <!-- Ansicht 1: Übersicht & Gates -->
+        <section id="view-overview" class="view-panel" aria-labelledby="heading-overview">
+          <div class="section-header">
+            <div>
+              <h1 id="heading-overview" class="page-title">Architekturstatus &amp; Quality Gates</h1>
+              <p class="page-subtitle">
+                Ehrliche Bestandsaufnahme aus dem lokalen Workspace · kein Echtbetrieb · klinische Endpunkte (<span class="mono">/api/*</span>) liefern <span class="mono">503</span>.
+              </p>
+            </div>
+            <button type="button" class="btn btn-secondary" id="run-checks-btn">Lokale Prüfungen ausführen</button>
+          </div>
+
+          <div class="kpi-grid" id="kpi-grid">
+            <div class="kpi-cell">
+              <div class="kpi-label">Rust-Workspace</div>
+              <div class="kpi-value mono" id="kpi-crates">—</div>
+              <div class="kpi-sub" id="kpi-tables">Lade Bestandszahlen…</div>
+            </div>
+            <div class="kpi-cell">
+              <div class="kpi-label">Enterprise-Backlog</div>
+              <div class="kpi-value mono" id="kpi-packages">—</div>
+              <div class="kpi-sub">EP-00 bis EP-26 · M00 bis M07</div>
+            </div>
+            <div class="kpi-cell">
+              <div class="kpi-label">Verbund-Testmodell</div>
+              <div class="kpi-value mono" id="kpi-nvt">—</div>
+              <div class="kpi-sub" id="kpi-nvt-sub">Synthetische Pflicht-Negativtests</div>
+            </div>
+            <div class="kpi-cell">
+              <div class="kpi-label">Lokale Prüfskripte</div>
+              <div class="kpi-value mono" id="kpi-checks">—</div>
+              <div class="kpi-sub" id="kpi-checks-sub">Wird geprüft…</div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Tatsächlich ausgeführte vs. blockierte Prüfungen</h2>
+              <span class="meta-line" id="checks-timestamp">Stand wird ermittelt…</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Prüfung</th>
+                    <th>Befehl</th>
+                    <th>Status</th>
+                    <th class="num">Dauer</th>
+                    <th>Ausgabe / Hinweis</th>
+                  </tr>
+                </thead>
+                <tbody id="checks-tbody">
+                  <tr><td colspan="5" class="skeleton-row">Prüfungen werden ausgeführt…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="split-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Quality Gates (G0–G7)</h2>
+                <span class="meta-line">Stand EP-00 (M00)</span>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Gate</th>
+                      <th>Bereich</th>
+                      <th>Status</th>
+                      <th>Nachweis / Offener Punkt</th>
+                    </tr>
+                  </thead>
+                  <tbody id="gates-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Verfügbare Umgebungswerkzeuge</h2>
+                <span class="meta-line">Reale Prüfung auf Host</span>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Werkzeug / Artefakt</th>
+                      <th>Status</th>
+                      <th>Detail</th>
+                    </tr>
+                  </thead>
+                  <tbody id="toolchain-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Offene Haus-, Fach- &amp; Rechtsentscheidungen (DEC-01–DEC-09)</h2>
+              <span class="meta-line">Nicht erfinden · Klärung vor Umsetzung</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Thema</th>
+                    <th>Betroffene Pakete</th>
+                    <th>Erforderliche Klärung</th>
+                  </tr>
+                </thead>
+                <tbody id="decisions-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Ansicht 2: Roadmap & Koordination -->
+        <section id="view-roadmap" class="view-panel" aria-labelledby="heading-roadmap" hidden>
+          <div class="section-header">
+            <div>
+              <h1 id="heading-roadmap" class="page-title">Roadmap &amp; Multi-Agenten-Koordination</h1>
+              <p class="page-subtitle">
+                1:1 abgeglichen mit <span class="mono">ENTERPRISE_BACKLOG.md</span> und <span class="mono">KOORDINATIONSREGISTER.md</span> · Klick auf ein M01-Paket öffnet den Umsetzungsvertrag.
+              </p>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Aktive Agenten-Zuweisungen</h2>
+              <span class="meta-line">Alleiniger Register-Schreiber: google-neon</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Paket</th>
+                    <th>Agent &amp; Rolle</th>
+                    <th>Vorgesehener Branch</th>
+                    <th>Status</th>
+                    <th>Umfang &amp; offene Blocker</th>
+                  </tr>
+                </thead>
+                <tbody id="assignments-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Gesamt-Roadmap (EP-00 bis EP-26)</h2>
+              <span class="meta-line" id="roadmap-count">—</span>
+            </div>
+
+            <div class="toolbar">
+              <div class="segmented" id="milestone-filter" role="group" aria-label="Meilenstein filtern">
+                <button type="button" class="seg-btn is-active" data-milestone="ALL">Alle</button>
+                <button type="button" class="seg-btn" data-milestone="M00">M00</button>
+                <button type="button" class="seg-btn" data-milestone="M01">M01</button>
+                <button type="button" class="seg-btn" data-milestone="M02">M02</button>
+                <button type="button" class="seg-btn" data-milestone="M03">M03</button>
+                <button type="button" class="seg-btn" data-milestone="M04">M04</button>
+                <button type="button" class="seg-btn" data-milestone="M05">M05</button>
+                <button type="button" class="seg-btn" data-milestone="M06">M06</button>
+                <button type="button" class="seg-btn" data-milestone="M07">M07</button>
+              </div>
+              <div class="toolbar-right">
+                <div class="segmented" id="prio-filter" role="group" aria-label="Priorität filtern">
+                  <button type="button" class="seg-btn is-active" data-prio="ALL">Alle Prios</button>
+                  <button type="button" class="seg-btn" data-prio="P0">P0</button>
+                  <button type="button" class="seg-btn" data-prio="P1">P1</button>
+                  <button type="button" class="seg-btn" data-prio="P2">P2</button>
+                </div>
+                <input type="search" id="roadmap-search" class="search-input" placeholder="Paket, E-ID, TI-ID oder Stichwort suchen…" aria-label="Roadmap durchsuchen">
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Paket</th>
+                    <th>Meilenstein · Prio</th>
+                    <th>Abhängigkeiten</th>
+                    <th>Status</th>
+                    <th>Fachlicher Umfang</th>
+                    <th>Vertrag</th>
+                  </tr>
+                </thead>
+                <tbody id="roadmap-tbody"></tbody>
+              </table>
+            </div>
+            <div id="roadmap-empty" class="empty-state" hidden>
+              <p>Keine Pakete für die aktuelle Filterkombination gefunden.</p>
+              <button type="button" class="btn btn-secondary" id="reset-roadmap-btn">Filter zurücksetzen</button>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Feinzerlegung M01 (EP-01a bis EP-07b) &amp; Bestandshärtung (AP-*)</h2>
+              <span class="meta-line">Maximal 1 aktiver Migrations-Schreiber (nächste freie Nummer: 012)</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Teilpaket</th>
+                    <th>Abhängigkeiten</th>
+                    <th>Zielbereich</th>
+                    <th>Pflicht-Nachweise</th>
+                    <th>Vertrag</th>
+                  </tr>
+                </thead>
+                <tbody id="m01-sub-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Ansicht 3: M01-Verträge & Dokumente -->
+        <section id="view-contracts" class="view-panel" aria-labelledby="heading-contracts" hidden>
+          <div class="section-header">
+            <div>
+              <h1 id="heading-contracts" class="page-title">M01-Umsetzungsverträge &amp; Projektdokumentation</h1>
+              <p class="page-subtitle">
+                Direkt aus <span class="mono">docs/</span> geladen · XSS-geschützte Darstellung · SQL-Entwürfe und Rust-Verträge mit Kopierfunktion.
+              </p>
+            </div>
+            <a id="doc-raw-link" href="/docs/vertraege/README.md?raw=1" class="btn btn-secondary" target="_blank" rel="noopener">Rohdatei öffnen</a>
+          </div>
+
+          <div class="docs-workspace">
+            <div class="docs-list-panel">
+              <div class="docs-list-head">
+                <input type="search" id="doc-search" class="search-input full-width" placeholder="Dokument suchen…" aria-label="Dokumente filtern">
+              </div>
+              <div id="doc-groups" class="doc-groups"></div>
+              <div id="doc-list-empty" class="empty-state compact" hidden>
+                <p>Kein Dokument gefunden.</p>
+                <button type="button" class="btn btn-secondary" id="reset-doc-search-btn">Suche leeren</button>
+              </div>
+            </div>
+
+            <article class="doc-reader-panel" aria-live="polite">
+              <div class="doc-reader-meta" id="doc-reader-meta">
+                <span class="mono" id="doc-current-path">vertraege/README.md</span>
+                <span aria-hidden="true">·</span>
+                <span id="doc-current-size">—</span>
+              </div>
+              <div id="doc-reader-body" class="markdown-body">
+                <p class="muted-note">Dokument wird geladen…</p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <!-- Ansicht 4: Verbund-Testmodell -->
+        <section id="view-verbund" class="view-panel" aria-labelledby="heading-verbund" hidden>
+          <div class="section-header">
+            <div>
+              <h1 id="heading-verbund" class="page-title">Synthetisches Verbund-Testmodell</h1>
+              <p class="page-subtitle">
+                Live gespeist aus <span class="mono">docs/vertraege/verbund_test_fixture.json</span> · 100 % synthetische Testdaten · Referenz für alle Mandanten- und Negativtests.
+              </p>
+            </div>
+            <button type="button" class="btn btn-secondary" id="open-fixture-doc-btn">JSON-Fixture im Reader öffnen</button>
+          </div>
+
+          <div class="toolbar">
+            <div class="segmented" id="tenant-filter" role="group" aria-label="Rechtsträger filtern">
+              <button type="button" class="seg-btn is-active" data-tenant="ALL">Gesamtverbund</button>
+              <button type="button" class="seg-btn" data-tenant="RT-NORD">RT-NORD</button>
+              <button type="button" class="seg-btn" data-tenant="RT-SUED">RT-SUED</button>
+              <button type="button" class="seg-btn" data-tenant="CENTRAL">Zentrale Dienste</button>
+            </div>
+            <div class="toolbar-right">
+              <input type="search" id="verbund-search" class="search-input" placeholder="Einheit, Benutzer, PAT oder NVT filtern…" aria-label="Verbundmodell durchsuchen">
+            </div>
+          </div>
+
+          <div class="split-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Standorte &amp; Organisationseinheiten</h2>
+                <span class="meta-line" id="verbund-units-count">—</span>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Einheit</th>
+                      <th>Standort · Mandant</th>
+                      <th>Art</th>
+                      <th>Elterneinheit</th>
+                    </tr>
+                  </thead>
+                  <tbody id="verbund-units-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Synthetische Testbenutzer &amp; Patienten</h2>
+                <span class="meta-line" id="verbund-users-count">—</span>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Kürzel</th>
+                      <th>Mandant</th>
+                      <th>Rollen</th>
+                      <th>Einheiten / Kennung</th>
+                    </tr>
+                  </thead>
+                  <tbody id="verbund-users-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Pflicht-Negativtests (NVT-01 bis NVT-18)</h2>
+              <span class="meta-line" id="nvt-count">—</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Test-ID</th>
+                    <th>Paket</th>
+                    <th>Akteure</th>
+                    <th>Patient</th>
+                    <th>Erwarteter Status</th>
+                    <th>Prüfziel</th>
+                  </tr>
+                </thead>
+                <tbody id="nvt-tbody"></tbody>
+              </table>
+            </div>
+            <div id="verbund-empty" class="empty-state" hidden>
+              <p>Keine Einträge für diesen Filter gefunden.</p>
+              <button type="button" class="btn btn-secondary" id="reset-verbund-btn">Filter zurücksetzen</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Ansicht 5: Normen & Übergabe -->
+        <section id="view-handoff" class="view-panel" aria-labelledby="heading-handoff" hidden>
+          <div class="section-header">
+            <div>
+              <h1 id="heading-handoff" class="page-title">Normenregister (TI01–TI15) &amp; Git-/CI-Übergabe</h1>
+              <p class="page-subtitle">
+                Maschinenlesbarer Seed aus <span class="mono">normative_requirements_seed.json</span> sowie fertige Befehlsfolge für Branch, Koordinations-Issue, Draft-PR und <span class="mono">scripts/check.sh</span>.
+              </p>
+            </div>
+            <button type="button" class="btn btn-secondary" id="open-playbook-btn">Vollständiges Playbook öffnen</button>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Git-/GitHub-/CI-Übergabebefehle (für Host mit Git, gh, Rust &amp; PostgreSQL)</h2>
+              <span class="meta-line">Branch: agent/google-neon/ep00-architecture-coordination</span>
+            </div>
+            <div class="playbook-grid" id="playbook-commands"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Normen- &amp; TI-Compliance-Register (EP-06a Seed)</h2>
+              <span class="meta-line" id="norm-count">—</span>
+            </div>
+
+            <div class="toolbar">
+              <div class="segmented" id="norm-class-filter" role="group" aria-label="Native-First-Klasse filtern">
+                <button type="button" class="seg-btn is-active" data-class="ALL">Alle Klassen</button>
+                <button type="button" class="seg-btn" data-class="N">N (Nativ)</button>
+                <button type="button" class="seg-btn" data-class="H">H (Hybrid)</button>
+                <button type="button" class="seg-btn" data-class="X">X (Extern/Reguliert)</button>
+              </div>
+              <div class="toolbar-right">
+                <input type="search" id="norm-search" class="search-input" placeholder="TI-Code, Norm, Sektor oder Rechtsgrundlage…" aria-label="Normenregister durchsuchen">
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Titel</th>
+                    <th>Klasse · Sektor</th>
+                    <th>Rechtsgrundlage</th>
+                    <th>Status</th>
+                    <th>Nächstes Review</th>
+                  </tr>
+                </thead>
+                <tbody id="norm-tbody"></tbody>
+              </table>
+            </div>
+            <div id="norm-empty" class="empty-state" hidden>
+              <p>Keine Normen für den aktuellen Filter gefunden.</p>
+              <button type="button" class="btn btn-secondary" id="reset-norm-btn">Filter zurücksetzen</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script type="module" src="/preview/cockpit.js"></script>
+</body>
+</html>
