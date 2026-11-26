@@ -1,7 +1,7 @@
 # EP-01a — Vorbereitung: Schema-Design & Offene Punkte
 
 **Agent:** hermes-qwen38
-**Status:** VORBEREITUNG (nicht implementiert — Reservierung ausstehend)
+**Status:** VORBEREITUNG abgeschlossen — Reservierungsanfrage in [Issue #11](https://github.com/winconlin/KIS/issues/11) (offen, wartet auf Bestätigung durch Koordinator)
 **Basis:** `origin/main` @ 2d0e447
 **Paket:** EP-01a (Schema & Kernvertrag Rechtsträger/Standorte)
 **ADR:** ADR-001 (Mandanten-, Rechtsträger- und Organisationsmodell) — Status: *Vorgeschlagen*
