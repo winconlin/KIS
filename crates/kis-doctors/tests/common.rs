@@ -13,7 +13,6 @@
 
 use std::sync::Arc;
 
-use serde_json::{json, Value};
 use uuid::Uuid;
 
 use kis_core::config::AppConfig;
@@ -115,37 +114,4 @@ pub fn config() -> AppConfig {
     cfg
 }
 
-#[macro_export]
-macro_rules! app {
-    () => {
-        match common::App::new().await {
-            Some(a) => a,
-            None => return,
-        }
-    };
-    ($cfg:expr) => {
-        match common::App::with_config($cfg).await {
-            Some(a) => a,
-            None => return,
-        }
-    };
-}
 
-pub fn patient_body() -> Value {
-    json!({
-        "nameFamily": "Testfrau",
-        "nameGiven": "Erika",
-        "birthDate": "1970-05-01",
-        "addressZip": "83022",
-        "allergies": ["Penizillin"]
-    })
-}
-
-pub fn id_of(v: &Value) -> Uuid {
-    Uuid::parse_str(
-        v["id"]
-            .as_str()
-            .unwrap_or_else(|| panic!("id fehlt in {v}")),
-    )
-    .unwrap()
-}

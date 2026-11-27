@@ -1159,7 +1159,6 @@ dependencies = [
  "axum",
  "chrono",
  "http-body-util",
- "kis-app",
  "kis-core",
  "serde",
  "serde_json",
